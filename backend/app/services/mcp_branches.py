@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -55,40 +56,69 @@ def _normalize_shop(name: str) -> str:
     return name.strip().lower().replace("  ", " ")
 
 
-async def _get_india_branches_from_db(db: AsyncSession) -> list[dict[str, Any]]:
-    """Fetch India branches from DB (synced from Google Sheets every 1 min)."""
-    from ..models.models import Store, DailySubmission, User
+def _loose_key(name: str) -> str:
+    """Matches an MCP shop name to a stored alias despite the small spelling
+    differences MCP has between endpoints (e.g. 'Solution -Guwahati' vs
+    'Solution - Guwahati')."""
+    return re.sub(r"\s+", " ", re.sub(r"\s*-\s*", " - ", name.strip().lower()))
+
+
+async def _get_india_branches_from_db(
+    db: AsyncSession, india_stock: dict[str, dict]
+) -> list[dict[str, Any]]:
+    """India branches for the dashboard's "All Branches" list — everything
+    shown comes from MCP.
+
+    Which branches appear: confirmed, active stores with at least one MCP
+    alias (the same rule the target totals use), so Sheets-created
+    placeholders/duplicates never show. Revenue and units come from MCP's
+    sales (McpDailySale, calendar month to date), the target from MCP's
+    target sheet (kept on the store by the sync), and stock from MCP's
+    stock position, matched to the store through its recorded MCP names.
+    The team leader name is our own assignment. No Google Sheets data is
+    used here.
+    """
+    from ..models.models import Store, User, McpDailySale, StoreMcpAlias
 
     now = datetime.now()
     month_start = date(now.year, now.month, 1)
 
-    store_q = select(Store).where(Store.is_active == True, Store.country == "India")
-    stores = (await db.execute(store_q)).scalars().all()
+    aliased_ids = select(StoreMcpAlias.store_id).distinct()
+    rows = (await db.execute(
+        select(Store, User.name)
+        .outerjoin(User, Store.team_leader_id == User.id)
+        .where(
+            Store.is_active == True, Store.country == "India",
+            Store.needs_review == False, Store.id.in_(aliased_ids),
+        )
+    )).all()
+
+    alias_rows = (await db.execute(select(StoreMcpAlias.store_id, StoreMcpAlias.mcp_shop_name))).all()
+    aliases_by_store: dict[int, list[str]] = {}
+    for sid, alias_name in alias_rows:
+        aliases_by_store.setdefault(sid, []).append(alias_name)
+
+    mcp_rows = (await db.execute(
+        select(
+            McpDailySale.store_id,
+            func.coalesce(func.sum(McpDailySale.revenue), 0),
+            func.coalesce(func.sum(McpDailySale.units_sold), 0),
+        ).where(McpDailySale.date >= month_start).group_by(McpDailySale.store_id)
+    )).all()
+    mcp_by_store = {r[0]: (float(r[1] or 0), int(r[2] or 0)) for r in mcp_rows}
 
     branches = []
-    for store in stores:
-        tl_name = "Unassigned"
-        if store.team_leader_id:
-            tl_result = await db.execute(select(User.name).where(User.id == store.team_leader_id))
-            tl_name = tl_result.scalar() or "Unassigned"
-
-        rev_q = select(
-            func.coalesce(func.sum(DailySubmission.revenue), 0),
-            func.coalesce(func.sum(DailySubmission.units_sold), 0),
-            func.coalesce(func.sum(DailySubmission.walk_ins), 0),
-            func.coalesce(func.sum(DailySubmission.walk_in_conversions), 0),
-        ).where(
-            DailySubmission.store_id == store.id,
-            DailySubmission.date >= month_start,
-        )
-        row = (await db.execute(rev_q)).one()
-        revenue = float(row[0] or 0)
-        units = int(row[1] or 0)
-        walk_ins = int(row[2] or 0)
-        conversions = int(row[3] or 0)
-
+    for store, tl_name in rows:
+        revenue, units = mcp_by_store.get(store.id, (0.0, 0))
         target = float(store.monthly_target or 0)
         achievement_pct = (revenue / target * 100) if target > 0 else 0
+
+        stock_units, stock_items = 0, []
+        for alias_name in aliases_by_store.get(store.id, []):
+            st = india_stock.get(_loose_key(alias_name))
+            if st:
+                stock_units += st.get("stock_units", 0)
+                stock_items += st.get("stock_items", [])
 
         branches.append({
             "shop": store.name,
@@ -98,12 +128,10 @@ async def _get_india_branches_from_db(db: AsyncSession) -> list[dict[str, Any]]:
             "actual": revenue,
             "achievement_pct": round(achievement_pct, 1),
             "status": "",
-            "stock_units": 0,
-            "stock_items": [],
+            "stock_units": stock_units,
+            "stock_items": stock_items,
             "units_sold": units,
-            "walk_ins": walk_ins,
-            "conversions": conversions,
-            "tl": tl_name,
+            "tl": tl_name or "Unassigned",
         })
 
     return branches
@@ -111,7 +139,7 @@ async def _get_india_branches_from_db(db: AsyncSession) -> list[dict[str, Any]]:
 
 async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
     """Extract all branches from combined sources:
-    - India: DB (Store + DailySubmission, synced from Google Sheets)
+    - India: confirmed, MCP-managed stores; all figures from MCP
     - Other countries: MCP (SmartService live API)
 
     Returns list of: {
@@ -124,8 +152,21 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
     if cached is not None:
         return cached
 
-    # Run India DB query and MCP fetch concurrently
-    india_task = _get_india_branches_from_db(db)
+    async def fetch_india_stock() -> dict[str, dict]:
+        try:
+            raw = await smart_service.shop_stock_position(country_id=1)
+            return {
+                _loose_key(x["shop"]): {"stock_units": x.get("total_units", 0), "stock_items": x.get("items", [])}
+                for x in parse_shop_stock_position(raw)
+            }
+        except Exception as e:
+            logger.warning("Failed to fetch India stock: %s", e)
+            return {}
+
+    async def build_india():
+        return await _get_india_branches_from_db(db, await fetch_india_stock())
+
+    india_task = build_india()
 
     async def fetch_mcp_branches():
         # 1. Get stock position per country (concurrently)
@@ -160,10 +201,19 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
 
         # Merge stock data per country
         stock_by_shop: dict[str, dict] = {}
-        for country_shops in stock_results:
+        for country_idx, country_shops in enumerate(stock_results):
+            country = _NON_INDIA_MCP_COUNTRIES[country_idx]
             for s in country_shops:
                 key = _normalize_shop(s["shop"])
+                # Keep the shop's real name and the country it was fetched
+                # under — this used to be dropped, so any shop with stock
+                # but no target row this month was listed as country
+                # "Unknown" (and shown in lowercase) even though the
+                # country was already known at fetch time.
                 stock_by_shop[key] = {
+                    "shop": s["shop"],
+                    "country": country["name"],
+                    "country_id": country["id"],
                     "stock_units": s.get("total_units", 0),
                     "stock_items": s.get("items", []),
                 }
@@ -195,8 +245,8 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
             if key not in branches:
                 branches[key] = {
                     "shop": stock.get("shop", key),
-                    "country": "Unknown",
-                    "country_id": 0,
+                    "country": stock.get("country", "Unknown"),
+                    "country_id": stock.get("country_id", 0),
                     "target": 0,
                     "actual": 0,
                     "achievement_pct": 0,
