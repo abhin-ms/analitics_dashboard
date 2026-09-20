@@ -389,12 +389,21 @@ class BranchResponse(BaseModel):
 
 @router.get("/branches", response_model=list[BranchResponse])
 async def mcp_branches(
+    start: str = None,
+    end: str = None,
     db: AsyncSession = Depends(get_db),
     user: User = require_admin_tier(),
 ):
-    """List all branches with country, targets, and stock from MCP + DB."""
+    """List all branches with country, targets, and stock from MCP + DB.
+    start/end (YYYY-MM-DD) scope revenue and target to that period; without
+    them it's the current calendar month to date."""
     try:
-        return await get_all_branches(db)
+        from datetime import date as _date
+        return await get_all_branches(
+            db,
+            _date.fromisoformat(start) if start else None,
+            _date.fromisoformat(end) if end else None,
+        )
     except Exception as e:
         logger.error("MCP branches failed: %s", e)
         raise HTTPException(status_code=502, detail=f"MCP error: {e}")

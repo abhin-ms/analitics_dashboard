@@ -63,8 +63,14 @@ def _loose_key(name: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"\s*-\s*", " - ", name.strip().lower()))
 
 
+def _month_multiplier(start: date, end: date) -> int:
+    """Same rule sales_report_service uses: a target is one month's figure,
+    so a multi-month range compares against that many months of target."""
+    return max(1, round(((end - start).days + 1) / 30.44))
+
+
 async def _get_india_branches_from_db(
-    db: AsyncSession, india_stock: dict[str, dict]
+    db: AsyncSession, india_stock: dict[str, dict], start: date, end: date
 ) -> list[dict[str, Any]]:
     """India branches for the dashboard's "All Branches" list — everything
     shown comes from MCP.
@@ -80,8 +86,7 @@ async def _get_india_branches_from_db(
     """
     from ..models.models import Store, User, McpDailySale, StoreMcpAlias
 
-    now = datetime.now()
-    month_start = date(now.year, now.month, 1)
+    multiplier = _month_multiplier(start, end)
 
     aliased_ids = select(StoreMcpAlias.store_id).distinct()
     rows = (await db.execute(
@@ -103,14 +108,14 @@ async def _get_india_branches_from_db(
             McpDailySale.store_id,
             func.coalesce(func.sum(McpDailySale.revenue), 0),
             func.coalesce(func.sum(McpDailySale.units_sold), 0),
-        ).where(McpDailySale.date >= month_start).group_by(McpDailySale.store_id)
+        ).where(McpDailySale.date >= start, McpDailySale.date <= end).group_by(McpDailySale.store_id)
     )).all()
     mcp_by_store = {r[0]: (float(r[1] or 0), int(r[2] or 0)) for r in mcp_rows}
 
     branches = []
     for store, tl_name in rows:
         revenue, units = mcp_by_store.get(store.id, (0.0, 0))
-        target = float(store.monthly_target or 0)
+        target = float(store.monthly_target or 0) * multiplier
         achievement_pct = (revenue / target * 100) if target > 0 else 0
 
         stock_units, stock_items = 0, []
@@ -137,7 +142,44 @@ async def _get_india_branches_from_db(
     return branches
 
 
-async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
+async def _fill_non_india_revenue(
+    db: AsyncSession, branches: list[dict[str, Any]], start: date, end: date, is_default_range: bool
+) -> None:
+    """MCP's target sheet has no rows for most non-India shops and only
+    covers the current month, so revenue for any selected period comes
+    from the sales the sync already stores per shop (matched through each
+    store's recorded MCP names). A shop we can't match to a stored store
+    keeps MCP's own current-month figure, and only for the default range."""
+    from ..models.models import Store, McpDailySale, StoreMcpAlias
+
+    known = {
+        _loose_key(n) for (n,) in (await db.execute(
+            select(StoreMcpAlias.mcp_shop_name).join(Store, Store.id == StoreMcpAlias.store_id)
+            .where(Store.country != "India")
+        )).all()
+    }
+    revenue_rows = (await db.execute(
+        select(StoreMcpAlias.mcp_shop_name, func.coalesce(func.sum(McpDailySale.revenue), 0))
+        .join(Store, Store.id == StoreMcpAlias.store_id)
+        .join(McpDailySale, McpDailySale.store_id == Store.id)
+        .where(Store.country != "India", McpDailySale.date >= start, McpDailySale.date <= end)
+        .group_by(StoreMcpAlias.mcp_shop_name)
+    )).all()
+    revenue_by_name = {_loose_key(name): float(rev or 0) for name, rev in revenue_rows}
+    multiplier = _month_multiplier(start, end)
+    for b in branches:
+        key = _loose_key(b["shop"])
+        if key in known:
+            b["actual"] = revenue_by_name.get(key, 0.0)
+        elif not is_default_range:
+            b["actual"] = 0.0
+        b["target"] = (b.get("target") or 0) * multiplier
+        b["achievement_pct"] = round(b["actual"] / b["target"] * 100, 1) if b["target"] > 0 else 0
+
+
+async def get_all_branches(
+    db: AsyncSession, start: Optional[date] = None, end: Optional[date] = None
+) -> list[dict[str, Any]]:
     """Extract all branches from combined sources:
     - India: confirmed, MCP-managed stores; all figures from MCP
     - Other countries: MCP (SmartService live API)
@@ -147,7 +189,17 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
         stock_units, stock_items
     }
     """
-    cache_key = "all_branches"
+    today = date.today()
+    is_default_range = start is None and end is None
+    start = start or today.replace(day=1)
+    end = end or today
+    if not is_default_range:
+        # A wide range (6 Month / 1 Year / Custom) may cover days the sync
+        # hasn't stored yet — backfill them the same way /sales-reports does.
+        from .sales_report_service import _ensure_mcp_coverage
+        await _ensure_mcp_coverage(db, start, end)
+
+    cache_key = f"all_branches:{start}:{end}"
     cached = _get_cached(cache_key)
     if cached is not None:
         return cached
@@ -164,7 +216,7 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
             return {}
 
     async def build_india():
-        return await _get_india_branches_from_db(db, await fetch_india_stock())
+        return await _get_india_branches_from_db(db, await fetch_india_stock(), start, end)
 
     india_task = build_india()
 
@@ -260,6 +312,8 @@ async def get_all_branches(db: AsyncSession) -> list[dict[str, Any]]:
     mcp_task = fetch_mcp_branches()
 
     india_branches, mcp_branches = await asyncio.gather(india_task, mcp_task)
+    # After the gather, not inside it: one DB session can't run two queries at once.
+    await _fill_non_india_revenue(db, mcp_branches, start, end, is_default_range)
 
     # Merge: India from DB + others from MCP
     all_branches = india_branches + mcp_branches

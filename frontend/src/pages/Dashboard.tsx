@@ -235,11 +235,13 @@ export default function Dashboard() {
   const fetchBranches = useCallback(async () => {
     setBranchesLoading(true);
     try {
-      const res = await api.fetchRaw("/mcp/branches");
+      // Scoped to the same period as everything else on the page, so this
+      // list changes when Today / 7 Days / Month / Custom is picked.
+      const res = await api.fetchRaw(`/mcp/branches?start=${effectiveRange.from}&end=${effectiveRange.to}`);
       if (res.ok) setBranchesData(await res.json());
     } catch {}
     setBranchesLoading(false);
-  }, []);
+  }, [effectiveRange]);
 
   const fetchSyncStatus = useCallback(async () => {
     try {
@@ -1174,7 +1176,7 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="text-xs text-[var(--text-muted)] mb-4">
-              {branchesData.length} branches across {new Set(branchesData.map((b: any) => b.country)).size} countries
+              {branchesData.length} branches across {new Set(branchesData.map((b: any) => b.country)).size} countries \u00b7 revenue and target for {effectiveRange.from === effectiveRange.to ? effectiveRange.from : `${effectiveRange.from} to ${effectiveRange.to}`}
             </p>
 
             {/* Summary cards by country */}
@@ -1260,12 +1262,19 @@ export default function Dashboard() {
                             <div className="flex items-center gap-4 shrink-0">
                               <div className="text-right">
                                 <p className="text-[10px] text-[var(--text-muted)]">Target</p>
-                                <p className="text-xs font-medium text-white">{b.target > 0 ? fmtByCountry(b.target, b.country) : "—"}</p>
+                                <p className="text-xs font-medium text-white">{b.target > 0 ? fmtByCountry(b.target, b.country) : "\u2014"}</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-[10px] text-[var(--text-muted)]">Achieved</p>
-                                <p className={`text-xs font-bold ${b.achievement_pct >= 65 ? "text-emerald-400" : b.achievement_pct >= 35 ? "text-amber-400" : "text-red-400"}`}>
-                                  {b.achievement_pct > 0 ? `${b.achievement_pct.toFixed(1)}%` : "—"}
+                                <p className="text-xs font-medium text-white">{b.actual > 0 ? fmtByCountry(b.actual, b.country) : "\u2014"}</p>
+                              </div>
+                              <div className="text-right w-12">
+                                <p className="text-[10px] text-[var(--text-muted)]">Ach %</p>
+                                <p
+                                  className={`text-xs font-bold ${b.target > 0 ? (b.achievement_pct >= 65 ? "text-emerald-400" : b.achievement_pct >= 35 ? "text-amber-400" : "text-red-400") : "text-[var(--text-muted)]"}`}
+                                  title={b.target > 0 ? "" : "No target is set for this branch, so there is no achievement %"}
+                                >
+                                  {b.target > 0 ? `${b.achievement_pct.toFixed(1)}%` : "\u2014"}
                                 </p>
                               </div>
                               <div className="text-right">
