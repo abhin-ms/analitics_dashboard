@@ -460,3 +460,50 @@ async def get_instagram_stats(
         leads_generated=leads_generated,
         credits_used=credits_used,
     )
+
+
+@router.get("/usage-by-customer")
+async def get_usage_by_customer(
+    ig_account_id: Optional[int] = Query(None),
+    days: int = Query(30, le=90),
+    _user: User = require_permission("instagram", "view"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real token/cost spend per Instagram customer — answers "which
+    conversations are actually costing money" instead of only a single
+    company-wide total, by joining each usage log back to the conversation
+    it was generated for."""
+    since = datetime.utcnow() - timedelta(days=days)
+
+    query = (
+        select(
+            IGConversation.id,
+            IGConversation.customer_name,
+            IGConversation.ig_user_id,
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.input_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.output_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.cost_estimate), 0),
+        )
+        .join(AIUsageLog, AIUsageLog.conversation_id == IGConversation.id)
+        .where(AIUsageLog.created_at >= since)
+        .group_by(IGConversation.id, IGConversation.customer_name, IGConversation.ig_user_id)
+        .order_by(func.sum(AIUsageLog.cost_estimate).desc())
+    )
+    if ig_account_id:
+        query = query.where(IGConversation.ig_account_id == ig_account_id)
+
+    rows = (await db.execute(query)).all()
+    return [
+        {
+            "conversation_id": conv_id,
+            "customer_name": name or "",
+            "ig_user_id": ig_user_id,
+            "ai_replies": replies,
+            "input_tokens": int(in_tok),
+            "output_tokens": int(out_tok),
+            "total_tokens": int(in_tok) + int(out_tok),
+            "cost_usd": round(float(cost), 6),
+        }
+        for conv_id, name, ig_user_id, replies, in_tok, out_tok, cost in rows
+    ]

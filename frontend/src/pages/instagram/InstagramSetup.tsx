@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import {
   Settings, Camera, Bot, Key, Save, AlertCircle, CheckCircle, XCircle,
   Plus, Trash2, Power, PowerOff, X, Check, GripVertical, ChevronDown, ChevronUp,
-  MessageSquare, Shield, Brain, Link as LinkIcon,
+  MessageSquare, Shield, Brain, Link as LinkIcon, MapPin,
 } from "lucide-react";
 import type { IGAccount, AIProvider, IGBotSettings, IGForm, IGFormField } from "./types";
 
@@ -80,6 +80,80 @@ export default function InstagramSetup() {
   );
 }
 
+// Store address + optional Google Maps link, editable inline under the
+// Instagram account it's linked to — so the bot (and staff) have a real
+// location to give a customer, which previously existed nowhere in the
+// system (Store only ever had a short region code like "AUH").
+function StoreLocationEditor({ store }: { store: any }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [address, setAddress] = useState(store.address || "");
+  const [mapsLink, setMapsLink] = useState(store.maps_link || "");
+
+  useEffect(() => {
+    setAddress(store.address || "");
+    setMapsLink(store.maps_link || "");
+  }, [store.id, store.address, store.maps_link]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.put(`/stores/${store.id}`, { address, maps_link: mapsLink }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["stores-list"] });
+      setEditing(false);
+    },
+  });
+
+  return (
+    <div className="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+          <MapPin size={13} className="text-blue-400" />
+          <span className="font-semibold text-[var(--text-secondary)]">{store.name}</span>
+          {store.region && <span>· {store.region}</span>}
+        </div>
+        {!editing && (
+          <button onClick={() => setEditing(true)} className="text-[10px] font-semibold text-blue-400 hover:text-blue-300">
+            {store.address ? "Edit location" : "Add location"}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="mt-2 space-y-2">
+          <textarea
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            rows={2}
+            placeholder="Full store address, e.g. Shop 12, MG Road, Kochi, Kerala 682016"
+            className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)] text-xs text-white resize-none"
+          />
+          <input
+            value={mapsLink}
+            onChange={(e) => setMapsLink(e.target.value)}
+            placeholder="Google Maps link (optional) — e.g. https://maps.app.goo.gl/..."
+            className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)] text-xs text-white"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-[11px] font-semibold hover:bg-blue-600 disabled:opacity-50">
+              <Check size={12} /> Save
+            </button>
+            <button onClick={() => { setEditing(false); setAddress(store.address || ""); setMapsLink(store.maps_link || ""); }} className="px-3 py-1.5 rounded-lg bg-white/5 text-[var(--text-muted)] text-[11px] font-semibold hover:bg-white/10">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+          {store.address || <span className="italic">No location set — the bot can't give this store's address yet.</span>}
+          {store.maps_link && (
+            <a href={store.maps_link} target="_blank" rel="noreferrer" className="ml-2 text-blue-400 hover:underline">Map link</a>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Accounts Tab ──────────────────────────────────────────────────
 function AccountsTab() {
   const queryClient = useQueryClient();
@@ -91,6 +165,14 @@ function AccountsTab() {
     queryKey: ["ig-accounts"],
     queryFn: () => api.get<IGAccount[]>("/instagram/accounts"),
   });
+
+  // Every account's linked store, so the bot has a real address to give a
+  // customer instead of no location data anywhere in the system.
+  const { data: stores } = useQuery({
+    queryKey: ["stores-list"],
+    queryFn: () => api.get<any[]>("/stores/"),
+  });
+  const storeById = new Map((stores || []).map((s: any) => [s.id, s]));
 
   const createMutation = useMutation({
     mutationFn: (data: any) => api.post("/instagram/accounts", data),
@@ -166,6 +248,15 @@ function AccountsTab() {
               <label className="text-xs font-semibold text-[var(--text-muted)] mb-1 block">Access Token</label>
               <input type="password" value={form.access_token} onChange={(e) => setForm({ ...form, access_token: e.target.value })} className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)] text-sm text-white font-mono" placeholder={editingId ? "Leave blank to keep current" : "Paste long-lived token"} />
             </div>
+            <div>
+              <label className="text-xs font-semibold text-[var(--text-muted)] mb-1 block">Linked Store</label>
+              <select value={form.store_id} onChange={(e) => setForm({ ...form, store_id: e.target.value })} className="w-full px-3 py-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)] text-sm text-white">
+                <option value="">None</option>
+                {(stores || []).map((s: any) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.region ? ` (${s.region})` : ""}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="flex gap-2">
             <button onClick={handleSubmit} disabled={(!form.ig_user_id || !form.page_id || !form.access_token) && !editingId} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white text-xs font-semibold hover:bg-blue-600 transition-colors disabled:opacity-50">
@@ -198,6 +289,9 @@ function AccountsTab() {
                   <button onClick={() => deleteMutation.mutate(a.id)} className="p-1.5 rounded-lg hover:bg-white/5"><Trash2 size={14} className="text-rose-400" /></button>
                 </div>
               </div>
+              {a.store_id && storeById.get(a.store_id) && (
+                <StoreLocationEditor store={storeById.get(a.store_id)} />
+              )}
             </div>
           ))}
         </div>

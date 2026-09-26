@@ -25,6 +25,10 @@ async def connect(sid, environ, auth):
         "user_id": payload.get("sub"),
         "role": payload.get("role"),
     })
+    # Per-user room so CRM alerts reach only their recipient. The existing
+    # broadcast ("data:refresh") still goes to everyone as before.
+    if payload.get("sub"):
+        await sio.enter_room(sid, f"user:{payload.get('sub')}")
     logger.info(f"[Socket.IO] Client connected: {sid}")
 
 

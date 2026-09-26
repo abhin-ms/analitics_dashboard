@@ -85,6 +85,9 @@ class User(Base):
     # Explicit "reports to" link for Telecaller/Salesperson, replacing the
     # old implicit inference-by-shared-sheet-name for this specific question.
     team_leader_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Telecalling CRM: a telecaller can mark themselves "Away" so automatic
+    # round-robin assignment and 15-minute reassignment skip them.
+    available_for_leads = Column(Boolean, default=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -120,6 +123,11 @@ class Store(Base):
     variable_cost_pct = Column(Numeric(5, 2), default=0)
     is_active = Column(Boolean, default=True)
     region = Column(String(50), default="")
+    # Free-text street address and an optional Google Maps link, so the
+    # Instagram bot (and staff) can give a customer a real location —
+    # previously nowhere in the system, only the short region code above.
+    address = Column(Text, nullable=True)
+    maps_link = Column(String(500), nullable=True)
     country = Column(String(50), default="India")
     mcp_country_id = Column(Integer, nullable=True)
     mcp_shop_name = Column(String(150), nullable=True, unique=True)
@@ -688,8 +696,37 @@ class TeleCallLead(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # ── Telecalling CRM layer (migration 011) ──
+    # App-owned fields. The sheet sync never writes these from sheet columns;
+    # they are derived or set by people in the app. All nullable so existing
+    # rows and the existing pages keep working untouched.
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    assigned_at = Column(DateTime, nullable=True)
+    assignment_source = Column(String(20), nullable=True)  # sheet | auto | manual
+    reassign_count = Column(Integer, default=0, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)  # parsed Meta "Created Time" (UTC)
+    first_contact_at = Column(DateTime, nullable=True)
+    last_contact_at = Column(DateTime, nullable=True)
+    next_follow_up_at = Column(DateTime, nullable=True, index=True)
+    is_urgent = Column(Boolean, default=False, nullable=True)
+    escalated_at = Column(DateTime, nullable=True)
+    stage = Column(String(30), nullable=True)
+    stage_manual = Column(Boolean, default=False, nullable=True)
+    priority = Column(String(10), nullable=True)  # hot | warm | cold
+    priority_manual = Column(Boolean, default=False, nullable=True)
+    phone_model = Column(String(100), nullable=True)
+    service_type = Column(String(100), nullable=True)
+    coverage = Column(String(50), nullable=True)
+    potential_value = Column(Numeric(12, 2), nullable=True)
+    sheet_status_raw = Column(String(100), nullable=True)
+    # Names of fields changed in the app, so the sync never overwrites them.
+    edited_fields = Column(JSON, nullable=True)
+
+    owner = relationship("User", foreign_keys=[owner_user_id])
+
     __table_args__ = (
         Index("ix_tele_leads_tl_status", "sheet_tl_name", "status"),
+        Index("ix_tele_leads_tl_stage", "sheet_tl_name", "stage"),
     )
 
 
@@ -706,6 +743,132 @@ class TeleSheetAssignment(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "sheet_tl_name"),
     )
+
+
+# ── Telecalling CRM (migration 011) ────────────────────────────────
+class TeleLeadActivity(Base):
+    """Timeline entry for a tele call lead: calls, status/stage changes,
+    assignments, notes. user_id NULL means the system did it."""
+    __tablename__ = "tele_lead_activities"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    type = Column(String(30), nullable=False)
+    outcome = Column(String(40), nullable=True)
+    old_value = Column(String(200), nullable=True)
+    new_value = Column(String(200), nullable=True)
+    notes = Column(Text, nullable=True)
+    meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+    __table_args__ = (
+        Index("ix_tele_act_lead_time", "lead_id", "created_at"),
+        Index("ix_tele_act_user_time", "user_id", "created_at"),
+    )
+
+
+class TeleLeadFollowup(Base):
+    """A due action on a lead. owner_user_id is the owner AT THAT TIME and is
+    never rewritten: a reassignment closes this row as 'reassigned' and opens
+    a new one, so a missed deadline stays with the person who missed it."""
+    __tablename__ = "tele_lead_followups"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=False)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    kind = Column(String(30), nullable=False, default="call")
+    due_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    outcome = Column(String(40), nullable=True)
+    status = Column(String(20), nullable=False, default="open")
+    attempt_no = Column(Integer, default=1)
+    reason = Column(String(200), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    lead = relationship("TeleCallLead", foreign_keys=[lead_id])
+    owner = relationship("User", foreign_keys=[owner_user_id])
+
+    __table_args__ = (
+        Index("ix_tele_fu_owner_status_due", "owner_user_id", "status", "due_at"),
+        Index("ix_tele_fu_lead_status", "lead_id", "status"),
+    )
+
+
+class TeleAppointment(Base):
+    __tablename__ = "tele_appointments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=False)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)
+    scheduled_at = Column(DateTime, nullable=False)
+    purpose = Column(String(200), nullable=True)
+    attendance = Column(String(20), nullable=False, default="scheduled")
+    source = Column(String(10), nullable=False, default="app")  # app | sheet
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    lead = relationship("TeleCallLead", foreign_keys=[lead_id])
+    store = relationship("Store", foreign_keys=[store_id])
+
+    __table_args__ = (
+        Index("ix_tele_appt_time", "scheduled_at"),
+    )
+
+
+class CrmAlert(Base):
+    """Operational alert for one recipient. Acknowledging does not resolve;
+    resolved_at is set when the underlying follow-up is handled."""
+    __tablename__ = "crm_alerts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=True)
+    followup_id = Column(Integer, ForeignKey("tele_lead_followups.id", ondelete="SET NULL"), nullable=True)
+    recipient_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    kind = Column(String(40), nullable=False)
+    level = Column(Integer, default=1)  # 1 owner, 2 team leader, 3 admin
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    acknowledged_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    dedupe_key = Column(String(150), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_crm_alert_recipient", "recipient_user_id", "resolved_at"),
+    )
+
+
+class PriceBookEntry(Base):
+    """One price for phone model + service + coverage. price NULL means the
+    rate still needs review."""
+    __tablename__ = "price_book_entries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    phone_model = Column(String(100), nullable=False)
+    service_type = Column(String(100), nullable=False)
+    coverage = Column(String(50), nullable=False, default="Standard")
+    price = Column(Numeric(12, 2), nullable=True)
+    is_active = Column(Boolean, default=True)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("phone_model", "service_type", "coverage", name="uq_price_book_entry"),
+    )
+
+
+class CrmSavedView(Base):
+    __tablename__ = "crm_saved_views"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    page = Column(String(50), nullable=False, default="leads")
+    name = Column(String(100), nullable=False)
+    filters = Column(JSON, nullable=True)
+    columns = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class AISummaryRun(Base):

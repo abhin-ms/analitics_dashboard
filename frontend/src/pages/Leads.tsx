@@ -8,19 +8,9 @@ import { TableSkeleton } from "@/components/shared/Skeleton";
 
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
 
-// Same status vocabulary/colors as TeleCallLeads.tsx, so this summary and
-// the detail page telecallers actually work in read as one consistent view.
-const STATUS_COLORS: Record<string, string> = {
-  "Call Not Connected": "#ef4444",
-  "Call back later": "#f59e0b",
-  "Not Interested": "#6b7280",
-  "Will Visit": "#3b82f6",
-  "Appointment": "#8b5cf6",
-  "Sale Conversion": "#10b981",
-  "Wrong number": "#6b7280",
-  "Unattended": "#f97316",
-  "No Status": "#4b5563",
-};
+// Same status vocabulary/colors as every other telecalling page (shared
+// config), so this summary and the pages telecallers work in read alike.
+import { STATUS_COLORS } from "@/features/crm/statusConfig";
 
 export default function Leads() {
   const [searchParams] = useSearchParams();

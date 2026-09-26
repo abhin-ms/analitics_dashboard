@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 import { StatCard } from "@/components/shared/StatCard";
@@ -11,6 +12,9 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar, CartesianGrid, Legend,
 } from "recharts";
+import { statusColor } from "@/features/crm/statusConfig";
+import { TeamCrmPanel } from "@/features/crm/components/DashboardPanels";
+import { PeriodKey, periodRange } from "@/features/crm/components/shared";
 
 const COLORS = ["#3b82f6", "#10b981", "#a855f7", "#f97316", "#ec4899", "#06b6d4", "#f59e0b", "#ef4444"];
 
@@ -22,10 +26,16 @@ function fmtINR(n: number) {
 function ragColor(p: number) { return p >= 65 ? "#10b981" : p >= 35 ? "#f59e0b" : "#ef4444"; }
 
 export default function TeamLeaderDashboard() {
+  // "All time" by default, so the original numbers below stay as they were.
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("all");
+  const [custom, setCustom] = useState(() => periodRange("month"));
+  const range = periodRange(periodKey, custom);
+  const qs = range.start ? `?start=${range.start}&end=${range.end}` : "";
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard", "team-leader"],
-    queryFn: () => api.get<any>("/dashboard/team-leader"),
+    queryKey: ["dashboard", "team-leader", qs],
+    queryFn: () => api.get<any>(`/dashboard/team-leader${qs}`),
     refetchInterval: 300000,
+    placeholderData: (prev) => prev,
   });
 
   if (isLoading) return <div className="p-6"><TableSkeleton /></div>;
@@ -46,6 +56,9 @@ export default function TeamLeaderDashboard() {
             Your stores, leads, and telecaller analytics
           </p>
         </div>
+
+        {/* Telecalling: team queue, status, status-by-telecaller, performance (new) */}
+        <TeamCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -120,8 +133,8 @@ export default function TeamLeaderDashboard() {
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
                     <Pie data={funnelData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} innerRadius={40}>
-                      {funnelData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      {funnelData.map((f, i) => (
+                        <Cell key={i} fill={statusColor(f.name)} />
                       ))}
                     </Pie>
                     <Tooltip
@@ -135,7 +148,7 @@ export default function TeamLeaderDashboard() {
                   {funnelData.slice(0, 6).map((f, i) => (
                     <div key={f.name} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: statusColor(f.name) }} />
                         <span className="text-[var(--text-secondary)]">{f.name}</span>
                       </div>
                       <span className="font-semibold text-white">{f.value}</span>

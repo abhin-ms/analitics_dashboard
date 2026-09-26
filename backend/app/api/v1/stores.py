@@ -24,6 +24,7 @@ def _to_store_response(store: Store, tl: User | None) -> StoreResponse:
         fixed_costs=float(store.fixed_costs),
         variable_cost_pct=float(store.variable_cost_pct),
         is_active=store.is_active, region=store.region or "",
+        address=store.address or "", maps_link=store.maps_link or "",
         country=store.country or "India", needs_review=store.needs_review or False,
         created_at=store.created_at,
     )

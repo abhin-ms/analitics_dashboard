@@ -64,6 +64,31 @@ async def sync_tele_call_leads():
         logger.error("Tele call leads sync error: %s", e)
 
 
+async def crm_automation_tick():
+    # Telecalling CRM: first-call SLA (5/15/60 min), overdue follow-up
+    # routing and alert clean-up — see app/services/crm/automation.py.
+    from ..db.session import AsyncSessionLocal
+    from ..services.crm.automation import run_automation_tick
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await run_automation_tick(db)
+    except Exception as e:
+        logger.error("CRM automation tick error: %s", e)
+
+
+async def crm_weekly_notifications():
+    from ..db.session import AsyncSessionLocal
+    from ..services.crm.automation import generate_weekly_notifications
+
+    try:
+        async with AsyncSessionLocal() as db:
+            count = await generate_weekly_notifications(db)
+            logger.info("CRM weekly performance notifications created: %s", count)
+    except Exception as e:
+        logger.error("CRM weekly notifications error: %s", e)
+
+
 async def sync_mcp():
     # Keeps mcp_daily_sales and every store's monthly_target fresh from MCP
     # automatically, independent of anyone clicking "Sync Now" — that manual
@@ -123,10 +148,13 @@ def start_scheduler():
         coalesce=True,
         misfire_grace_time=600,
     )
+    # Every minute (was 5): the telecalling first-call target is 5 minutes,
+    # so a new Meta lead must reach the app well inside that window. That is
+    # 5 sheet reads a minute — far inside the Google Sheets API quota.
     scheduler.add_job(
         sync_tele_call_leads,
         "interval",
-        minutes=5,
+        minutes=1,
         id="tele_call_leads_sync",
         replace_existing=True,
         max_instances=1,
@@ -161,5 +189,29 @@ def start_scheduler():
         misfire_grace_time=600,
         next_run_time=datetime.now(),
     )
+    scheduler.add_job(
+        crm_automation_tick,
+        "interval",
+        minutes=1,
+        id="crm_automation_tick",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
+    )
+    scheduler.add_job(
+        crm_weekly_notifications,
+        "cron",
+        day_of_week="mon",
+        hour=9,
+        minute=0,
+        timezone="Asia/Kolkata",
+        id="crm_weekly_notifications",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
     scheduler.start()
-    logger.info("Scheduler started (sheet sync: 1min, tele call: 5min, Instagram poll: 15min, MCP sync: 15min, insight engine: 30min)")
+    logger.info("Scheduler started (sheet sync: 1min, tele call: 1min, CRM automation: 1min, "
+                "Instagram poll: 15min, MCP sync: 15min, insight engine: 30min, CRM weekly: Mon 09:00 IST)")

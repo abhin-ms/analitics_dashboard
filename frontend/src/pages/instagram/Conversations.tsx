@@ -43,17 +43,19 @@ export default function Conversations() {
           <div className={`${selectedConv ? "hidden lg:block" : "w-full"} lg:w-96 space-y-3`}>
             {/* Filter Tabs */}
             <div className="flex gap-2">
-              {["active", "archived"].map((s) => (
+              {["active", "needs_attention", "archived"].map((s) => (
                 <button
                   key={s}
                   onClick={() => { setFilter(s); setSelectedConv(null); }}
                   className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
                     filter === s
-                      ? "bg-pink-500/20 text-pink-400 border border-pink-500/30"
+                      ? s === "needs_attention"
+                        ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                        : "bg-pink-500/20 text-pink-400 border border-pink-500/30"
                       : "bg-[var(--bg-card)] text-[var(--text-muted)] border border-[var(--border-subtle)] hover:text-white"
                   }`}
                 >
-                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                  {s === "needs_attention" ? "Needs Attention" : s.charAt(0).toUpperCase() + s.slice(1)}
                 </button>
               ))}
             </div>

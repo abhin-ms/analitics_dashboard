@@ -29,6 +29,17 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/instagram/conversations": { title: "Conversations", subtitle: "Instagram DM Conversations" },
   "/instagram/rules": { title: "Comment Rules", subtitle: "Automated Comment Response Rules" },
   "/instagram/submissions": { title: "Form Submissions", subtitle: "Instagram Form Submissions" },
+  "/leads/update": { title: "Leads Update", subtitle: "Update tele-call leads from the city sheets" },
+  "/crm": { title: "Today", subtitle: "Telecalling · your plan for today" },
+  "/crm/leads": { title: "Leads", subtitle: "Telecalling · statuses, owners and follow-ups" },
+  "/crm/pipeline": { title: "Pipeline", subtitle: "Telecalling · leads by stage" },
+  "/crm/appointments": { title: "Appointments", subtitle: "Telecalling · store visits and attendance" },
+  "/crm/tasks": { title: "Tasks", subtitle: "Telecalling · follow-ups due" },
+  "/crm/reports": { title: "Reports", subtitle: "Telecalling · agent performance" },
+  "/crm/alerts": { title: "Alerts", subtitle: "Telecalling · manager inbox" },
+  "/crm/automation": { title: "Automation", subtitle: "Telecalling · contact workflow rules" },
+  "/crm/pricing": { title: "Pricing", subtitle: "Telecalling · phone model price book" },
+  "/settings/crm": { title: "Telecalling Settings", subtitle: "Access, integrations and data quality" },
 };
 
 export function Header() {

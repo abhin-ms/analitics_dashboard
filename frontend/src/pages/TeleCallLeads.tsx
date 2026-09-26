@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { DatePicker } from "@/components/shared/DatePicker";
 import { PhoneActions } from "@/components/shared/PhoneActions";
+import { STATUS_OPTIONS, STATUS_COLORS } from "@/features/crm/statusConfig";
+import { openLead } from "@/features/crm/components/LeadDrawer";
 
 interface Lead {
   id: number;
@@ -49,28 +51,8 @@ interface Telecaller {
   sheet: string;
 }
 
-const STATUS_OPTIONS = [
-  "Call Not Connected",
-  "Call back later",
-  "Not Interested",
-  "Will Visit",
-  "Appointment",
-  "Sale Conversion",
-  "Wrong number",
-  "Unattended",
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  "Call Not Connected": "#ef4444",
-  "Call back later": "#f59e0b",
-  "Not Interested": "#6b7280",
-  "Will Visit": "#3b82f6",
-  "Appointment": "#8b5cf6",
-  "Sale Conversion": "#10b981",
-  "Wrong number": "#6b7280",
-  "Unattended": "#f97316",
-  "No Status": "#64748b",
-};
+// Status list and colours now come from the shared telecalling config
+// (same values as before), so every page shows statuses identically.
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
   "Call Not Connected": <PhoneOff size={14} />,
@@ -494,7 +476,8 @@ export default function TeleCallLeads() {
                             <div key={lead.id} className="p-4 space-y-3">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="font-semibold text-white truncate">{lead.full_name}</p>
+                                  <button onClick={() => openLead(lead.id)} title="Open lead details and timeline"
+                                    className="font-semibold text-white truncate hover:underline cursor-pointer text-left block max-w-full">{lead.full_name}</button>
                                   <PhoneActions phone={lead.phone} size="md" className="mt-0.5" />
                                 </div>
                                 <span
@@ -575,7 +558,10 @@ export default function TeleCallLeads() {
                             <tbody className="divide-y divide-[var(--border-subtle)]">
                               {filteredLeads.map((lead) => (
                                 <tr key={lead.id} className="hover:bg-[var(--bg-card-hover)] transition-colors">
-                                  <td className="py-3 px-4 font-medium text-white max-w-[180px] truncate">{lead.full_name}</td>
+                                  <td className="py-3 px-4 font-medium text-white max-w-[180px] truncate">
+                                    <button onClick={() => openLead(lead.id)} title="Open lead details and timeline"
+                                      className="hover:underline cursor-pointer text-left truncate max-w-full">{lead.full_name}</button>
+                                  </td>
                                   <td className="py-3 px-4 text-xs text-[var(--text-secondary)] font-mono"><PhoneActions phone={lead.phone} /></td>
                                   <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
                                     {editingLead === lead.id ? (

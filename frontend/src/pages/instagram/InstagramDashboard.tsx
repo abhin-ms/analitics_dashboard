@@ -30,6 +30,16 @@ export default function InstagramDashboard() {
     },
   });
 
+  // Real per-customer spend — the company-wide total above can't show
+  // which specific conversations are actually costing money.
+  const { data: usageByCustomer } = useQuery({
+    queryKey: ["ig-usage-by-customer", selectedAccount],
+    queryFn: () => {
+      const params = selectedAccount ? `?ig_account_id=${selectedAccount}` : "";
+      return api.get<any[]>(`/instagram/usage-by-customer${params}`);
+    },
+  });
+
   const primaryAccount = accounts?.[0];
   const creditsData = stats?.credits_used
     ? Object.entries(stats.credits_used).map(([provider, data]) => ({
@@ -147,6 +157,48 @@ export default function InstagramDashboard() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Token consumption per customer */}
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5">
+          <h3 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+            <Coins size={16} className="text-yellow-400" />
+            Token Consumption by Customer
+          </h3>
+          <p className="text-xs text-[var(--text-muted)] mb-4">Real spend per conversation, last 30 days</p>
+          {usageByCustomer && usageByCustomer.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead>
+                  <tr className="text-[var(--text-muted)] text-xs uppercase tracking-wider border-b border-[var(--border-subtle)]">
+                    <th className="py-2.5 px-3 font-semibold">Customer</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">AI Replies</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">Input Tokens</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">Output Tokens</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">Total Tokens</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">Cost (USD)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {usageByCustomer.map((row: any) => (
+                    <tr key={row.conversation_id} className="hover:bg-[var(--bg-card-hover)] transition-colors">
+                      <td className="py-2.5 px-3 font-medium text-white">
+                        {row.customer_name || row.ig_user_id}
+                        {row.customer_name && <span className="ml-1.5 text-[10px] text-[var(--text-muted)]">@{row.ig_user_id}</span>}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-[var(--text-secondary)]">{row.ai_replies}</td>
+                      <td className="py-2.5 px-3 text-right text-[var(--text-secondary)]">{row.input_tokens.toLocaleString()}</td>
+                      <td className="py-2.5 px-3 text-right text-[var(--text-secondary)]">{row.output_tokens.toLocaleString()}</td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-white">{row.total_tokens.toLocaleString()}</td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-emerald-400">${row.cost_usd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-xs text-[var(--text-muted)]">No AI conversations with usage yet</div>
+          )}
         </div>
 
         {/* Account Status */}

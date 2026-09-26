@@ -8,20 +8,22 @@ from .models import (
 )
 from .form_models import IGForm, IGFormField, IGFormSubmission
 from .graph_client import InstagramGraphClient
-from .ai_service import ai_service, build_system_prompt
+from .ai_service import ai_service, build_system_prompt, AIResponse
 from .utils import decrypt_token
-from ..models.models import Lead
+from ..models.models import Lead, Store, StoreMcpAlias
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
-LEAD_SIGNALS = [
-    r"\b(price|pricing|cost|how much|rate|quote)\b",
-    r"\b(buy|purchase|order|book|interested|want to buy)\b",
-    r"\b(demo|trial|schedule|appointment|visit|come to store)\b",
-    r"\b(delivery|shipping|available|stock|when)\b",
-    r"\b(contact|phone|email|whatsapp|call me)\b",
-]
+
+def _normalize_text(name: str) -> str:
+    return re.sub(r"\s+", " ", name.strip().lower())
+
+
+# Simple phone-shape check used only as a last resort if the AI's own
+# extraction misses one — the AI extracting it directly (ROUTE_CONVERSATION_TOOL's
+# extracted_phone field) is the primary, more reliable path.
+_PHONE_RE = re.compile(r"(\+?\d[\d\s-]{7,}\d)")
 
 
 class BotEngine:
@@ -165,6 +167,20 @@ class BotEngine:
         await self.db.flush()
         return True
 
+    async def _resolve_lead_store_id(self, conversation: IGConversation) -> int:
+        """The linked store if the account has one configured, otherwise
+        the 'Unassigned (Instagram)' placeholder — Lead.store_id is NOT
+        NULL, so without this fallback every lead captured on an account
+        that hasn't been linked to a store yet would fail to save at all."""
+        from ..services.common import get_or_create_unassigned_store
+        account = (await self.db.execute(
+            select(IGAccount).where(IGAccount.id == conversation.ig_account_id)
+        )).scalar_one_or_none()
+        if account and account.store_id:
+            return account.store_id
+        placeholder = await get_or_create_unassigned_store(self.db)
+        return placeholder.id
+
     async def _create_lead_from_submission(
         self, submission: IGFormSubmission, conversation: IGConversation
     ):
@@ -173,7 +189,7 @@ class BotEngine:
         phone = data.get("phone", "")
 
         lead = Lead(
-            store_id=None,
+            store_id=await self._resolve_lead_store_id(conversation),
             source="instagram",
             name=name,
             phone=phone,
@@ -326,12 +342,14 @@ class BotEngine:
             active_forms = await self._get_active_forms(ig_account.id)
             active_faqs = await self._get_active_faqs(ig_account.id)
             already_triggered = await self._get_triggered_forms(conversation.id)
+            stock_lookup = await self._build_stock_lookup(ig_account)
 
             enhanced_prompt = build_system_prompt(
                 base_prompt=bot_settings.ai_system_prompt,
                 active_forms=active_forms,
                 active_faqs=active_faqs,
                 already_triggered_forms=already_triggered,
+                stock_lookup_available=stock_lookup is not None,
             )
 
             history_result = await self.db.execute(
@@ -355,6 +373,7 @@ class BotEngine:
                 provider_name=provider.provider,
                 api_key=api_key,
                 model=provider.model_name,
+                stock_lookup=stock_lookup,
             )
 
             if response.reply_text:
@@ -403,12 +422,16 @@ class BotEngine:
                 self.db.add(usage_log)
 
             conversation.last_message_at = inbound.created_at
+            # A complaint needs a human, not the bot continuing to reply as
+            # if everything's normal — surfacing it on the conversation
+            # status makes it findable/filterable from the Conversations
+            # page instead of sitting silently in the message history.
+            if response.action == "complaint":
+                conversation.status = "needs_attention"
             await self.db.flush()
 
             if bot_settings.lead_qualification_enabled:
-                await self._qualify_lead(
-                    conversation, message_text, response.reply_text or ""
-                )
+                await self._capture_passive_lead(conversation, response, message_text)
         finally:
             await client.close()
 
@@ -547,33 +570,115 @@ class BotEngine:
         self.db.add(comment_record)
         await self.db.flush()
 
-    async def _qualify_lead(
-        self, conversation: IGConversation,
-        user_message: str, ai_response: str,
+    async def _capture_passive_lead(
+        self, conversation: IGConversation, response: AIResponse, user_message: str,
     ):
-        combined = f"{user_message} {ai_response}".lower()
-        is_lead = any(re.search(p, combined, re.IGNORECASE) for p in LEAD_SIGNALS)
-        if not is_lead:
+        """Creates or enriches a Lead whenever the customer has shared a
+        name and/or phone number anywhere in the conversation — in a form,
+        or just typed casually — instead of only reacting to a fixed list
+        of sales keywords (the old _qualify_lead, which also never
+        actually captured the phone number it was supposedly qualifying).
+        The AI is asked to extract these on every turn (see
+        ROUTE_CONVERSATION_TOOL's extracted_name/extracted_phone); a plain
+        regex is only a fallback for the phone in case that extraction
+        misses something obvious.
+        """
+        name = (response.extracted_name or "").strip()
+        phone = (response.extracted_phone or "").strip()
+        if not phone:
+            m = _PHONE_RE.search(user_message)
+            if m:
+                phone = m.group(1).strip()
+        if not name and not phone:
             return
 
-        existing_lead = await self.db.execute(
-            select(Lead).where(Lead.id == conversation.lead_id)
-        )
-        if existing_lead.scalar_one_or_none():
+        existing = None
+        if conversation.lead_id:
+            existing = (await self.db.execute(
+                select(Lead).where(Lead.id == conversation.lead_id)
+            )).scalar_one_or_none()
+
+        if existing:
+            if name and not existing.name:
+                existing.name = name
+            if phone and not existing.phone:
+                existing.phone = phone
+            await self.db.flush()
             return
 
         lead = Lead(
-            store_id=None,
+            store_id=await self._resolve_lead_store_id(conversation),
             source="instagram",
-            name=conversation.customer_name or conversation.ig_user_id,
-            phone="",
+            name=name or conversation.customer_name or conversation.ig_user_id,
+            phone=phone,
             status="warm",
-            stage="new",
+            stage=(
+                "complaint" if response.action == "complaint"
+                else "callback_requested" if response.action == "callback_request"
+                else "appointment_requested" if response.action == "appointment_request"
+                else "new"
+            ),
         )
         self.db.add(lead)
         await self.db.flush()
         conversation.lead_id = lead.id
         await self.db.flush()
+
+    async def _build_stock_lookup(self, ig_account: IGAccount):
+        """A closure the AI provider calls when the model asks to check
+        real stock — only wired up when this Instagram account is linked
+        to a store with a known MCP identity, otherwise the model is never
+        offered the tool at all and falls back to FAQ/general answers."""
+        if not ig_account.store_id:
+            return None
+        store = (await self.db.execute(
+            select(Store).where(Store.id == ig_account.store_id)
+        )).scalar_one_or_none()
+        if not store or not store.mcp_country_id:
+            return None
+
+        alias_names = set((await self.db.execute(
+            select(StoreMcpAlias.mcp_shop_name).where(StoreMcpAlias.store_id == store.id)
+        )).scalars().all())
+        if store.mcp_shop_name:
+            alias_names.add(store.mcp_shop_name)
+        if not alias_names:
+            return None
+        alias_keys = {_normalize_text(a) for a in alias_names}
+        country_id = store.mcp_country_id
+
+        async def lookup(query: str) -> str:
+            from ..services.smart_service_client import smart_service
+            from ..services.mcp_parsers import parse_shop_stock_position
+
+            try:
+                raw = await smart_service.shop_stock_position(country_id=country_id)
+            except Exception as e:
+                logger.warning("Stock lookup MCP call failed: %s", e)
+                return "Stock lookup is unavailable right now — tell the customer you'll confirm shortly, do not guess a number."
+
+            shops = parse_shop_stock_position(raw)
+            my_items = []
+            for s in shops:
+                if _normalize_text(s.get("shop", "")) in alias_keys:
+                    my_items.extend(s.get("items", []))
+
+            if not my_items:
+                return "No stock data is available for this store right now."
+
+            query_words = [w for w in _normalize_text(query).split() if len(w) > 2]
+            matches = []
+            for item in my_items:
+                model = item.get("model", "")
+                model_norm = _normalize_text(model)
+                if not query_words or any(w in model_norm for w in query_words):
+                    matches.append(f"{model}: {item.get('count', 0)} in stock")
+
+            if not matches:
+                return f"No item matching '{query}' was found in this store's current stock list."
+            return "; ".join(matches[:5])
+
+        return lookup
 
 
 async def poll_and_process_comments(db: AsyncSession):

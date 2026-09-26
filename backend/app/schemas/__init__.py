@@ -138,6 +138,8 @@ class StoreUpdate(BaseModel):
     variable_cost_pct: Optional[float] = None
     is_active: Optional[bool] = None
     region: Optional[str] = None
+    address: Optional[str] = None
+    maps_link: Optional[str] = None
     needs_review: Optional[bool] = None
 
 
@@ -155,6 +157,8 @@ class StoreResponse(BaseModel):
     variable_cost_pct: float
     is_active: bool
     region: str
+    address: str = ""
+    maps_link: str = ""
     country: str = "India"
     needs_review: bool = False
     created_at: Optional[datetime] = None

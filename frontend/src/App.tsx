@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { getSocket, disconnectSocket } from "./lib/socket";
@@ -39,6 +39,23 @@ import CommentRules from "./pages/instagram/CommentRules";
 import FormSubmissions from "./pages/instagram/FormSubmissions";
 import HostedForm from "./pages/instagram/HostedForm";
 import TeleCallLeads from "./pages/TeleCallLeads";
+import { TableSkeleton } from "./components/shared/Skeleton";
+
+// Telecalling CRM pages
+const CrmToday = lazy(() => import("./features/crm/pages/TodayPage"));
+const CrmLeads = lazy(() => import("./features/crm/pages/LeadsPage"));
+const CrmPipeline = lazy(() => import("./features/crm/pages/PipelinePage"));
+const CrmAppointments = lazy(() => import("./features/crm/pages/AppointmentsPage"));
+const CrmTasks = lazy(() => import("./features/crm/pages/TasksPage"));
+const CrmReports = lazy(() => import("./features/crm/pages/ReportsPage"));
+const CrmAlerts = lazy(() => import("./features/crm/pages/AlertsPage"));
+const CrmAutomation = lazy(() => import("./features/crm/pages/AutomationPage"));
+const CrmPricing = lazy(() => import("./features/crm/pages/PricingPage"));
+const CrmSettings = lazy(() => import("./features/crm/pages/CrmSettingsPage"));
+
+function Lazy({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<div className="p-6"><TableSkeleton /></div>}>{children}</Suspense>;
+}
 
 function SocketProvider({ children }: { children: React.ReactNode }) {
   // Keyed on presence, not the token's value — a silent token refresh
@@ -93,6 +110,16 @@ export default function App() {
           <Route path="/settings/currency" element={<CurrencySettings />} />
           <Route path="/settings/instagram-forms" element={<InstagramForms />} />
           <Route path="/settings/ai-providers" element={<AIProviders />} />
+          <Route path="/crm" element={<Lazy><CrmToday /></Lazy>} />
+          <Route path="/crm/leads" element={<Lazy><CrmLeads /></Lazy>} />
+          <Route path="/crm/pipeline" element={<Lazy><CrmPipeline /></Lazy>} />
+          <Route path="/crm/appointments" element={<Lazy><CrmAppointments /></Lazy>} />
+          <Route path="/crm/tasks" element={<Lazy><CrmTasks /></Lazy>} />
+          <Route path="/crm/reports" element={<Lazy><CrmReports /></Lazy>} />
+          <Route path="/crm/alerts" element={<Lazy><CrmAlerts /></Lazy>} />
+          <Route path="/crm/automation" element={<Lazy><CrmAutomation /></Lazy>} />
+          <Route path="/crm/pricing" element={<Lazy><CrmPricing /></Lazy>} />
+          <Route path="/settings/crm" element={<Lazy><CrmSettings /></Lazy>} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Route>
 

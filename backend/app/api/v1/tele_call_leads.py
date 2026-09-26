@@ -8,6 +8,10 @@ from ...db.session import get_db
 from ...models.models import TeleCallLead, TeleSheetAssignment, User, Role
 from ...services.tele_call_sync import sync_tele_call_leads, fetch_tele_leads_direct, TELE_CALL_SHEETS
 from ...core.deps import get_current_user
+from ...services.crm.config import get_aliases, get_automation, get_go_live
+from ...services.crm.engine import mark_edited, match_user_by_name, set_status_from_app, transfer_ownership
+from ...services.crm.scope import sheet_members
+from ...services.crm.timeutil import iso_utc, utcnow
 
 router = APIRouter(prefix="/tele-call-leads", tags=["Tele Call Leads"])
 
@@ -77,6 +81,12 @@ def _lead_to_dict(lead: TeleCallLead) -> dict:
         "product": lead.product,
         "salesperson": lead.salesperson,
         "sheet_tl_name": lead.sheet_tl_name,
+        # Telecalling CRM fields (additive)
+        "owner_user_id": lead.owner_user_id,
+        "stage": lead.stage,
+        "priority": lead.priority,
+        "next_follow_up_at": iso_utc(lead.next_follow_up_at),
+        "is_urgent": bool(lead.is_urgent),
     }
 
 
@@ -190,6 +200,9 @@ async def get_telecallers_for_my_sheets(
 
 @router.get("/status-summary")
 async def get_status_summary(
+    owner: str = Query("", description="'me' or a user id — only leads owned by that user"),
+    start: str = Query("", description="YYYY-MM-DD (IST) — leads received on/after"),
+    end: str = Query("", description="YYYY-MM-DD (IST) — leads received on/before"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -210,6 +223,22 @@ async def get_status_summary(
             return {"summary": {}}
     elif role_name == "Salesperson":
         query = query.where(TeleCallLead.person_calling == user.name)
+
+    if owner:
+        owner_id = user.id if owner == "me" else (int(owner) if owner.isdigit() else None)
+        if owner_id is None:
+            raise HTTPException(status_code=400, detail="owner must be 'me' or a user id")
+        query = query.where(TeleCallLead.owner_user_id == owner_id)
+    if start or end:
+        from datetime import date as _date
+        from ...services.crm.metrics import lead_date_col, period_bounds
+        try:
+            d_start = _date.fromisoformat(start) if start else _date(2000, 1, 1)
+            d_end = _date.fromisoformat(end) if end else _date(2100, 1, 1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start/end must be YYYY-MM-DD")
+        s_utc, e_utc = period_bounds(d_start, d_end)
+        query = query.where(lead_date_col() >= s_utc, lead_date_col() < e_utc)
 
     query = query.group_by(TeleCallLead.sheet_tl_name, TeleCallLead.status)
     rows = await db.execute(query)
@@ -237,9 +266,15 @@ async def sync_tele_call(
 
 @router.get("/live")
 async def get_tele_leads_live(
-    _user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
 ):
-    """Fetch tele call leads directly from Google Sheets (no DB, live)."""
+    """Fetch tele call leads directly from Google Sheets (no DB, live).
+    Admin-tier only: it returns every city's names and phone numbers with no
+    role scoping (no page in the app calls it)."""
+    role_name = await _get_user_role_name(db, user)
+    if role_name not in ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="Admin only")
     return await fetch_tele_leads_direct()
 
 
@@ -426,20 +461,30 @@ async def update_lead(
     if not await _check_lead_access(db, user, lead, role_name):
         raise HTTPException(status_code=403, detail="Access denied to this lead")
 
+    automation = await get_automation(db)
+    go_live = await get_go_live(db)
+    now = utcnow()
+
     if body.status is not None:
-        lead.status = body.status
+        # Same stored value as before (canonical spelling); additionally
+        # feeds the CRM timeline, stage/priority and follow-ups.
+        await set_status_from_app(db, lead, body.status, actor_id=user.id,
+                                  automation=automation, go_live=go_live, now=now)
     if body.person_calling is not None:
+        if body.person_calling != (lead.person_calling or ""):
+            mark_edited(lead, "person_calling")
         lead.person_calling = body.person_calling
-    if body.remarks is not None:
-        lead.remarks = body.remarks
-    if body.call_date is not None:
-        lead.call_date = body.call_date
-    if body.appointment_date is not None:
-        lead.appointment_date = body.appointment_date
-    if body.product is not None:
-        lead.product = body.product
-    if body.sale_amount is not None:
-        lead.sale_amount = body.sale_amount
+        members = await sheet_members(db, [lead.sheet_tl_name])
+        matched = match_user_by_name(body.person_calling, members, await get_aliases(db))
+        if matched and matched["id"] != lead.owner_user_id:
+            await transfer_ownership(db, lead, matched["id"], source="manual", actor_id=user.id, now=now,
+                                     automation=automation, reason="Person Calling changed on Leads Update")
+    for field in ("remarks", "call_date", "appointment_date", "product", "sale_amount"):
+        value = getattr(body, field)
+        if value is not None:
+            if value != (getattr(lead, field) or ""):
+                mark_edited(lead, field)
+            setattr(lead, field, value)
 
     if body.salesperson is not None and role_name in ("Team Leader",) + tuple(ADMIN_ROLES):
         lead.salesperson = body.salesperson

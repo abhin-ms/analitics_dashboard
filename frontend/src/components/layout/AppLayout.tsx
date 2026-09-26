@@ -4,6 +4,8 @@ import { Header } from "./Header";
 import { useAuthStore } from "@/lib/authStore";
 import { useUIStore } from "@/lib/uiStore";
 import { useEffect, useState } from "react";
+import { LeadDrawerHost } from "@/features/crm/components/LeadDrawer";
+import { CrmGlobalListeners } from "@/features/crm/components/shared";
 
 const SIDEBAR_EXPANDED = 256;
 const SIDEBAR_COLLAPSED = 80;
@@ -66,6 +68,9 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      {/* Telecalling CRM: lead drawer (opens from any page) + live alerts */}
+      <LeadDrawerHost />
+      <CrmGlobalListeners />
     </div>
   );
 }

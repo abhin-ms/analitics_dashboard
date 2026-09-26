@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 import { StatCard } from "@/components/shared/StatCard";
@@ -12,24 +13,23 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
-
-const STATUS_COLORS: Record<string, string> = {
-  "Sale Conversion": "#10b981",
-  "Appointment": "#3b82f6",
-  "Will Visit": "#a855f7",
-  "Call back later": "#f59e0b",
-  "Not Interested": "#ef4444",
-  "Call Not Connected": "#64748b",
-  "Wrong number": "#6b7280",
-  "Unattended": "#374151",
-};
+import { STATUS_COLORS } from "@/features/crm/statusConfig";
+import { TelecallerCrmPanel } from "@/features/crm/components/DashboardPanels";
+import { PeriodKey, periodRange } from "@/features/crm/components/shared";
+import { openLead } from "@/features/crm/components/LeadDrawer";
 const COLORS = ["#10b981", "#3b82f6", "#a855f7", "#f59e0b", "#ef4444", "#64748b", "#6b7280", "#374151"];
 
 export default function TelecallerDashboard() {
+  // "All time" by default, so the original numbers below stay as they were.
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("all");
+  const [custom, setCustom] = useState(() => periodRange("month"));
+  const range = periodRange(periodKey, custom);
+  const qs = range.start ? `?start=${range.start}&end=${range.end}` : "";
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard", "telecaller"],
-    queryFn: () => api.get<any>("/dashboard/telecaller"),
+    queryKey: ["dashboard", "telecaller", qs],
+    queryFn: () => api.get<any>(`/dashboard/telecaller${qs}`),
     refetchInterval: 300000,
+    placeholderData: (prev) => prev,
   });
 
   if (isLoading) return <div className="p-6"><TableSkeleton /></div>;
@@ -46,6 +46,9 @@ export default function TelecallerDashboard() {
             Your calling stats, lead conversions, and analytics
           </p>
         </div>
+
+        {/* Telecalling: today queue, lead status, my numbers (new) */}
+        <TelecallerCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -224,7 +227,7 @@ export default function TelecallerDashboard() {
                 <div key={l.id} className="px-5 py-3 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-semibold text-white truncate">{l.full_name}</p>
+                      <button onClick={() => openLead(l.id)} className="font-semibold text-white truncate hover:underline cursor-pointer text-left block max-w-full">{l.full_name}</button>
                       <PhoneActions phone={l.phone} />
                     </div>
                     <span
@@ -235,7 +238,7 @@ export default function TelecallerDashboard() {
                         border: `1px solid ${STATUS_COLORS[l.status] || "#64748b"}30`,
                       }}
                     >
-                      {l.status}
+                      {l.status || "No Status"}
                     </span>
                   </div>
                   <p className="text-[11px] text-[var(--text-muted)]">
@@ -262,7 +265,7 @@ export default function TelecallerDashboard() {
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {recent_leads.map((l: any) => (
                     <tr key={l.id} className="hover:bg-[var(--bg-card-hover)]">
-                      <td className="py-2.5 font-medium text-white">{l.full_name}</td>
+                      <td className="py-2.5 font-medium text-white"><button onClick={() => openLead(l.id)} className="hover:underline cursor-pointer text-left">{l.full_name}</button></td>
                       <td className="py-2.5 text-[var(--text-secondary)]"><PhoneActions phone={l.phone} /></td>
                       <td className="py-2.5 text-[var(--text-secondary)]">{l.lead_source}</td>
                       <td className="py-2.5 text-[var(--text-secondary)]">{l.sheet_tl_name}</td>
@@ -275,7 +278,7 @@ export default function TelecallerDashboard() {
                             border: `1px solid ${STATUS_COLORS[l.status] || "#64748b"}30`,
                           }}
                         >
-                          {l.status}
+                          {l.status || "No Status"}
                         </span>
                       </td>
                       <td className="py-2.5 text-[var(--text-secondary)]">{l.call_date}</td>

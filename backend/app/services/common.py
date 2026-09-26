@@ -41,3 +41,26 @@ async def get_or_create_unassigned_tl(db: AsyncSession) -> User:
         db.add(user)
         await db.flush()
     return user
+
+
+async def get_or_create_unassigned_store(db: AsyncSession):
+    """The inactive 'Unassigned (Instagram)' placeholder Store that
+    Lead.store_id (NOT NULL) falls back to when a lead is captured with no
+    specific store context yet — e.g. an Instagram account not linked to a
+    real store. Leads created after the account IS linked use the real
+    store instead; this only covers the gap before that's set up. Without
+    this fallback, every Instagram lead capture attempt on an unlinked
+    account would fail outright on the NOT NULL constraint."""
+    from ..models.models import Store
+    result = await db.execute(select(Store).where(Store.name == "Unassigned (Instagram)"))
+    store = result.scalar_one_or_none()
+    if store:
+        return store
+    tl = await get_or_create_unassigned_tl(db)
+    store = Store(
+        name="Unassigned (Instagram)", team_leader_id=tl.id,
+        is_active=False, country="India",
+    )
+    db.add(store)
+    await db.flush()
+    return store

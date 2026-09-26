@@ -1,10 +1,16 @@
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, and_, true
 from ...core.deps import get_db, require_permission
 from ...models.models import Store, User, DailySubmission, Lead, Campaign, Task, Investment, TeleCallLead, TeleSheetAssignment, Role
 from ...schemas import DashboardResponse, KPICard
+from ...services.crm import metrics as crm_metrics
+from ...services.crm.config import get_automation, get_targets
+from ...services.crm.engine import user_names
+from ...services.crm.scope import get_scope, lead_filter, visible_agents
+from ...services.crm.status import ACTIVE_STATUSES, NO_STATUS, NOT_CONNECTED_STATUSES
+from ...services.crm.timeutil import utcnow
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -157,6 +163,9 @@ async def get_team_leader_dashboard(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission("dashboard", "view"),
 ):
+    # Lead figures follow the period only when the page asks for one, so any
+    # caller that sends no dates keeps the original all-time lead numbers.
+    explicit_period = start is not None or end is not None
     if not end:
         end = date.today()
     if not start:
@@ -223,32 +232,75 @@ async def get_team_leader_dashboard(
     wi_conv = (total_wic / total_wi * 100) if total_wi > 0 else 0
 
     lead_q = select(TeleCallLead).where(TeleCallLead.sheet_tl_name.in_(assigned_sheets)) if assigned_sheets else select(TeleCallLead).where(False)
+    if explicit_period:
+        p_start, p_end = crm_metrics.period_bounds(start, end)
+        lead_q = lead_q.where(crm_metrics.lead_date_col() >= p_start, crm_metrics.lead_date_col() < p_end)
     all_leads = (await db.execute(lead_q)).scalars().all()
 
     funnel = {}
     for l in all_leads:
-        st = l.status or "Unknown"
+        st = l.status or NO_STATUS
         funnel[st] = funnel.get(st, 0) + 1
 
+    # Grouped by the lead's owner (an app user) when known, else by the
+    # sheet's free-text "Person Calling", else "Unassigned".
+    owner_names = await user_names(db, {l.owner_user_id for l in all_leads})
     tele_stats = {}
     for l in all_leads:
-        pc = l.person_calling or "Unassigned"
-        if pc not in tele_stats:
-            tele_stats[pc] = {"name": pc, "total_leads": 0, "converted": 0, "appointments": 0,
-                              "calls_connected": 0, "calls_not_connected": 0}
-        tele_stats[pc]["total_leads"] += 1
-        if l.status == "Sale Conversion":
-            tele_stats[pc]["converted"] += 1
-        elif l.status == "Appointment":
-            tele_stats[pc]["appointments"] += 1
-        if l.status not in ("Wrong number", "Unattended"):
-            tele_stats[pc]["calls_connected"] += 1
+        if l.owner_user_id:
+            key = ("u", l.owner_user_id)
+            name = owner_names.get(l.owner_user_id) or l.person_calling or "Unassigned"
         else:
-            tele_stats[pc]["calls_not_connected"] += 1
+            key = ("n", l.person_calling or "Unassigned")
+            name = l.person_calling or "Unassigned"
+        if key not in tele_stats:
+            tele_stats[key] = {"name": name, "user_id": l.owner_user_id, "total_leads": 0, "converted": 0,
+                               "appointments": 0, "will_visit": 0, "calls_connected": 0,
+                               "calls_not_connected": 0, "no_status": 0, "status_counts": {}}
+        t = tele_stats[key]
+        t["total_leads"] += 1
+        st = l.status or ""
+        t["status_counts"][st or NO_STATUS] = t["status_counts"].get(st or NO_STATUS, 0) + 1
+        if st == "Sale Conversion":
+            t["converted"] += 1
+        elif st == "Appointment":
+            t["appointments"] += 1
+        elif st == "Will Visit":
+            t["will_visit"] += 1
+        if not st:
+            t["no_status"] += 1
+        elif st in NOT_CONNECTED_STATUSES:
+            t["calls_not_connected"] += 1
+        else:
+            t["calls_connected"] += 1
 
     telecaller_perf = sorted(tele_stats.values(), key=lambda x: x["converted"], reverse=True)
     for t in telecaller_perf:
         t["conversion_pct"] = round((t["converted"] / t["total_leads"] * 100) if t["total_leads"] > 0 else 0, 1)
+        attempted = t["calls_connected"] + t["calls_not_connected"]
+        t["connected_pct"] = round(t["calls_connected"] / attempted * 100, 1) if attempted else 0.0
+
+    # ── Telecalling CRM additions (new keys only) ──
+    scope = await get_scope(db, user)
+    now = utcnow()
+    automation = await get_automation(db)
+    targets = await get_targets(db)
+    team_status_counts = crm_metrics.status_counts(all_leads)
+    matrix_statuses = list(team_status_counts.keys())
+    matrix_rows = [{
+        "user_id": t["user_id"], "name": t["name"], "total": t["total_leads"],
+        "counts": {st: t["status_counts"].get(st, 0) for st in matrix_statuses},
+    } for t in sorted(telecaller_perf, key=lambda x: -x["total_leads"])]
+    queues = await crm_metrics.queue_counts(db, lead_filter(scope), now=now)
+    stale_no_status = int((await db.execute(
+        select(func.count(TeleCallLead.id)).where(
+            lead_filter(scope), func.coalesce(TeleCallLead.status, "") == "",
+            crm_metrics.lead_date_col() < now - timedelta(hours=24),
+        )
+    )).scalar() or 0)
+    agents = await crm_metrics.agent_report(
+        db, await visible_agents(db, scope), start, end, now=now, automation=automation, targets=targets,
+    )
 
     trend = []
     current = start
@@ -271,12 +323,23 @@ async def get_team_leader_dashboard(
             "total_walk_ins": total_wi,
             "total_walk_in_conversions": total_wic,
             "walk_in_conversion_pct": round(wi_conv, 1),
-            "active_leads": len([l for l in all_leads if l.status in ("Call back later", "Will Visit", "Appointment")]),
+            "active_leads": len([l for l in all_leads if l.status in ACTIVE_STATUSES]),
             "submission_compliance_pct": round(submission_pct, 1),
         },
         "lead_funnel": funnel,
         "telecaller_performance": telecaller_perf,
         "revenue_trend": trend,
+        # new
+        "period": {"start": start.isoformat(), "end": end.isoformat(), "applied": explicit_period},
+        "team_status_counts": team_status_counts,
+        "team_status_matrix": {"statuses": matrix_statuses, "rows": matrix_rows},
+        "unassigned": queues["unassigned"],
+        "stale_no_status": stale_no_status,
+        "today": queues,
+        "agents": agents,
+        "targets": targets,
+        "automation": {"first_call_minutes": automation["first_call_minutes"]},
+        "sheets": list(assigned_sheets),
     }
 
 
@@ -286,6 +349,9 @@ async def get_telecaller_dashboard(
     db: AsyncSession = Depends(get_db),
     user: User = require_permission("dashboard", "view"),
 ):
+    # Lead figures follow the period only when the page asks for one, so any
+    # caller that sends no dates keeps the original all-time numbers.
+    explicit_period = start is not None or end is not None
     if not end:
         end = date.today()
     if not start:
@@ -298,16 +364,21 @@ async def get_telecaller_dashboard(
     role_result = await db.execute(select(Role.name).where(Role.id == user.role_id))
     role_name = role_result.scalar_one_or_none() or ""
 
+    period_clause = true()
+    if explicit_period:
+        p_start, p_end = crm_metrics.period_bounds(start, end)
+        period_clause = and_(crm_metrics.lead_date_col() >= p_start, crm_metrics.lead_date_col() < p_end)
+
     if role_name == "Salesperson":
         leads = (await db.execute(
             select(TeleCallLead).where(
-                TeleCallLead.person_calling == user.name,
+                TeleCallLead.person_calling == user.name, period_clause,
             ).order_by(TeleCallLead.created_at.desc())
         )).scalars().all()
     elif assigned_sheets:
         leads = (await db.execute(
             select(TeleCallLead).where(
-                TeleCallLead.sheet_tl_name.in_(assigned_sheets),
+                TeleCallLead.sheet_tl_name.in_(assigned_sheets), period_clause,
             ).order_by(TeleCallLead.created_at.desc())
         )).scalars().all()
     else:
@@ -322,6 +393,7 @@ async def get_telecaller_dashboard(
     not_interested = len([l for l in leads if l.status == "Not Interested"])
     wrong_number = len([l for l in leads if l.status == "Wrong number"])
     unattended = len([l for l in leads if l.status == "Unattended"])
+    no_status = len([l for l in leads if not l.status])
     conv_pct = (converted / total * 100) if total > 0 else 0
 
     total_sale = 0
@@ -335,7 +407,7 @@ async def get_telecaller_dashboard(
     status_breakdown = []
     status_counts = {}
     for l in leads:
-        st = l.status or "Unknown"
+        st = l.status or NO_STATUS
         status_counts[st] = status_counts.get(st, 0) + 1
     for st, cnt in sorted(status_counts.items(), key=lambda x: x[1], reverse=True):
         status_breakdown.append({"status": st, "count": cnt})
@@ -355,7 +427,7 @@ async def get_telecaller_dashboard(
         if cd:
             if cd not in daily_calls:
                 daily_calls[cd] = {"date": cd, "connected": 0, "not_connected": 0}
-            if l.status not in ("Wrong number", "Unattended", "Call Not Connected"):
+            if l.status and l.status not in NOT_CONNECTED_STATUSES:
                 daily_calls[cd]["connected"] += 1
             else:
                 daily_calls[cd]["not_connected"] += 1
@@ -380,6 +452,19 @@ async def get_telecaller_dashboard(
     if not strengths:
         strengths.append("Keep building your lead pipeline")
 
+    # ── Telecalling CRM additions (new keys only) ──
+    scope = await get_scope(db, user)
+    now = utcnow()
+    automation = await get_automation(db)
+    targets = await get_targets(db)
+    me = {"id": user.id, "name": user.name, "role": role_name, "sheets": list(assigned_sheets),
+          "available": user.available_for_leads is not False}
+    my_row = (await crm_metrics.agent_report(db, [me], start, end, now=now,
+                                             automation=automation, targets=targets))[0]
+    p_start, p_end = crm_metrics.period_bounds(start, end)
+    my_leads = await crm_metrics.leads_in_period(db, TeleCallLead.owner_user_id == user.id, p_start, p_end)
+    my_row["trend"] = crm_metrics.daily_trend(my_leads, start, end)
+
     return {
         "kpi": {
             "total_leads": total,
@@ -388,7 +473,9 @@ async def get_telecaller_dashboard(
             "will_visit": will_visit,
             "conversion_pct": round(conv_pct, 1),
             "total_sale_amount": total_sale,
-            "calls_connected": total - not_connected - wrong_number - unattended,
+            # connected = reached the customer: excludes not-connected
+            # statuses AND leads nobody has called yet (No Status)
+            "calls_connected": total - no_status - not_connected - wrong_number - unattended,
             "calls_not_connected": not_connected,
             "call_back_later": call_back,
         },
@@ -400,4 +487,13 @@ async def get_telecaller_dashboard(
             "improvements": improvements,
             "tip": f"You have {call_back} callbacks pending. Focus on converting appointments ({appointments}) to close more sales." if call_back > 0 else f"Great work! Focus on converting your {will_visit} will-visit leads into appointments.",
         },
+        # new
+        "period": {"start": start.isoformat(), "end": end.isoformat(), "applied": explicit_period},
+        "my": my_row,
+        "city": {"kpi": crm_metrics.lead_kpis(leads), "status_counts": crm_metrics.status_counts(leads),
+                 "sheets": list(assigned_sheets)},
+        "today": await crm_metrics.queue_counts(db, lead_filter(scope), now=now, owner_id=user.id),
+        "targets": targets,
+        "automation": {"first_call_minutes": automation["first_call_minutes"]},
+        "available": user.available_for_leads is not False,
     }
