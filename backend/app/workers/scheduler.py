@@ -89,6 +89,20 @@ async def crm_weekly_notifications():
         logger.error("CRM weekly notifications error: %s", e)
 
 
+async def crm_sale_match():
+    # Appointment → sale check against the MCP sales report (appointment day
+    # + 2 days) — see app/services/crm/sale_match.py.
+    from ..db.session import AsyncSessionLocal
+    from ..services.crm.sale_match import run_sale_match
+
+    try:
+        async with AsyncSessionLocal() as db:
+            stats = await run_sale_match(db)
+            logger.info("CRM sale match: %s", stats)
+    except Exception as e:
+        logger.error("CRM sale match error: %s", e)
+
+
 async def sync_mcp():
     # Keeps mcp_daily_sales and every store's monthly_target fresh from MCP
     # automatically, independent of anyone clicking "Sync Now" — that manual
@@ -207,6 +221,20 @@ def start_scheduler():
         minute=0,
         timezone="Asia/Kolkata",
         id="crm_weekly_notifications",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    # Every day: early morning (covers the previous day's sales) and evening
+    # (same-day sales show up before the team leaves).
+    scheduler.add_job(
+        crm_sale_match,
+        "cron",
+        hour="6,21",
+        minute=0,
+        timezone="Asia/Kolkata",
+        id="crm_sale_match",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

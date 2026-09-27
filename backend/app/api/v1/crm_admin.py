@@ -506,3 +506,99 @@ async def integrations(db: AsyncSession = Depends(get_db), user=Depends(get_curr
         "sync_interval_minutes": 1, "automation_enabled": automation.get("enabled", True),
         "go_live": iso_utc(await get_go_live(db)),
     }
+
+
+# ── Team view (Leads → Team tab) ───────────────────────────────────
+@router.get("/team-overview")
+async def team_overview(start: str = Query(""), end: str = Query(""),
+                        db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Team leaders, each with the telecallers assigned to them (same city
+    sheet, or reporting to them), and lead figures per person. Admin tier
+    sees every team leader; a team leader sees their own team."""
+    from ...models.models import Role, TeleAppointment, TeleSheetAssignment
+    from ...services.crm.status import ACTIVE_STATUSES, NOT_CONNECTED_STATUSES
+
+    scope = await _scope(db, user)
+    if not (scope.is_admin or scope.is_tl):
+        raise HTTPException(status_code=403, detail="Team view is for team leaders and admins")
+    now = utcnow()
+
+    people = (await db.execute(
+        select(User, Role.name).join(Role, Role.id == User.role_id)
+        .where(Role.name.in_(["Team Leader", "Telecaller"]), User.is_active == True)  # noqa: E712
+    )).all()
+    sheets_of: dict[int, list[str]] = defaultdict(list)
+    for uid, sheet in (await db.execute(select(TeleSheetAssignment.user_id, TeleSheetAssignment.sheet_tl_name))).all():
+        sheets_of[uid].append(sheet)
+    tls = [u for u, r in people if r == "Team Leader" and (scope.is_admin or u.id == user.id)]
+    tcs = [u for u, r in people if r == "Telecaller"]
+
+    # Leads in scope (optionally for a period), counted per owner and per city.
+    conds = [lead_filter(scope)]
+    if start or end:
+        d_start, d_end = _period(start, end)
+        s_utc, e_utc = crm_metrics.period_bounds(d_start, d_end)
+        conds += [crm_metrics.lead_date_col() >= s_utc, crm_metrics.lead_date_col() < e_utc]
+    rows = (await db.execute(
+        select(TeleCallLead.owner_user_id, TeleCallLead.sheet_tl_name, TeleCallLead.status, TeleCallLead.stage)
+        .where(and_(*conds))
+    )).all()
+    overdue = dict((await db.execute(
+        select(TeleLeadFollowup.owner_user_id, func.count(TeleLeadFollowup.id))
+        .where(TeleLeadFollowup.status == "open", TeleLeadFollowup.due_at < now)
+        .group_by(TeleLeadFollowup.owner_user_id)
+    )).all())
+    upcoming = dict((await db.execute(
+        select(TeleCallLead.owner_user_id, func.count(TeleAppointment.id))
+        .join(TeleCallLead, TeleCallLead.id == TeleAppointment.lead_id)
+        .where(TeleAppointment.scheduled_at >= now, TeleAppointment.attendance == "scheduled")
+        .group_by(TeleCallLead.owner_user_id)
+    )).all())
+
+    def summarise(items) -> dict:
+        counts: dict[str, int] = {}
+        for _, _, st, _ in items:
+            counts[st or NO_STATUS] = counts.get(st or NO_STATUS, 0) + 1
+        total = len(items)
+        converted = counts.get("Sale Conversion", 0)
+        attempted = total - counts.get(NO_STATUS, 0)
+        not_conn = sum(counts.get(s, 0) for s in NOT_CONNECTED_STATUSES)
+        return {
+            "total": total, "status_counts": counts, "converted": converted,
+            "conversion_pct": round(converted / total * 100, 1) if total else 0.0,
+            "connected_pct": round((attempted - not_conn) / attempted * 100, 1) if attempted else 0.0,
+            "active": sum(counts.get(s, 0) for s in ACTIVE_STATUSES),
+            "open_leads": sum(1 for *_, stage in items if (stage or "new") not in CLOSED_STAGES),
+        }
+
+    by_owner: dict[int | None, list] = defaultdict(list)
+    by_sheet: dict[str, list] = defaultdict(list)
+    for r in rows:
+        by_owner[r[0]].append(r)
+        by_sheet[r[1]].append(r)
+
+    def tc_row(u: User) -> dict:
+        return {"id": u.id, "name": u.name, "sheets": sheets_of.get(u.id, []),
+                "available": u.available_for_leads is not False,
+                "overdue": int(overdue.get(u.id, 0)), "upcoming_appointments": int(upcoming.get(u.id, 0)),
+                **summarise(by_owner.get(u.id, []))}
+
+    placed: set[int] = set()
+    teams = []
+    for tl in sorted(tls, key=lambda u: u.name.lower()):
+        tl_sheets = sheets_of.get(tl.id, [])
+        members = [u for u in tcs if u.team_leader_id == tl.id or set(sheets_of.get(u.id, [])) & set(tl_sheets)]
+        placed.update(u.id for u in members)
+        city_items = [r for sh in tl_sheets for r in by_sheet.get(sh, [])]
+        team = summarise(city_items)
+        team["unassigned"] = sum(1 for r in city_items if r[0] is None and (r[3] or "new") not in CLOSED_STAGES)
+        team["overdue"] = sum(int(overdue.get(m.id, 0)) for m in members)
+        team["upcoming_appointments"] = sum(int(upcoming.get(m.id, 0)) for m in members)
+        teams.append({
+            "id": tl.id, "name": tl.name, "sheets": tl_sheets, "totals": team,
+            "own": tc_row(tl),  # leads the team leader owns personally
+            "telecallers": sorted((tc_row(m) for m in members), key=lambda x: -x["total"]),
+        })
+    unattached = [tc_row(u) for u in tcs if u.id not in placed] if scope.is_admin else []
+    return {"teams": teams, "unattached_telecallers": unattached,
+            "period": {"start": start or None, "end": end or None}}

@@ -22,18 +22,19 @@ from ...models.models import (
     TeleLeadActivity, TeleLeadFollowup, User,
 )
 from ...services.crm import metrics as crm_metrics
-from ...services.crm.config import ensure_go_live, get_automation
+from ...services.crm.config import ensure_go_live, get_automation, get_go_live
 from ...services.crm.engine import (
     RoundRobin, add_activity, alert_to_dict, create_followup, emit_alerts, log_outcome,
     mark_edited, parse_amount, record_audit, recompute_next_follow_up, refresh_derived,
-    refresh_potential_value, resolve_alerts_for_followups, transfer_ownership, user_names,
+    refresh_potential_value, resolve_alerts_for_followups, set_status_from_app, transfer_ownership,
+    user_names,
 )
 from ...services.crm.scope import (
     CrmScope, get_scope, lead_filter, lead_in_scope, sheet_members, visible_agents,
 )
 from ...services.crm.status import (
     CLOSED_STAGES, NO_STATUS, OUTCOMES, PRIORITIES, STAGE_KEYS, STAGE_LABELS, STAGES, STATUSES,
-    derive_priority,
+    derive_priority, normalize_status,
 )
 from ...services.crm.timeutil import (
     add_working_minutes, ist_day_bounds_utc, ist_today, iso_utc, parse_client_datetime,
@@ -429,6 +430,8 @@ async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db), user=Depend
 
 
 class LeadPatch(BaseModel):
+    status: Optional[str] = None            # call status ("" or "No Status" clears it)
+    note: Optional[str] = None              # adds a note to the timeline
     stage: Optional[str] = None
     priority: Optional[str] = None          # hot | warm | cold | auto
     phone_model: Optional[str] = None
@@ -445,6 +448,21 @@ async def patch_lead(lead_id: int, body: LeadPatch, db: AsyncSession = Depends(g
     lead = await load_lead(db, lead_id, scope)
     now = utcnow()
     changes: dict = {}
+
+    if body.status is not None:
+        new_status = "" if body.status == NO_STATUS else normalize_status(body.status)
+        if new_status and new_status not in STATUSES:
+            raise HTTPException(status_code=400, detail=f"status must be one of {STATUSES}")
+        if new_status != (lead.status or ""):
+            changes["status"] = [lead.status or NO_STATUS, new_status or NO_STATUS]
+            # Same bookkeeping as the Leads Update page: timeline entry,
+            # stage/priority follow the status, pending follow-up completed
+            # and the next one scheduled by the automation rules.
+            await set_status_from_app(db, lead, new_status, actor_id=user.id,
+                                      automation=await get_automation(db), go_live=await get_go_live(db), now=now)
+            lead.edited_by_user = True
+    if body.note is not None and body.note.strip():
+        add_activity(db, lead, "note", user_id=user.id, notes=body.note.strip()[:2000], at=now)
 
     if body.stage is not None:
         if body.stage not in STAGE_KEYS:
@@ -818,6 +836,10 @@ async def _appointments_between(db: AsyncSession, scope: CrmScope, d_from: date,
             "scheduled_at": iso_utc(a.scheduled_at), "date": day.isoformat(), "has_time": True,
             "purpose": a.purpose, "attendance": a.attendance, "source": a.source, "store_id": a.store_id,
             "owner_name": names.get(l.owner_user_id),
+            "sale_match_status": a.sale_match_status, "sale_checked_at": iso_utc(a.sale_checked_at),
+            "matched_purchase_id": a.matched_purchase_id,
+            "matched_amount": float(a.matched_amount) if a.matched_amount is not None else None,
+            "matched_shop": a.matched_shop, "matched_sale_date": a.matched_sale_date,
         })
 
     # Sheet appointment dates (text) — parse and keep those in range.
@@ -864,6 +886,19 @@ async def list_appointments(start: str = Query(""), days: int = Query(3, ge=1, l
         "columns": [{"date": (d_from + timedelta(days=i)).isoformat(),
                      "items": by_day.get((d_from + timedelta(days=i)).isoformat(), [])} for i in range(days)],
     }
+
+
+@router.post("/appointments/check-sales")
+async def check_appointment_sales(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Run the appointment → sale check now for the appointments you can see
+    (the same check runs automatically every day)."""
+    from ...services.crm.sale_match import run_sale_match
+    scope = await require_scope(db, user)
+    try:
+        stats = await run_sale_match(db, scope_clause=lead_filter(scope))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Sales report (MCP) not reachable: {e}")
+    return {"ok": True, **stats}
 
 
 class AppointmentRequest(BaseModel):

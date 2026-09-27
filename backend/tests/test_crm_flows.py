@@ -296,3 +296,88 @@ async def test_metrics_attribute_misses_to_owner_at_the_time(db, team):
     assert (r["first_calls_total"], r["first_calls_on_time"]) == (1, 1)   # Riya called in time
     assert r["total_leads"] == 1 and r["will_visit"] == 1                 # lead now Riya's
     assert r["calls_logged"] == 1 and r["calls_connected_logged"] == 1
+
+
+# ── appointment → sale matching (MCP sales report stubbed) ──
+from app.models.models import TeleAppointment  # noqa: E402
+from app.services.crm.sale_match import run_sale_match  # noqa: E402
+
+
+async def _appointment(db, team, day, phone="+91 98765 00001", name="Priya", hour=11):
+    lead = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="k", full_name=name, phone=phone, status="Will Visit",
+                        stage="qualified", priority="warm", owner_user_id=team["sureka"].id,
+                        created_at=ist(2026, 9, 20), submitted_at=ist(2026, 9, 20))
+    db.add(lead)
+    await db.flush()
+    appt = TeleAppointment(lead_id=lead.id, scheduled_at=ist(day.year, day.month, day.day, hour, 0), purpose="Visit",
+                           attendance="scheduled", source="app")
+    db.add(appt)
+    await db.commit()
+    return lead, appt
+
+
+def _fake_sales(rows_by_phone):
+    calls = []
+
+    async def fetch(start, end, phone):
+        calls.append((start, end, phone))
+        return [r for r in rows_by_phone.get(phone, []) if start.isoformat() <= r["iso"] <= end.isoformat()]
+    return fetch, calls
+
+
+def _sale(pid, iso, amount=6990.0, category="New Sale"):
+    return {"id": pid, "date": iso, "iso": iso, "shop": "GuardX - Indiranagar", "category": category,
+            "model": "IPHONE 17", "amount": amount, "discount": 0.0}
+
+
+@pytest.mark.asyncio
+async def test_sale_within_two_days_converts_the_lead(db, team):
+    lead, appt = await _appointment(db, team, date(2026, 9, 25))
+    fetch, calls = _fake_sales({"9876500001": [_sale(113001, "2026-09-26")]})
+    stats = await run_sale_match(db, today=date(2026, 9, 26), fetch=fetch)
+    await db.refresh(lead); await db.refresh(appt)
+    assert stats["matched"] == 1
+    assert calls == [(date(2026, 9, 25), date(2026, 9, 26), "9876500001")]
+    assert lead.status == "Sale Conversion" and lead.stage == "converted" and lead.sale_amount == "6990"
+    assert appt.sale_match_status == "matched" and appt.attendance == "attended" and appt.matched_purchase_id == "113001"
+    assert await count(db, CrmAlert, CrmAlert.kind == "sale_matched") >= 1
+
+
+@pytest.mark.asyncio
+async def test_window_is_two_days_then_no_sale(db, team):
+    lead, appt = await _appointment(db, team, date(2026, 9, 22))
+    # a sale 3 days later is outside the window and must not match
+    fetch, _ = _fake_sales({"9876500001": [_sale(113002, "2026-09-25")]})
+    await run_sale_match(db, today=date(2026, 9, 24), fetch=fetch)       # day 2: still waiting
+    await db.refresh(appt)
+    assert appt.sale_match_status == "pending"
+    await run_sale_match(db, today=date(2026, 9, 25), fetch=fetch)       # day 3: window closed
+    await db.refresh(appt); await db.refresh(lead)
+    assert appt.sale_match_status == "no_sale" and lead.status == "Will Visit"
+    fu = (await db.execute(select(TeleLeadFollowup).where(TeleLeadFollowup.lead_id == lead.id))).scalar_one()
+    assert "No sale found" in fu.reason
+    # a later run leaves it alone
+    stats = await run_sale_match(db, today=date(2026, 9, 26), fetch=fetch)
+    assert stats["checked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_replacements_and_reused_bills_do_not_match(db, team):
+    lead1, a1 = await _appointment(db, team, date(2026, 9, 25), phone="9876500001", name="A")
+    lead2, a2 = await _appointment(db, team, date(2026, 9, 25), phone="9876500001", name="B", hour=12)
+    fetch, _ = _fake_sales({"9876500001": [_sale(1, "2026-09-25", 0.0, "Replacement"), _sale(2, "2026-09-25")]})
+    stats = await run_sale_match(db, today=date(2026, 9, 25), fetch=fetch)
+    await db.refresh(a1); await db.refresh(a2)
+    assert stats["matched"] == 1
+    assert {a1.sale_match_status, a2.sale_match_status} == {"matched", "pending"}  # bill #2 used once only
+
+
+@pytest.mark.asyncio
+async def test_sheet_appointment_dates_are_checked_and_bad_phones_skipped(db, team):
+    db.add(TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="k", full_name="Sheet Appt", phone="9876500009",
+                        status="Appointment", appointment_date="25/09/2026", owner_user_id=team["riya"].id,
+                        created_at=ist(2026, 9, 20)))
+    await _appointment(db, team, date(2026, 9, 25), phone="12345", name="Bad phone")
+    fetch, _ = _fake_sales({"9876500009": [_sale(3, "2026-09-25", 4990.0)]})
+    stats = await run_sale_match(db, today=date(2026, 9, 25), fetch=fetch)
+    assert stats["sheet_appointments_added"] == 1 and stats["matched"] == 1 and stats["no_phone"] == 1

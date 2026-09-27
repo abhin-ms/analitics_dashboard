@@ -809,6 +809,14 @@ class TeleAppointment(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Daily sale check against the MCP sales report (migration 012):
+    # matched | pending | no_sale | no_phone
+    sale_match_status = Column(String(20), nullable=True)
+    sale_checked_at = Column(DateTime, nullable=True)
+    matched_purchase_id = Column(String(40), nullable=True, index=True)
+    matched_amount = Column(Numeric(12, 2), nullable=True)
+    matched_shop = Column(String(150), nullable=True)
+    matched_sale_date = Column(String(20), nullable=True)
 
     lead = relationship("TeleCallLead", foreign_keys=[lead_id])
     store = relationship("Store", foreign_keys=[store_id])

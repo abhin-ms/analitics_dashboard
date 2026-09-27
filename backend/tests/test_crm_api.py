@@ -283,3 +283,33 @@ async def test_old_leads_endpoints(env):
     summ = (await c.get("/api/v1/tele-call-leads/status-summary", params={"owner": "me"})).json()
     assert summ["summary"]["Kerala"]["statuses"] == {"Call back later": 1}
     assert (await c.get("/api/v1/tele-call-leads/live")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_drawer_updates_status_stage_and_note(env):
+    as_user, ids = env
+    c = as_user("sureka")
+    lead_id = (await c.get("/api/v1/crm/leads", params={"q": "Arjun"})).json()["items"][0]["id"]
+    r = await c.patch(f"/api/v1/crm/leads/{lead_id}", json={"status": "Will Visit"})
+    assert r.status_code == 200 and r.json()["lead"]["status"] == "Will Visit"
+    assert r.json()["lead"]["stage"] == "qualified"            # pipeline follows the status
+    r = await c.patch(f"/api/v1/crm/leads/{lead_id}", json={"note": "Wants a quote for iPhone 17"})
+    assert r.status_code == 200
+    detail = (await c.get(f"/api/v1/crm/leads/{lead_id}")).json()
+    assert any(t["type"] == "note" and "iPhone 17" in (t["notes"] or "") for t in detail["timeline"])
+    assert any(t["type"] == "status_change" for t in detail["timeline"])
+    assert (await c.patch(f"/api/v1/crm/leads/{lead_id}", json={"status": "Bogus"})).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_team_overview_shows_team_leaders_with_their_telecallers(env):
+    as_user, ids = env
+    data = (await as_user("admin").get("/api/v1/crm/team-overview")).json()
+    team = data["teams"][0]
+    assert team["name"] == "Tara Lead" and team["sheets"] == ["Kerala"]
+    assert {t["name"] for t in team["telecallers"]} == {"Sureka K", "Riya Menon"}
+    assert [t["name"] for t in data["unattached_telecallers"]] == ["Sam B"]   # Chennai has no team leader
+    assert team["totals"]["total"] == 3 and team["totals"]["unassigned"] == 1
+    tl_view = (await as_user("tl").get("/api/v1/crm/team-overview")).json()
+    assert len(tl_view["teams"]) == 1 and tl_view["unattached_telecallers"] == []
+    assert (await as_user("sureka").get("/api/v1/crm/team-overview")).status_code == 403
