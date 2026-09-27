@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
-import { useAppointments, useCreateAppointment, useCrmLeads, useCrmMeta, usePatchAppointment } from "../api";
+import { useAppointments, useCheckSales, useCreateAppointment, useCrmLeads, useCrmMeta, usePatchAppointment } from "../api";
 import { ATTENDANCE } from "../statusConfig";
 import type { CrmLead } from "../types";
 import { addDaysKey, fmtDayLabel, fmtTime, todayIST } from "../format";
@@ -34,7 +34,7 @@ function PickLeadDialog({ open, onClose, onPick }: { open: boolean; onClose: () 
   );
 }
 
-export default function AppointmentsPage() {
+export default function AppointmentsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const { data: meta } = useCrmMeta();
   const isAgent = meta?.role === "Telecaller" || meta?.role === "Salesperson";
@@ -44,6 +44,7 @@ export default function AppointmentsPage() {
   const patch = usePatchAppointment();
   const create = useCreateAppointment();
   const [picking, setPicking] = useState(false);
+  const checkSales = useCheckSales();
   const [booking, setBooking] = useState<CrmLead | null>(null);
 
   const setAttendance = async (item: NonNullable<typeof data>["columns"][number]["items"][number], attendance: string) => {
@@ -62,9 +63,17 @@ export default function AppointmentsPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader title="Appointments" subtitle="Confirm attendance and follow up on missed visits."
-          actions={<Button variant="primary" onClick={() => setPicking(true)}><Plus size={15} />Book appointment</Button>} />
+          actions={<>
+            <Button loading={checkSales.isPending} onClick={async () => {
+              try {
+                const r = await checkSales.mutateAsync(undefined);
+                toast.success(`Checked ${r.checked} appointment${r.checked === 1 ? "" : "s"}: ${r.matched} sale${r.matched === 1 ? "" : "s"} matched, ${r.pending} still in the 2-day window, ${r.no_sale} with no sale${r.errors ? `, ${r.errors} could not be checked` : ""}.`);
+              } catch (e) { toast.error(e instanceof Error ? e.message : "Sales check failed"); }
+            }}>Check sales now</Button>
+            <Button variant="primary" onClick={() => setPicking(true)}><Plus size={15} />Book appointment</Button>
+          </>} />
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={() => setStart(addDaysKey(start, -3))}><ChevronLeft size={14} /></Button>
           <Button size="sm" onClick={() => setStart(todayIST())}>Today</Button>
@@ -99,7 +108,17 @@ export default function AppointmentsPage() {
                           <span className="text-sm text-white">{it.has_time ? fmtTime(it.scheduled_at) : "Time not set"}</span>
                           {it.source === "sheet" && <Pill label="From sheet" color="#94a3b8" />}
                         </div>
-                        <button onClick={() => openLead(it.lead_id)} className="text-sm font-medium text-blue-400 hover:underline cursor-pointer text-left">{it.lead_name}</button>
+                        {it.sale_match_status && (
+                          <div>
+                            {it.sale_match_status === "matched" && (
+                              <Pill label={`Sale matched · ₹${Math.round(it.matched_amount || 0).toLocaleString("en-IN")} · bill #${it.matched_purchase_id}${it.matched_shop ? ` · ${it.matched_shop}` : ""}`} color="#10b981" />
+                            )}
+                            {it.sale_match_status === "no_sale" && <Pill label="No sale found in 2 days" color="#ef4444" />}
+                            {it.sale_match_status === "pending" && <Pill label="Waiting for sale (2-day window)" color="#f59e0b" />}
+                            {it.sale_match_status === "no_phone" && <Pill label="No valid phone to match" color="#94a3b8" />}
+                          </div>
+                        )}
+                        <button onClick={() => openLead(it.lead_id)} className="block text-sm font-medium text-blue-400 hover:underline cursor-pointer text-left">{it.lead_name}</button>
                         <p className="text-[11px] text-[var(--text-muted)]">{it.purpose} · {it.city}{it.owner_name ? ` · ${it.owner_name}` : ""}</p>
                         <label className="block">
                           <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Attendance</span>
@@ -122,6 +141,8 @@ export default function AppointmentsPage() {
             <p className="text-white">One place to confirm, reschedule and record attendance.</p>
             <p className="text-xs text-[var(--text-muted)]">
               A confirmation call is scheduled 2 hours before each appointment. Marking a no-show creates a call-back task to reschedule.
+              Every day the sales report (MCP) is checked for a sale to the customer's phone number from the appointment day up to 2 days after:
+              a match turns the lead into a sale automatically; no sale after 2 days creates a call-back task.
               Sheet appointment dates appear here as "From sheet"; updating their attendance saves them in the app.
             </p>
           </div>

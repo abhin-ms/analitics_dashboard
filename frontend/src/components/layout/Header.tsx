@@ -11,7 +11,7 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/operations": { title: "Daily Operations", subtitle: "Daily Submissions & Metrics" },
   "/operations/submit": { title: "New Submission", subtitle: "Log Daily Store Operations" },
   "/team-leaders": { title: "Team Leaders", subtitle: "Leader Performance & Target Tracking" },
-  "/leads": { title: "Leads", subtitle: "Lead Pipeline & Conversions" },
+  "/leads": { title: "Leads", subtitle: "Team, leads, pipeline, appointments, tasks, reports and pricing" },
   "/campaigns": { title: "Campaigns", subtitle: "Marketing & Channel Performance" },
   "/tasks": { title: "Tasks", subtitle: "Action Items & Assignments" },
   "/investments": { title: "Investments", subtitle: "CapEx & Operational Spend" },

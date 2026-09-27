@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
 import { AISummary } from "@/components/dashboard/AISummary";
+import { DashboardInbox } from "@/features/crm/components/DashboardInbox";
 import {
   CardFilterPopover,
   CardFilterState,
@@ -108,7 +109,7 @@ export default function Dashboard() {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
-  const [period, setPeriod] = useState<"1day" | "7day" | "month" | "6month" | "1year" | "custom">("month");
+  const [period, setPeriod] = useState<"1day" | "yesterday" | "7day" | "month" | "6month" | "1year" | "custom">("month");
   const [selectedCountry, setSelectedCountry] = useState<string>("India");
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
   const [showRangeFilter, setShowRangeFilter] = useState(false);
@@ -134,6 +135,12 @@ export default function Dashboard() {
     const to = localDateStr(now);
     if (period === "custom" && customRange) return customRange;
     if (period === "1day") return { from: to, to }; // today only
+    if (period === "yesterday") {
+      // The previous calendar day only (e.g. on 25 Oct → 24 Oct).
+      const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const d = localDateStr(y);
+      return { from: d, to: d };
+    }
     if (period === "month") {
       // Calendar month to date (1st of the current month through today),
       // not a rolling 30 days — matches how "monthly" is understood
@@ -386,18 +393,44 @@ export default function Dashboard() {
     // same day's revenue rescaled against a flat target — otherwise it just
     // traces the same shape as the Revenue line and the two are impossible
     // to tell apart on the chart.
+    //
+    // Days after the last day that has any synced sales (MCP sync lag, or
+    // days still in the future) are "no data yet": shown as a gap, not ₹0,
+    // and they don't add target to the running achievement — otherwise a
+    // not-yet-synced day looks like a zero-sales day and drags Achieved % down.
+    const syncedDates = dates.filter((d) => dateMap[d] !== undefined);
+    const lastSynced = syncedDates.length ? syncedDates[syncedDates.length - 1] : "";
     let cumRevenue = 0;
     let cumTarget = 0;
     return dates.map((date) => {
+      if (!lastSynced || date > lastSynced) {
+        return { date, revenue: null as number | null, target: dailyTarget, achievedPct: null as number | null };
+      }
       const revenue = dateMap[date] || 0;
       cumRevenue += revenue;
       cumTarget += dailyTarget;
       return {
-        date, revenue, target: dailyTarget,
-        achievedPct: cumTarget > 0 ? Math.round((cumRevenue / cumTarget) * 100) : 0,
+        date, revenue: revenue as number | null, target: dailyTarget,
+        achievedPct: (cumTarget > 0 ? Math.round((cumRevenue / cumTarget) * 100) : 0) as number | null,
       };
     });
   }, [mcpTlReport, kpiData, effectiveRange]);
+
+  // Both axes on one scale: the % axis is sized so that 100% sits exactly on
+  // the Target line. With independent "auto" axes the Achieved % line could
+  // sit at the same height as Target (e.g. 40% on a 0–60% axis next to ₹4L on
+  // a ₹0–6L axis) and look "on target" while revenue was far below it.
+  const trendScale = useMemo(() => {
+    const dailyTarget = revenueTrend[0]?.target || 0;
+    if (!dailyTarget) return null;
+    let pctMax = 100;
+    for (const r of revenueTrend) {
+      if (r.achievedPct != null) pctMax = Math.max(pctMax, r.achievedPct);
+      if (r.revenue != null) pctMax = Math.max(pctMax, (r.revenue / dailyTarget) * 100);
+    }
+    pctMax = Math.ceil(pctMax / 20) * 20;
+    return { pctMax, amountMax: (dailyTarget * pctMax) / 100 };
+  }, [revenueTrend]);
 
   // Revenue breakdown by TL, from the live MCP team-leader report
   const revenueBreakdown = useMemo(() => {
@@ -563,6 +596,15 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Telecalling (all cities): today's queue, inbox, follow-ups */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Telecalling · today</h3>
+                <Link to="/leads" className="text-xs text-blue-400 hover:underline">Open Leads →</Link>
+              </div>
+              <DashboardInbox mine={false} showTiles />
+            </div>
+
             {/* MCP Sync Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] p-3 rounded-2xl">
               <div className="text-xs text-[var(--text-muted)]">
@@ -588,6 +630,7 @@ export default function Dashboard() {
                 <div className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-white/5 p-0.5">
                   {([
                     { key: "1day", label: "Today" },
+                    { key: "yesterday", label: "Yesterday" },
                     { key: "7day", label: "7 Days" },
                     { key: "month", label: "Month" },
                     { key: "6month", label: "6 Month" },
@@ -713,7 +756,7 @@ export default function Dashboard() {
                     </span>
                   )}
                 </h3>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">Daily revenue, target pace, and cumulative achievement % across all branches</p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">Daily revenue vs daily target (left, ₹) and achievement to date (right, %) across all branches · 100% sits on the Target line · days not yet synced are left blank</p>
               </div>
               <CardFilterPopover
                 filter={trendFilter}
@@ -733,18 +776,20 @@ export default function Dashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#a1a1aa" }} tickFormatter={(v) => String(v).slice(5)} />
                     <YAxis
-                      yAxisId="amount" domain={["auto", "auto"]} width={48}
+                      yAxisId="amount" domain={trendScale ? [0, trendScale.amountMax] : ["auto", "auto"]} width={48}
                       tick={{ fontSize: 11, fill: "#93c5fd" }} tickFormatter={(v) => fmtINR(v)}
                     />
                     <YAxis
-                      yAxisId="pct" orientation="right" domain={[0, "auto"]} width={42}
+                      yAxisId="pct" orientation="right" domain={trendScale ? [0, trendScale.pctMax] : [0, "auto"]} width={42}
                       tick={{ fontSize: 11, fill: "#fbbf24" }} tickFormatter={(v) => `${v}%`}
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px", color: "var(--text-primary)" }}
                       labelStyle={{ color: "var(--text-primary)", fontWeight: 700, marginBottom: 4 }}
                       itemStyle={{ fontWeight: 600, color: "var(--text-primary)" }}
-                      formatter={(value: any, name?: any) => (name === "Achieved %" ? [`${value}%`, name] : [fmtINR(Number(value)), name])}
+                      formatter={(value: any, name?: any) =>
+                        value == null ? ["Not synced yet", name]
+                          : name === "Achieved % to date" ? [`${value}%`, name] : [fmtINR(Number(value)), name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600, color: "#e5e7eb", paddingTop: 8 }} iconType="line" />
                     <Line
@@ -758,7 +803,7 @@ export default function Dashboard() {
                       dot={{ r: 4, fill: "#10b981", strokeWidth: 0 }} activeDot={{ r: 7 }}
                     />
                     <Line
-                      yAxisId="pct" type="monotone" dataKey="achievedPct" name="Achieved %"
+                      yAxisId="pct" type="monotone" dataKey="achievedPct" name="Achieved % to date"
                       stroke="#f59e0b" strokeWidth={3.5}
                       dot={{ r: 4, fill: "#f59e0b", strokeWidth: 0 }} activeDot={{ r: 7 }}
                     />

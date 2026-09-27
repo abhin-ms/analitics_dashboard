@@ -33,7 +33,7 @@ function AlertRow({ a }: { a: CrmAlert }) {
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {a.lead_id && <Button size="sm" variant="ghost" onClick={() => openLead(a.lead_id!)}>Open lead</Button>}
-        {a.kind === "weekly_review" && <Link to="/crm/reports" className="text-xs text-blue-400 hover:underline px-2">View evidence</Link>}
+        {a.kind === "weekly_review" && <Link to="/leads?view=reports" className="text-xs text-blue-400 hover:underline px-2">View evidence</Link>}
         {!a.acknowledged_at && !a.resolved_at && <Button size="sm" loading={ack.isPending} onClick={() => ack.mutate(a.id)}>Acknowledge</Button>}
         {a.acknowledged_at && !a.resolved_at && <span className="text-[11px] text-[var(--text-muted)]">Acknowledged</span>}
       </div>

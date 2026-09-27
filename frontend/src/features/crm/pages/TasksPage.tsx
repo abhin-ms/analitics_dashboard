@@ -5,7 +5,7 @@ import { useCrmMeta, useFollowups } from "../api";
 import { EmptyFollowups, FollowupRow } from "../components/shared";
 import { Card, CardHeader, InfoNote, PageHeader, inputCls, inlineInputCls } from "../components/ui";
 
-export default function TasksPage() {
+export default function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: meta } = useCrmMeta();
   const isAgent = meta?.role === "Telecaller" || meta?.role === "Salesperson";
   const [mine, setMine] = useState<boolean | undefined>(undefined);
@@ -27,7 +27,7 @@ export default function TasksPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader title="Tasks and follow-ups" subtitle="Start with overdue actions, then work through today."
           actions={!isAgent && meta ? (
             <select className={`${inlineInputCls}`} value={owner || (mine ? "me" : "")}

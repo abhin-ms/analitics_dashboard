@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { getSocket, disconnectSocket } from "./lib/socket";
 import { useAuthStore } from "./lib/authStore";
@@ -42,16 +42,19 @@ import TeleCallLeads from "./pages/TeleCallLeads";
 import { TableSkeleton } from "./components/shared/Skeleton";
 
 // Telecalling CRM pages
-const CrmToday = lazy(() => import("./features/crm/pages/TodayPage"));
-const CrmLeads = lazy(() => import("./features/crm/pages/LeadsPage"));
-const CrmPipeline = lazy(() => import("./features/crm/pages/PipelinePage"));
-const CrmAppointments = lazy(() => import("./features/crm/pages/AppointmentsPage"));
-const CrmTasks = lazy(() => import("./features/crm/pages/TasksPage"));
-const CrmReports = lazy(() => import("./features/crm/pages/ReportsPage"));
 const CrmAlerts = lazy(() => import("./features/crm/pages/AlertsPage"));
 const CrmAutomation = lazy(() => import("./features/crm/pages/AutomationPage"));
-const CrmPricing = lazy(() => import("./features/crm/pages/PricingPage"));
 const CrmSettings = lazy(() => import("./features/crm/pages/CrmSettingsPage"));
+
+/** Old /crm/... addresses now open the matching tab of the Leads page,
+ * keeping their filters (the lead list's ?tab= became ?list=). */
+function ToLeadsTab({ view }: { view: string }) {
+  const loc = useLocation();
+  const sp = new URLSearchParams(loc.search);
+  if (sp.has("tab")) { sp.set("list", sp.get("tab")!); sp.delete("tab"); }
+  sp.set("view", view);
+  return <Navigate to={`/leads?${sp.toString()}`} replace />;
+}
 
 function Lazy({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<div className="p-6"><TableSkeleton /></div>}>{children}</Suspense>;
@@ -110,15 +113,16 @@ export default function App() {
           <Route path="/settings/currency" element={<CurrencySettings />} />
           <Route path="/settings/instagram-forms" element={<InstagramForms />} />
           <Route path="/settings/ai-providers" element={<AIProviders />} />
-          <Route path="/crm" element={<Lazy><CrmToday /></Lazy>} />
-          <Route path="/crm/leads" element={<Lazy><CrmLeads /></Lazy>} />
-          <Route path="/crm/pipeline" element={<Lazy><CrmPipeline /></Lazy>} />
-          <Route path="/crm/appointments" element={<Lazy><CrmAppointments /></Lazy>} />
-          <Route path="/crm/tasks" element={<Lazy><CrmTasks /></Lazy>} />
-          <Route path="/crm/reports" element={<Lazy><CrmReports /></Lazy>} />
+          {/* Telecalling now lives in the main Dashboard and the tabbed Leads page */}
+          <Route path="/crm" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/crm/leads" element={<ToLeadsTab view="leads" />} />
+          <Route path="/crm/pipeline" element={<ToLeadsTab view="pipeline" />} />
+          <Route path="/crm/appointments" element={<ToLeadsTab view="appointments" />} />
+          <Route path="/crm/tasks" element={<ToLeadsTab view="tasks" />} />
+          <Route path="/crm/reports" element={<ToLeadsTab view="reports" />} />
+          <Route path="/crm/pricing" element={<ToLeadsTab view="pricing" />} />
           <Route path="/crm/alerts" element={<Lazy><CrmAlerts /></Lazy>} />
           <Route path="/crm/automation" element={<Lazy><CrmAutomation /></Lazy>} />
-          <Route path="/crm/pricing" element={<Lazy><CrmPricing /></Lazy>} />
           <Route path="/settings/crm" element={<Lazy><CrmSettings /></Lazy>} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Route>

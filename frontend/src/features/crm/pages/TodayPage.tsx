@@ -55,13 +55,13 @@ export default function TodayPage() {
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Tile label="First contact" value={data.tiles.first_contact_pending} hint="Awaiting a first call ↗"
-            onClick={() => navigate("/crm/leads?tab=new")} />
+            onClick={() => navigate("/leads?view=leads&list=new")} />
           <Tile label="Due today" value={data.tiles.due_today} hint={data.mine ? "Your next actions ↗" : "Team's next actions ↗"}
-            onClick={() => navigate("/crm/tasks")} />
+            onClick={() => navigate("/leads?view=tasks")} />
           <Tile label="Overdue" value={data.tiles.overdue} hint="Needs attention ↗" color={data.tiles.overdue ? "#ef4444" : undefined}
-            onClick={() => navigate("/crm/leads?tab=overdue")} />
+            onClick={() => navigate("/leads?view=leads&list=overdue")} />
           <Tile label="Unassigned" value={data.tiles.unassigned} hint="Assign an owner ↗" color={data.tiles.unassigned ? "#f59e0b" : undefined}
-            onClick={() => navigate("/crm/leads?tab=unassigned")} />
+            onClick={() => navigate("/leads?view=leads&list=unassigned")} />
         </div>
 
         <Card>
@@ -93,7 +93,7 @@ export default function TodayPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2">
             <CardHeader title="Follow-ups to prioritise"
-              action={<Link to="/crm/tasks" className="text-xs text-blue-400 hover:underline">View all →</Link>} />
+              action={<Link to="/leads?view=tasks" className="text-xs text-blue-400 hover:underline">View all →</Link>} />
             {data.followups.length === 0 ? <EmptyFollowups text="Nothing pending." /> : (
               <div className="divide-y divide-[var(--border-subtle)]">
                 {data.followups.map((f) => <FollowupRow key={f.id} f={f} showOwner={!data.mine} />)}
@@ -115,7 +115,7 @@ export default function TodayPage() {
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-[var(--text-muted)]">Today's appointments</span>
-                <Link to="/crm/appointments" className="text-blue-400 hover:underline">{data.sales.appointments_today} scheduled →</Link>
+                <Link to="/leads?view=appointments" className="text-blue-400 hover:underline">{data.sales.appointments_today} scheduled →</Link>
               </div>
               <p className="text-[10px] text-[var(--text-muted)]">Values in INR · open value comes from the price book.</p>
             </div>
@@ -124,10 +124,10 @@ export default function TodayPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2">
-            <CardHeader title="Pipeline by stage" action={<Link to="/crm/pipeline" className="text-xs text-blue-400 hover:underline">Open board →</Link>} />
+            <CardHeader title="Pipeline by stage" action={<Link to="/leads?view=pipeline" className="text-xs text-blue-400 hover:underline">Open board →</Link>} />
             <div className="px-5 py-4 space-y-3">
               {data.pipeline.map((p) => (
-                <button key={p.stage} onClick={() => navigate(`/crm/leads?stage=${p.stage}`)} className="w-full text-left cursor-pointer group">
+                <button key={p.stage} onClick={() => navigate(`/leads?view=leads&stage=${p.stage}`)} className="w-full text-left cursor-pointer group">
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-[var(--text-secondary)] group-hover:text-white">{p.label}</span>
                     <span className="text-[var(--text-muted)]">{p.count} lead{p.count === 1 ? "" : "s"}{p.value ? ` · ${fmtINRShort(p.value)}` : ""}</span>
@@ -146,18 +146,18 @@ export default function TodayPage() {
               <p className="text-white font-semibold">One owner. One next action.</p>
               <p className="text-[var(--text-muted)] mb-2">Every open lead should have an owner and a scheduled follow-up.</p>
               {[
-                ["No status after 24 h", data.data_health.no_status_24h, "/crm/leads?tab=new"],
-                ["Unassigned open leads", data.data_health.unassigned_open, "/crm/leads?tab=unassigned"],
-                ["Open leads without a phone model", data.data_health.missing_model, "/crm/leads"],
-                ["Leads without a phone number", data.data_health.missing_phone, "/crm/leads"],
-                ["Statuses not in the list", data.data_health.unknown_status, "/crm/leads"],
+                ["No status after 24 h", data.data_health.no_status_24h, "/leads?view=leads&list=new"],
+                ["Unassigned open leads", data.data_health.unassigned_open, "/leads?view=leads&list=unassigned"],
+                ["Open leads without a phone model", data.data_health.missing_model, "/leads?view=leads"],
+                ["Leads without a phone number", data.data_health.missing_phone, "/leads?view=leads"],
+                ["Statuses not in the list", data.data_health.unknown_status, "/leads?view=leads"],
               ].map(([label, n, to]) => (
                 <Link key={label as string} to={to as string} className="flex justify-between hover:text-white text-[var(--text-secondary)]">
                   <span>{label}</span>
                   <span className={Number(n) ? "text-amber-400 font-semibold" : "text-emerald-400"}>{n}</span>
                 </Link>
               ))}
-              <Link to="/crm/leads" className="inline-flex items-center gap-1 text-blue-400 hover:underline pt-2">Review leads <ArrowRight size={12} /></Link>
+              <Link to="/leads?view=leads" className="inline-flex items-center gap-1 text-blue-400 hover:underline pt-2">Review leads <ArrowRight size={12} /></Link>
             </div>
           </Card>
         </div>

@@ -174,6 +174,19 @@ export interface AppointmentItem {
   source: "app" | "sheet";
   store_id: number | null;
   owner_name: string | null;
+  sale_match_status?: "matched" | "pending" | "no_sale" | "no_phone" | null;
+  sale_checked_at?: string | null;
+  matched_purchase_id?: string | null;
+  matched_amount?: number | null;
+  matched_shop?: string | null;
+  matched_sale_date?: string | null;
+}
+
+export function useCheckSales() {
+  return useCrmMutation((_: void) =>
+    api.post<{ ok: boolean; checked: number; matched: number; no_sale: number; pending: number; no_phone: number; errors: number }>(
+      `/crm/appointments/check-sales`),
+  );
 }
 
 export function useAppointments(start: string, days: number, mine?: boolean) {
@@ -417,4 +430,40 @@ export function useAliases(enabled = true) {
 
 export function useSetAlias() {
   return useCrmMutation((body: { alias: string; user_id: number | null }) => api.put(`/crm/settings/aliases`, body));
+}
+
+export interface TeamPerson {
+  id: number;
+  name: string;
+  sheets: string[];
+  available: boolean;
+  overdue: number;
+  upcoming_appointments: number;
+  total: number;
+  status_counts: Record<string, number>;
+  converted: number;
+  conversion_pct: number;
+  connected_pct: number;
+  active: number;
+  open_leads: number;
+}
+
+export interface TeamOverview {
+  teams: {
+    id: number;
+    name: string;
+    sheets: string[];
+    totals: Omit<TeamPerson, "id" | "name" | "sheets" | "available"> & { unassigned: number };
+    own: TeamPerson;
+    telecallers: TeamPerson[];
+  }[];
+  unattached_telecallers: TeamPerson[];
+}
+
+export function useTeamOverview(start: string, end: string) {
+  return useQuery({
+    queryKey: [CRM_KEY, "team-overview", start, end],
+    queryFn: () => api.get<TeamOverview>(`/crm/team-overview${qs({ start, end })}`),
+    placeholderData: (prev) => prev,
+  });
 }

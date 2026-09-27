@@ -55,7 +55,7 @@ function LeadCard({ lead }: { lead: CrmLead }) {
   );
 }
 
-export default function PipelinePage() {
+export default function PipelinePage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: meta } = useCrmMeta();
   const [mine, setMine] = useState(false);
   const [sheet, setSheet] = useState("");
@@ -65,7 +65,7 @@ export default function PipelinePage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader
           title="Sales pipeline"
           subtitle="Will Visit = Warm · Paid Advance = Hot · Sale Conversion = Converted Customer"

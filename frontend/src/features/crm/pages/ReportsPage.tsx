@@ -131,7 +131,7 @@ export function AgentTable({ rows, targets, firstCallMinutes, canCoach }: {
   );
 }
 
-export default function ReportsPage() {
+export default function ReportsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const { data: meta } = useCrmMeta();
   const [sp, setSp] = useSearchParams();
@@ -155,7 +155,7 @@ export default function ReportsPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader
           title={isAgent ? "My performance" : "Agent performance"}
           subtitle={data ? `${data.period.start} to ${data.period.end} · compared with ${data.previous_period.start} to ${data.previous_period.end}` : ""}

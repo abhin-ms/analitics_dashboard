@@ -96,6 +96,16 @@ const COUNTRY_CENTERS: Record<string, [number, number]> = {
   Bahrain: [50.5577, 26.0667],
 };
 
+// Where the country pin sits at the zoomed-out view. The Gulf countries are
+// so close together that their pins would overlap at their real centres,
+// so Bahrain and Qatar are nudged out to the side over the sea.
+const COUNTRY_PIN_POS: Record<string, [number, number]> = {
+  Bahrain: [48.2, 28.4],
+  Qatar: [48.8, 24.2],
+  UAE: [55.8, 25.6],
+  Oman: [57.8, 21.2],
+};
+
 // The public world-countries GeoJSON uses full country names, while this
 // app uses short ones (UAE, UK) — this maps between the two so polygon
 // clicks/highlighting can match a branch's country to its map polygon.
@@ -110,21 +120,96 @@ const GEOJSON_NAME_FOR_COUNTRY: Record<string, string> = {
   Bahrain: "Bahrain",
 };
 
+// City keywords found in MCP shop names ("GUARDX INNOVATIONS - Indiranagar",
+// "FORTISAFE - Kottakkal", "… - Dubai Mall") → [lng, lat]. Lets MCP-named
+// shops, which aren't in STORE_COORDS, still land in the right city.
+const CITY_COORDS: [string, [number, number]][] = [
+  // India
+  ["indiranagar", [77.6408, 12.9784]], ["marathahalli", [77.6971, 12.9562]], ["koramangala", [77.6245, 12.9352]],
+  ["whitefield", [77.7500, 12.9698]], ["jayanagar", [77.5838, 12.9250]], ["bangalore", [77.5946, 12.9716]],
+  ["bengaluru", [77.5946, 12.9716]], ["velachery", [80.2181, 12.9830]], ["kodambakkam", [80.2253, 13.0524]],
+  ["kodambakam", [80.2253, 13.0524]], ["anna nagar", [80.2101, 13.0850]], ["chennai", [80.2707, 13.0827]],
+  ["coimbatore", [76.9558, 11.0168]], ["hitech", [78.3772, 17.4435]], ["kukatpally", [78.4042, 17.4847]],
+  ["hyderabad", [78.4867, 17.3850]], ["bandra", [72.8372, 19.0544]], ["korum", [72.9273, 19.2850]],
+  ["thane", [72.9781, 19.2183]], ["mumbai", [72.8777, 19.0760]], ["lajpat", [77.2406, 28.5679]],
+  ["delhi", [77.2090, 28.6139]], ["noida", [77.3910, 28.5355]], ["gurgaon", [77.0266, 28.4595]],
+  ["guwahati", [91.7362, 26.1445]], ["kasargod", [74.9952, 12.4992]], ["kasaragod", [74.9952, 12.4992]],
+  ["kannur", [75.3704, 11.8745]], ["clt", [75.7873, 11.2588]], ["calicut", [75.7873, 11.2588]],
+  ["kozhikode", [75.7873, 11.2588]], ["kottakkal", [75.9978, 10.9990]], ["wayanad", [76.1320, 11.6854]],
+  ["thrissur", [76.2144, 10.5270]], ["palakkad", [76.6548, 10.7867]], ["kochi", [76.2674, 9.9312]],
+  ["cochin", [76.2674, 9.9312]], ["pathanamthitta", [76.8346, 9.2648]], ["kollam", [76.6284, 8.8932]],
+  ["trivandrum", [76.9366, 8.5241]], ["thiruvananthapuram", [76.9366, 8.5241]], ["mangalore", [74.8560, 12.9141]],
+  ["mysore", [76.6394, 12.2958]], ["pune", [73.8567, 18.5204]],
+  // Gulf and others
+  ["karama", [55.3032, 25.2360]], ["al ghurair", [55.3169, 25.2677]], ["qusais", [55.3869, 25.2771]],
+  ["dubai", [55.2708, 25.2048]], ["deira", [55.3200, 25.2711]], ["abu dhabi", [54.3773, 24.4539]],
+  ["auh", [54.3773, 24.4539]], ["bawabat", [54.6130, 24.4040]], ["shbaiya", [54.5480, 24.3470]],
+  ["shabiya", [54.5480, 24.3470]], ["(aln)", [55.7447, 24.2075]], ["sharjah", [55.4209, 25.3463]], ["ajman", [55.5136, 25.4052]], ["al ain", [55.7447, 24.2075]],
+  ["ras al", [55.9432, 25.8007]], ["fujairah", [56.3265, 25.1288]], ["muscat", [58.4059, 23.5880]],
+  ["seeb", [58.1890, 23.6700]], ["sohar", [56.7075, 24.3470]], ["salalah", [54.0924, 17.0151]],
+  ["nizwa", [57.5301, 22.9333]], ["doha", [51.5310, 25.2854]], ["manama", [50.5860, 26.2285]],
+  ["stratford", [-0.0035, 51.5416]], ["london", [-0.1276, 51.5072]], ["karachi", [67.0011, 24.8607]], ["lahore", [74.3587, 31.5204]],
+  ["islamabad", [73.0479, 33.6844]], ["kuala lumpur", [101.6869, 3.1390]],
+];
+
 function coordsForBranch(branch: GlobeBranch): [number, number] {
-  if (branch.country === "India") {
-    return STORE_COORDS[branch.shop] ?? COUNTRY_CENTERS.India;
+  if (branch.country === "India" && STORE_COORDS[branch.shop]) return STORE_COORDS[branch.shop];
+  const name = (branch.shop || "").toLowerCase();
+  for (const [key, coords] of CITY_COORDS) {
+    if (name.includes(key)) return coords;
   }
   return COUNTRY_CENTERS[branch.country] ?? COUNTRY_CENTERS.India;
 }
 
-const WORLD_VIEW = { lat: 15, lng: 60, altitude: 2.3 };
+/** Shops that land on the same point (same city, or no city in the name)
+ * are spread on a small ring so every pin stays visible and clickable. */
+function spreadOverlaps<T extends { lat: number; lng: number }>(items: T[], radiusDeg: number): T[] {
+  const groups = new Map<string, T[]>();
+  for (const it of items) {
+    const k = `${it.lat.toFixed(3)},${it.lng.toFixed(3)}`;
+    groups.set(k, [...(groups.get(k) || []), it]);
+  }
+  const out: T[] = [];
+  for (const g of groups.values()) {
+    if (g.length === 1) { out.push(g[0]!); continue; }
+    g.forEach((it, i) => {
+      const angle = (2 * Math.PI * i) / g.length;
+      const r = radiusDeg * (1 + Math.floor(i / 12) * 0.6);
+      out.push({ ...it, lat: it.lat + r * Math.sin(angle), lng: it.lng + r * Math.cos(angle) });
+    });
+  }
+  return out;
+}
+
+/** Opening view: zoomed on the region that holds most branches. Countries
+ * far from it (e.g. a single UK branch) stay reachable from their chip
+ * instead of forcing the whole map out to a tiny globe. */
+function fitView(countries: string[], counts: Record<string, number>) {
+  const all = countries.filter((c) => COUNTRY_CENTERS[c]);
+  if (!all.length) return { lat: 20, lng: 70, altitude: 1.6 };
+  const total = all.reduce((a, c) => a + (counts[c] || 1), 0);
+  const cLng = all.reduce((a, c) => a + COUNTRY_CENTERS[c]![0] * (counts[c] || 1), 0) / total;
+  const cLat = all.reduce((a, c) => a + COUNTRY_CENTERS[c]![1] * (counts[c] || 1), 0) / total;
+  const core = all.filter((c) => Math.abs(COUNTRY_CENTERS[c]![0] - cLng) <= 40 && Math.abs(COUNTRY_CENTERS[c]![1] - cLat) <= 30);
+  const pts = (core.length ? core : all).map((c) => COUNTRY_CENTERS[c]) as [number, number][];
+  if (!pts.length) return { lat: 20, lng: 70, altitude: 1.6 };
+  const lngs = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
+  const lngSpan = Math.max(...lngs) - Math.min(...lngs);
+  const latSpan = Math.max(...lats) - Math.min(...lats);
+  const span = Math.max(lngSpan, latSpan * 1.6, 20);
+  return {
+    lat: (Math.max(...lats) + Math.min(...lats)) / 2,
+    lng: (Math.max(...lngs) + Math.min(...lngs)) / 2,
+    altitude: Math.min(2.2, Math.max(0.75, span / 30)),
+  };
+}
 const COUNTRIES_URL =
   "https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson";
 
 export default function BranchGlobe({ branches }: BranchGlobeProps) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: 600, height: 480 });
+  const [size, setSize] = useState({ width: 600, height: 560 });
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [hoverCountry, setHoverCountry] = useState<CountryFeature | null>(null);
@@ -146,7 +231,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0].contentRect.width;
-      setSize({ width: Math.max(320, Math.round(w)), height: 480 });
+      setSize({ width: Math.max(320, Math.round(w)), height: 560 });
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -165,22 +250,31 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
     };
   }, []);
 
+  const homeView = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const b of branches) counts[b.country] = (counts[b.country] || 0) + 1;
+    return fitView(branchCountryList, counts);
+  }, [branchCountryList, branches]);
+
+  // Opens zoomed to the branch countries and stays still (no auto-spin), so
+  // the map is readable without dragging or scrolling first.
   useEffect(() => {
     const g = globeRef.current;
     if (!g) return;
-    g.pointOfView(WORLD_VIEW, 0);
+    if (!selectedCountry) g.pointOfView(homeView, 0);
     const controls = g.controls();
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.4;
+    controls.autoRotate = false;
     controls.enableZoom = true;
-  }, [countries.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countries.length, homeView]);
 
   const flyToCountry = useCallback((country: string) => {
     const g = globeRef.current;
     if (!g) return;
     const [lng, lat] = COUNTRY_CENTERS[country] ?? COUNTRY_CENTERS.India;
     g.controls().autoRotate = false;
-    g.pointOfView({ lat, lng, altitude: country === "India" ? 1.15 : 0.6 }, 1400);
+    const small = ["Bahrain", "Qatar"].includes(country);
+    g.pointOfView({ lat, lng, altitude: country === "India" ? 1.15 : small ? 0.25 : 0.6 }, 1400);
     setSelectedCountry(country);
     setSelectedStore(null);
   }, []);
@@ -188,11 +282,11 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
   const flyToWorld = useCallback(() => {
     const g = globeRef.current;
     if (!g) return;
-    g.pointOfView(WORLD_VIEW, 1400);
-    g.controls().autoRotate = true;
+    g.pointOfView(homeView, 1400);
+    g.controls().autoRotate = false;
     setSelectedCountry(null);
     setSelectedStore(null);
-  }, []);
+  }, [homeView]);
 
   const countryForFeature = useCallback(
     (feat: CountryFeature): string | null => {
@@ -215,18 +309,59 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
 
   const storeMarkers = useMemo(() => {
     if (!selectedCountry) return [];
-    return branches
+    const pins = branches
       .filter((b) => b.country === selectedCountry)
       .map((b) => {
         const [lng, lat] = coordsForBranch(b);
         return { ...b, lat, lng };
       });
+    const small = ["Bahrain", "Qatar"].includes(selectedCountry);
+    return spreadOverlaps(pins, selectedCountry === "India" ? 0.35 : small ? 0.05 : 0.12);
   }, [branches, selectedCountry]);
 
+  // World view: one pin per branch country (count + achievement), so every
+  // country with a branch is visible — even Bahrain/Qatar, which are too
+  // small to see as shapes at this zoom.
+  const countryMarkers = useMemo(() => {
+    if (selectedCountry) return [];
+    return branchCountryList.map((country) => {
+      const list = branches.filter((b) => b.country === country);
+      const target = list.reduce((a, b) => a + (b.target || 0), 0);
+      const actual = list.reduce((a, b) => a + (b.actual || 0), 0);
+      const [lng, lat] = COUNTRY_PIN_POS[country] ?? COUNTRY_CENTERS[country] ?? COUNTRY_CENTERS.India;
+      return { kind: "country", country, count: list.length, pct: target > 0 ? (actual / target) * 100 : null, lat, lng };
+    });
+  }, [branches, branchCountryList, selectedCountry]);
+
+  const makeCountryEl = useCallback((d: object) => {
+    const c = d as { country: string; count: number; pct: number | null; lat: number; lng: number };
+    const color = COUNTRY_COLORS[c.country] || "#3b82f6";
+    const el = document.createElement("div");
+    el.dataset.lat = String(c.lat);
+    el.dataset.lng = String(c.lng);
+    el.style.cursor = "pointer";
+    el.style.transform = "translate(-50%, -50%)";
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 4px;border-radius:9999px;
+        background:rgba(17,19,30,0.92);border:1px solid ${color};box-shadow:0 0 10px ${color}66;
+        font-size:11px;font-weight:600;color:#fff;white-space:nowrap;font-family:inherit;">
+        <span style="min-width:18px;height:18px;border-radius:9999px;background:${color};display:inline-flex;
+          align-items:center;justify-content:center;font-size:10px;padding:0 4px;">${c.count}</span>
+        ${c.country}${c.pct !== null ? ` · <span style="color:${ragColor(c.pct)}">${c.pct.toFixed(0)}%</span>` : ""}
+      </div>`;
+    el.onclick = (e) => {
+      e.stopPropagation();
+      flyToCountry(c.country);
+    };
+    return el;
+  }, [flyToCountry]);
+
   const makeMarkerEl = useCallback((d: object) => {
-    const branch = d as GlobeBranch;
+    const branch = d as GlobeBranch & { lat: number; lng: number };
     const color = ragColor(branch.achievement_pct);
     const el = document.createElement("div");
+    el.dataset.lat = String(branch.lat);
+    el.dataset.lng = String(branch.lng);
     el.style.cursor = "pointer";
     el.style.display = "flex";
     el.style.flexDirection = "column";
@@ -264,7 +399,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
           <p className="text-xs text-[var(--text-muted)]">
             {selectedCountry
               ? `${storeMarkers.length} branches in ${selectedCountry} · click a pin for details`
-              : "Drag to rotate · scroll to zoom · click a highlighted country to drill in"}
+              : `${branches.length} branches in ${branchCountryList.length} countries · click a country pin to see its branches · drag to rotate, scroll to zoom`}
           </p>
         </div>
         {selectedCountry && (
@@ -272,7 +407,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
             onClick={flyToWorld}
             className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)] hover:text-white bg-white/5 hover:bg-white/10 border border-[var(--border-subtle)] rounded-lg px-3 py-1.5 transition-colors"
           >
-            <ArrowLeft size={13} /> Back to globe
+            <ArrowLeft size={13} /> All countries
           </button>
         )}
       </div>
@@ -294,7 +429,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
         </div>
       )}
 
-      <div ref={containerRef} className="relative w-full rounded-xl overflow-hidden" style={{ height: 480 }}>
+      <div ref={containerRef} className="relative w-full rounded-xl overflow-hidden" style={{ height: 560 }}>
         <Globe
           ref={globeRef}
           width={size.width}
@@ -319,11 +454,30 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
           polygonLabel={(f: object) => (f as CountryFeature).properties?.NAME || ""}
           onPolygonHover={(f: object | null) => setHoverCountry(f as CountryFeature | null)}
           onPolygonClick={handlePolygonClick}
-          htmlElementsData={storeMarkers}
+          htmlElementsData={selectedCountry ? storeMarkers : countryMarkers}
           htmlLat={(d: object) => (d as { lat: number }).lat}
           htmlLng={(d: object) => (d as { lng: number }).lng}
-          htmlAltitude={0.01}
-          htmlElement={makeMarkerEl}
+          htmlAltitude={0.035}
+          htmlTransitionDuration={0}
+          // Keep every pin in the page and just fade the ones on the far side.
+          // The library's default hides them outright, and it misjudged pins
+          // sitting over a raised (highlighted) country such as India.
+          htmlElementVisibilityModifier={(el: HTMLElement) => {
+            // Own "facing the viewer" test: the library's check wrongly hid
+            // pins sitting over a raised (highlighted) country such as India.
+            const pov = globeRef.current?.pointOfView();
+            const lat = Number(el.dataset.lat), lng = Number(el.dataset.lng);
+            let visible = true;
+            if (pov && Number.isFinite(lat) && Number.isFinite(lng)) {
+              const r = Math.PI / 180;
+              const cos = Math.sin(lat * r) * Math.sin(pov.lat * r)
+                + Math.cos(lat * r) * Math.cos(pov.lat * r) * Math.cos((lng - pov.lng) * r);
+              visible = cos > 0.15; // within ~80° of the view centre
+            }
+            el.style.opacity = visible ? "1" : "0";
+            el.style.pointerEvents = visible ? "auto" : "none";
+          }}
+          htmlElement={(d: object) => ((d as { kind?: string }).kind === "country" ? makeCountryEl(d) : makeMarkerEl(d))}
         />
 
         {selectedStore && (

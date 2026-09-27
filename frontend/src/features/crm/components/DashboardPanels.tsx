@@ -11,6 +11,7 @@ import { statusColor, NO_STATUS } from "../statusConfig";
 import { AgentTable } from "../pages/ReportsPage";
 import { PeriodFilter, PeriodKey, StatusBar, StatusChips } from "./shared";
 import { Button, Card, CardHeader, Tile } from "./ui";
+import { DashboardInbox } from "./DashboardInbox";
 
 export interface PeriodState {
   key: PeriodKey;
@@ -31,11 +32,11 @@ function TodayTiles({ today, mine }: { today: QueueTiles; mine: boolean }) {
   const navigate = useNavigate();
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <Tile label="First contact" value={today.first_contact_pending} hint="Awaiting a first call ↗" onClick={() => navigate("/crm/leads?tab=new")} />
-      <Tile label="Due today" value={today.due_today} hint={mine ? "Your next actions ↗" : "Team's next actions ↗"} onClick={() => navigate("/crm/tasks")} />
-      <Tile label="Overdue" value={today.overdue} hint="Needs attention ↗" color={today.overdue ? "#ef4444" : undefined} onClick={() => navigate("/crm/leads?tab=overdue")} />
+      <Tile label="First contact" value={today.first_contact_pending} hint="Awaiting a first call ↗" onClick={() => navigate("/leads?view=leads&list=new")} />
+      <Tile label="Due today" value={today.due_today} hint={mine ? "Your next actions ↗" : "Team's next actions ↗"} onClick={() => navigate("/leads?view=tasks")} />
+      <Tile label="Overdue" value={today.overdue} hint="Needs attention ↗" color={today.overdue ? "#ef4444" : undefined} onClick={() => navigate("/leads?view=leads&list=overdue")} />
       <Tile label="Unassigned" value={today.unassigned} hint={mine ? "In your city ↗" : "Assign an owner ↗"} color={today.unassigned ? "#f59e0b" : undefined}
-        onClick={() => navigate("/crm/leads?tab=unassigned")} />
+        onClick={() => navigate("/leads?view=leads&list=unassigned")} />
     </div>
   );
 }
@@ -62,11 +63,12 @@ export function TelecallerCrmPanel({ data, period }: { data: any; period: Period
           }}>
             {data.available ? <><ShieldCheck size={14} className="text-emerald-400" />Available</> : <><Coffee size={14} className="text-amber-400" />Away</>}
           </Button>
-          <Link to="/crm" className="text-xs text-blue-400 hover:underline inline-flex items-center gap-1">Open my day <ArrowRight size={12} /></Link>
+          <Link to="/leads?view=leads" className="text-xs text-blue-400 hover:underline inline-flex items-center gap-1">Open my leads <ArrowRight size={12} /></Link>
         </div>
       </div>
 
       {data.today && <TodayTiles today={data.today} mine />}
+      <DashboardInbox mine />
 
       <Card>
         <CardHeader title="Lead status" icon={<Activity size={15} className="text-blue-400" />}
@@ -85,13 +87,13 @@ export function TelecallerCrmPanel({ data, period }: { data: any; period: Period
           <StatusBar counts={counts} />
           {Object.keys(counts).length === 0
             ? <p className="text-xs text-[var(--text-muted)]">No leads in this period{scope === "my" ? " assigned to you" : ""}.</p>
-            : <StatusChips counts={counts} onChange={(s) => navigate(`/crm/leads?tab=${scope === "my" ? "mine" : "all"}${s ? `&status=${encodeURIComponent(s)}` : ""}`)} />}
+            : <StatusChips counts={counts} onChange={(s) => navigate(`/leads?view=leads&list=${scope === "my" ? "mine" : "all"}${s ? `&status=${encodeURIComponent(s)}` : ""}`)} />}
         </div>
       </Card>
 
       <Card>
         <CardHeader title="My numbers" subtitle={`${data.period.start} to ${data.period.end} · compared with the period before`}
-          action={<Link to="/crm/reports" className="text-xs text-blue-400 hover:underline">Full report →</Link>} />
+          action={<Link to="/leads?view=reports" className="text-xs text-blue-400 hover:underline">Full report →</Link>} />
         <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             ["Leads owned", my.total_leads, <Delta key="d" cur={my.total_leads} prev={p.total_leads} />],
@@ -129,24 +131,25 @@ export function TeamCrmPanel({ data, period }: { data: any; period: PeriodState 
   const rows: { user_id: number | null; name: string; total: number; counts: Record<string, number> }[] = data.team_status_matrix.rows;
   const agents: AgentRow[] = data.agents || [];
   const leadsLink = (owner: number | null, status?: string) => {
-    const qs = new URLSearchParams({ tab: owner ? "all" : "unassigned" });
+    const qs = new URLSearchParams({ view: "leads", list: owner ? "all" : "unassigned" });
     if (owner) qs.set("owner", String(owner));
     if (status) qs.set("status", status);
-    return `/crm/leads?${qs.toString()}`;
+    return `/leads?${qs.toString()}`;
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <PeriodFilter allowAll value={period.key} onChange={period.setKey} custom={period.custom} onCustom={period.setCustom} />
-        <Link to="/crm" className="text-xs text-blue-400 hover:underline inline-flex items-center gap-1">Open team overview <ArrowRight size={12} /></Link>
+        <Link to="/leads?view=team" className="text-xs text-blue-400 hover:underline inline-flex items-center gap-1">Open team view <ArrowRight size={12} /></Link>
       </div>
 
       {data.today && <TodayTiles today={data.today} mine={false} />}
+      <DashboardInbox mine={false} />
       {data.stale_no_status > 0 && (
         <p className="text-xs text-amber-400">
           {data.stale_no_status} lead{data.stale_no_status === 1 ? "" : "s"} still have no status after 24 hours.{" "}
-          <Link to="/crm/leads?tab=new" className="underline">Review</Link>
+          <Link to="/leads?view=leads&list=new" className="underline">Review</Link>
         </p>
       )}
 
@@ -155,7 +158,7 @@ export function TeamCrmPanel({ data, period }: { data: any; period: PeriodState 
         <div className="px-5 py-4 space-y-3">
           <StatusBar counts={data.team_status_counts} />
           <StatusChips counts={data.team_status_counts}
-            onChange={(s) => navigate(`/crm/leads?tab=all${s ? `&status=${encodeURIComponent(s)}` : ""}`)} />
+            onChange={(s) => navigate(`/leads?view=leads&list=all${s ? `&status=${encodeURIComponent(s)}` : ""}`)} />
         </div>
       </Card>
 
@@ -180,7 +183,7 @@ export function TeamCrmPanel({ data, period }: { data: any; period: PeriodState 
                 {rows.map((r) => (
                   <tr key={`${r.user_id ?? r.name}`} className="hover:bg-[var(--bg-card-hover)]">
                     <td className="py-2.5 pl-5 pr-3 font-medium text-white whitespace-nowrap">
-                      {r.user_id ? <Link to={`/crm/reports?agent=${r.user_id}`} className="hover:underline">{r.name}</Link> : <span className="text-amber-400">{r.name}</span>}
+                      {r.user_id ? <Link to={`/leads?view=reports&agent=${r.user_id}`} className="hover:underline">{r.name}</Link> : <span className="text-amber-400">{r.name}</span>}
                     </td>
                     <td className="py-2.5 pr-3 text-right text-white font-semibold">
                       <Link to={leadsLink(r.user_id)} className="hover:underline">{r.total}</Link>
@@ -205,7 +208,7 @@ export function TeamCrmPanel({ data, period }: { data: any; period: PeriodState 
 
       <Card>
         <CardHeader title="Team performance" subtitle={`${data.period.start} to ${data.period.end} · click a name for the breakdown`}
-          action={<Link to="/crm/reports" className="text-xs text-blue-400 hover:underline">Full report →</Link>} />
+          action={<Link to="/leads?view=reports" className="text-xs text-blue-400 hover:underline">Full report →</Link>} />
         <AgentTable rows={agents} targets={data.targets} firstCallMinutes={data.automation?.first_call_minutes ?? 5} canCoach />
       </Card>
     </div>

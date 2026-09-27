@@ -51,7 +51,7 @@ function EditDialog({ row, coverages, onClose }: { row: PriceRow | null; coverag
   );
 }
 
-export default function PricingPage() {
+export default function PricingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data, isLoading, error } = usePriceBook();
   const del = useDeletePriceRow();
   const toast = useToast();
@@ -59,7 +59,7 @@ export default function PricingPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader title="Phone model price book" subtitle="Standard and coverage prices · INR · phone model + service type"
           actions={data?.can_edit && <Button variant="primary" onClick={() => setEditing("new")}><Plus size={15} />Add price</Button>} />
         <InfoNote>

@@ -105,15 +105,13 @@ export const OUTCOME_GROUPS: { label: string; outcomes: { key: string; label: st
       { key: "connected_other", label: "Connected – other", hint: "Set the next follow-up" },
     ],
   },
-  {
-    label: "Other",
-    outcomes: [{ key: "note", label: "Note only", hint: "No call — just a note" }],
-  },
+  // Notes are added from the lead's "Update lead" box, not from Log activity.
 ];
 
-export const OUTCOME_LABELS: Record<string, string> = Object.fromEntries(
-  OUTCOME_GROUPS.flatMap((g) => g.outcomes.map((o) => [o.key, o.label])),
-);
+export const OUTCOME_LABELS: Record<string, string> = {
+  ...Object.fromEntries(OUTCOME_GROUPS.flatMap((g) => g.outcomes.map((o) => [o.key, o.label]))),
+  note: "Note",
+};
 
 export const ALERT_KIND_LABELS: Record<string, string> = {
   first_call_overdue: "First call overdue",
@@ -124,4 +122,5 @@ export const ALERT_KIND_LABELS: Record<string, string> = {
   no_agent_available: "No agent available",
   weekly_review: "Weekly review",
   coaching: "Coaching",
+  sale_matched: "Sale matched",
 };

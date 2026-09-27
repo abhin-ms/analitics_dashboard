@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuthStore } from "@/lib/authStore";
 import { useUIStore } from "@/lib/uiStore";
 import {
@@ -45,23 +45,6 @@ const INSTAGRAM_NAV_ITEMS: NavItem[] = [
   { to: "/instagram/submissions", label: "Submissions", icon: Table, resource: "instagram" },
 ];
 
-// Telecalling CRM (leads still come from the city Google Sheets).
-const TELECALLING_NAV_ITEMS: NavItem[] = [
-  { to: "/crm", label: "Today", icon: Sun, resource: "leads" },
-  { to: "/crm/leads", label: "Leads", icon: Users, resource: "leads" },
-  { to: "/crm/pipeline", label: "Pipeline", icon: Columns3, resource: "leads" },
-  { to: "/crm/appointments", label: "Appointments", icon: CalendarDays, resource: "leads" },
-  { to: "/crm/tasks", label: "Tasks", icon: ListChecks, resource: "leads" },
-  { to: "/crm/reports", label: "Reports", icon: BarChart3, resource: "leads" },
-  { to: "/crm/alerts", label: "Alerts", icon: Bell, resource: "leads" },
-  // Team leaders and admins see the rules (only Admin can edit them).
-  { to: "/crm/automation", label: "Automation", icon: Zap, resource: "leads",
-    roles: ["Team Leader", "SuperAdmin", "Admin", "CEO", "COO", "Regional Manager"] },
-  // Everyone sees the price book; only Admin can edit it.
-  { to: "/crm/pricing", label: "Pricing", icon: IndianRupee, resource: "leads" },
-];
-const CRM_ROLES = ["Telecaller", "Team Leader", "Salesperson", "SuperAdmin", "Admin", "CEO", "COO", "Regional Manager"];
-
 const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/roles", label: "Roles & Permissions", icon: Shield, resource: "settings" },
   // Gated on "users" rather than the blanket "settings" permission so a CEO
@@ -76,6 +59,7 @@ const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/instagram-forms", label: "Instagram Forms", icon: FileText, resource: "settings" },
   { to: "/settings/ai-providers", label: "AI Providers", icon: Brain, resource: "settings" },
   { to: "/settings/crm", label: "Telecalling Settings", icon: Headset, resource: "settings" },
+  { to: "/crm/automation", label: "Telecalling Automation", icon: Zap, resource: "settings" },
 ];
 
 const SIDEBAR_EXPANDED = 256;
@@ -97,7 +81,7 @@ function NavItemLink({
   return (
     <NavLink
       to={item.to}
-      end={item.to === "/instagram" || item.to === "/crm"}
+      end={item.to === "/instagram" || item.to === "/leads"}
       onClick={onNavigate}
       style={({ isActive }) => ({
         display: "flex",
@@ -261,17 +245,15 @@ export function Sidebar() {
 
   const [igOpen, setIgOpen] = useState(() => location.pathname.startsWith("/instagram"));
   const [settingsOpen, setSettingsOpen] = useState(() => location.pathname.startsWith("/settings"));
-  // Telecallers and team leaders live in the CRM, so it starts open for them.
-  const [crmOpen, setCrmOpen] = useState(() => location.pathname.startsWith("/crm") || role === "Telecaller" || role === "Team Leader");
-  useEffect(() => {
-    if (role === "Telecaller" || role === "Team Leader") setCrmOpen(true);
-  }, [role]);
+
 
   // team-leaders/reports/performance/leads all pull from the unscoped,
   // company-wide sheets-data endpoint (every branch, every team leader) —
   // a Team Leader has their own scoped dashboard/leads-update pages instead.
-  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance", "/leads"];
-  const HIDDEN_FOR_TELECALLER = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/leads", "/campaigns", "/tasks", "/performance", "/reports"];
+  // "/leads" is the tabbed telecalling Leads page (role-scoped), so team
+  // leaders and telecallers see it too.
+  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance"];
+  const HIDDEN_FOR_TELECALLER = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/campaigns", "/tasks", "/performance", "/reports"];
 
   const visibleMainItems = MAIN_NAV_ITEMS.filter((item) => {
     if (!hasPermission(item.resource, "view")) return false;
@@ -279,10 +261,6 @@ export function Sidebar() {
     if (isTeamLeader) return !HIDDEN_FOR_TL.includes(item.to);
     return true;
   });
-  const visibleCrmItems = CRM_ROLES.includes(role)
-    ? TELECALLING_NAV_ITEMS.filter((item) =>
-        hasPermission(item.resource, "view") && (!item.roles || item.roles.includes(role)))
-    : [];
   const visibleIgItems = isTelecaller || isTeamLeader ? [] : INSTAGRAM_NAV_ITEMS.filter((item) =>
     hasPermission(item.resource, "view")
   );
@@ -471,32 +449,6 @@ export function Sidebar() {
               onNavigate={() => setMobileOpen(false)}
             />
           ))}
-
-          {/* Telecalling CRM Section */}
-          {visibleCrmItems.length > 0 && (
-            <>
-              {(!collapsed || mobileOpen) && (
-                <div
-                  style={{
-                    height: "1px",
-                    background: "var(--border-subtle)",
-                    margin: "8px 8px",
-                  }}
-                />
-              )}
-              <CollapsibleSection
-                label="Telecalling"
-                icon={PhoneCall}
-                items={visibleCrmItems}
-                collapsed={collapsed}
-                mobileOpen={mobileOpen}
-                onNavigate={() => setMobileOpen(false)}
-                isOpen={crmOpen}
-                onToggle={() => setCrmOpen(!crmOpen)}
-                accentColor="#10b981"
-              />
-            </>
-          )}
 
           {/* Instagram Section */}
           {visibleIgItems.length > 0 && (

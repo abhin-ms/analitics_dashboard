@@ -26,7 +26,7 @@ const ALL_COLUMNS = [
 ] as const;
 const DEFAULT_COLUMNS = ["owner", "progress", "followup", "priority", "value"];
 const COLS_KEY = "crm.leads.columns";
-const FILTER_KEYS = ["tab", "status", "stage", "owner", "sheet", "priority", "q", "group_by", "sort"] as const;
+const FILTER_KEYS = ["list", "status", "stage", "owner", "sheet", "priority", "q", "group_by", "sort"] as const;
 
 function loadColumns(): string[] {
   try {
@@ -46,12 +46,12 @@ function groupKey(l: CrmLead, by: string): string {
   return "";
 }
 
-export default function LeadsPage() {
+export default function LeadsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const { data: meta } = useCrmMeta();
   const [sp, setSp] = useSearchParams();
   const isAgent = meta?.role === "Telecaller" || meta?.role === "Salesperson";
-  const tab = sp.get("tab") || (isAgent ? "mine" : "all");
+  const tab = sp.get("list") || (isAgent ? "mine" : "all");
   const page = Number(sp.get("page") || 1);
   const params = {
     tab, page, page_size: 50,
@@ -198,7 +198,7 @@ export default function LeadsPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-4 p-4 sm:p-6">
+      <div className={embedded ? "space-y-4" : "space-y-4 p-4 sm:p-6"}>
         <PageHeader
           title="Leads"
           subtitle="Update contact status first. Will Visit is Warm; Paid Advance is Hot."
@@ -216,7 +216,7 @@ export default function LeadsPage() {
         {data && <StatusChips counts={data.status_counts} value={params.status === "" ? "" : params.status}
           onChange={(s) => update({ status: s })} />}
 
-        <Tabs tabs={tabDefs} value={tab} onChange={(t) => update({ tab: t })} />
+        <Tabs tabs={tabDefs} value={tab} onChange={(t) => update({ list: t })} />
 
         <div className="flex flex-col lg:flex-row lg:items-center gap-2">
           <div className="relative flex-1 min-w-[200px]">
@@ -263,7 +263,9 @@ export default function LeadsPage() {
                   <span key={v.id} className="inline-flex items-center rounded-lg border border-[var(--border-subtle)]">
                     <button className="px-2 py-0.5 hover:text-white cursor-pointer" onClick={() => {
                       const next = new URLSearchParams();
+                      if (sp.get("view")) next.set("view", sp.get("view")!);
                       FILTER_KEYS.forEach((k) => v.filters[k] && next.set(k, v.filters[k]));
+                      if (!v.filters.list && v.filters.tab) next.set("list", v.filters.tab); // views saved before the rename
                       setSp(next);
                       if (v.columns?.length) setColumns(v.columns);
                     }}>{v.name}</button>
@@ -372,7 +374,7 @@ export default function LeadsPage() {
           <Button variant="primary" disabled={!viewName.trim()} loading={saveView.isPending} onClick={async () => {
             const filters: Record<string, string> = {};
             FILTER_KEYS.forEach((k) => { const v = sp.get(k); if (v) filters[k] = v; });
-            if (!filters.tab) filters.tab = tab;
+            if (!filters.list) filters.list = tab;
             await saveView.mutateAsync({ name: viewName.trim(), page: "leads", filters, columns });
             toast.success("View saved");
             setDialog("");

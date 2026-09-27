@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import {
-  X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save,
+  X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine,
 } from "lucide-react";
 import { useToast } from "@/components/shared/Toast";
 import { PhoneActions } from "@/components/shared/PhoneActions";
 import { useCrmMeta, useLeadDetail, usePatchLead } from "../api";
-import { ATTENDANCE, FOLLOWUP_KIND_LABELS, PRIORITIES, STAGES } from "../statusConfig";
+import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PRIORITIES, STAGES, STATUS_OPTIONS } from "../statusConfig";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { AssignDialog, BookAppointmentDialog, LogActivityDialog, ScheduleFollowupDialog } from "./dialogs";
 import { Button, Pill, PriorityBadge, StageBadge, StatusBadge, inputCls } from "./ui";
@@ -60,6 +60,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
   const patch = usePatchLead();
   const [dialog, setDialog] = useState<"" | "log" | "assign" | "appt" | "followup">("");
   const [device, setDevice] = useState({ phone_model: "", service_type: "", coverage: "Standard" });
+  const [note, setNote] = useState("");
 
   const lead = data?.lead;
   useEffect(() => {
@@ -142,22 +143,42 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
               {lead.email && <Row label="Email">{lead.email}</Row>}
             </div>
 
-            <div className="px-5 py-4 border-b border-[var(--border-subtle)] grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Stage</span>
-                <select className={inputCls} value={lead.stage}
-                  onChange={(e) => save({ stage: e.target.value }, "Stage changed")}>
-                  {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Priority{lead.priority_manual ? " (set by hand)" : " (automatic)"}</span>
-                <select className={inputCls} value={lead.priority_manual ? lead.priority : "auto"}
-                  onChange={(e) => save({ priority: e.target.value }, "Priority updated")}>
-                  <option value="auto">Automatic ({lead.priority})</option>
-                  {PRIORITIES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-                </select>
-              </label>
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] space-y-3">
+              <p className="text-xs font-semibold text-white flex items-center gap-1.5"><PencilLine size={14} />Update lead</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="block">
+                  <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Call status</span>
+                  <select className={inputCls} value={lead.status || NO_STATUS}
+                    onChange={(e) => save({ status: e.target.value }, `Status: ${e.target.value}`)}>
+                    {[NO_STATUS, ...STATUS_OPTIONS].map((s) => <option key={s} value={s}>{s}</option>)}
+                    {lead.status && !(STATUS_OPTIONS as readonly string[]).includes(lead.status) && <option value={lead.status}>{lead.status}</option>}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Pipeline stage{lead.stage_manual ? " (set by hand)" : ""}</span>
+                  <select className={inputCls} value={lead.stage}
+                    onChange={(e) => save({ stage: e.target.value }, "Pipeline stage changed")}>
+                    {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] text-[var(--text-secondary)] mb-1">Priority{lead.priority_manual ? " (set by hand)" : ""}</span>
+                  <select className={inputCls} value={lead.priority_manual ? lead.priority : "auto"}
+                    onChange={(e) => save({ priority: e.target.value }, "Priority updated")}>
+                    <option value="auto">Automatic ({lead.priority})</option>
+                    {PRIORITIES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <p className="text-[10px] text-[var(--text-muted)]">
+                Changing the call status moves the lead in the pipeline and schedules the next follow-up automatically.
+              </p>
+              <div className="flex gap-2">
+                <textarea className={inputCls} rows={2} placeholder="Add a note…" value={note}
+                  onChange={(e) => setNote(e.target.value)} />
+                <Button size="sm" className="self-end" disabled={!note.trim()} loading={patch.isPending}
+                  onClick={async () => { await save({ note }, "Note added"); setNote(""); }}>Add note</Button>
+              </div>
             </div>
 
             <div className="px-5 py-4 border-b border-[var(--border-subtle)] space-y-2">
