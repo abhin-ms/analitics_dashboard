@@ -262,9 +262,14 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
     const g = globeRef.current;
     if (!g) return;
     if (!selectedCountry) g.pointOfView(homeView, 0);
+    // Frozen: no drag-rotate, no scroll-zoom, no pan (scrolling over the
+    // map scrolls the page). Clicking a country pin still flies in, and
+    // "All countries" flies back.
     const controls = g.controls();
     controls.autoRotate = false;
-    controls.enableZoom = true;
+    controls.enableZoom = false;
+    controls.enableRotate = false;
+    controls.enablePan = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countries.length, homeView]);
 
@@ -399,7 +404,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
           <p className="text-xs text-[var(--text-muted)]">
             {selectedCountry
               ? `${storeMarkers.length} branches in ${selectedCountry} · click a pin for details`
-              : `${branches.length} branches in ${branchCountryList.length} countries · click a country pin to see its branches · drag to rotate, scroll to zoom`}
+              : `${branches.length} branches in ${branchCountryList.length} countries · click a country pin to see its branches`}
           </p>
         </div>
         {selectedCountry && (

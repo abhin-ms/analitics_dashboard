@@ -596,15 +596,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Telecalling (all cities): today's queue, inbox, follow-ups */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-white">Telecalling · today</h3>
-                <Link to="/leads" className="text-xs text-blue-400 hover:underline">Open Leads →</Link>
-              </div>
-              <DashboardInbox mine={false} showTiles />
-            </div>
-
             {/* MCP Sync Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] p-3 rounded-2xl">
               <div className="text-xs text-[var(--text-muted)]">
@@ -1552,6 +1543,16 @@ export default function Dashboard() {
               <p className="text-2xl font-bold text-white">{item.value}</p>
             </div>
           ))}
+        </div>
+
+        {/* Telecalling (all cities): today's queue, inbox, follow-ups — at the
+            bottom, below the sales sections */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Telecalling · today</h3>
+            <Link to="/leads" className="text-xs text-blue-400 hover:underline">Open Leads →</Link>
+          </div>
+          <DashboardInbox mine={false} showTiles />
         </div>
           </div>
         )}
