@@ -501,7 +501,28 @@ async def integrations(db: AsyncSession = Depends(get_db), user=Depends(get_curr
             "last_run": run, "people": per_sheet.get(name, []),
         })
     automation = await get_automation(db)
+    website = None
+    if scope.is_admin:
+        from ...core.config import settings as app_settings
+        from ...models.models import LeadSubmission
+        subs = (await db.execute(select(LeadSubmission).order_by(LeadSubmission.received_at.desc()).limit(25))).scalars().all()
+        counts = dict((await db.execute(
+            select(LeadSubmission.status, func.count(LeadSubmission.id))
+            .where(LeadSubmission.received_at >= utcnow() - timedelta(days=7)).group_by(LeadSubmission.status)
+        )).all())
+        website = {
+            "configured": bool(app_settings.WEBSITE_WEBHOOK_KEY),
+            "endpoint": "/api/v1/public/website-leads",
+            "stores_endpoint": "/api/v1/public/stores",
+            "last_7_days": {k: int(v) for k, v in counts.items()},
+            "recent": [{
+                "at": iso_utc(x.received_at), "status": x.status, "message": x.message, "lead_id": x.lead_id,
+                "name": (x.payload or {}).get("full_name") or (x.payload or {}).get("name"),
+                "store": (x.payload or {}).get("preferred_store") or (x.payload or {}).get("store"),
+            } for x in subs],
+        }
     return {
+        "website": website,
         "sheets": sheets, "direction": "Google Sheet → app (read-only; the app never writes to the sheets)",
         "sync_interval_minutes": 1, "automation_enabled": automation.get("enabled", True),
         "go_live": iso_utc(await get_go_live(db)),

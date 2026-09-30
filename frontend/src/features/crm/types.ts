@@ -1,5 +1,16 @@
 export interface CrmLead {
   id: number;
+  source: string;
+  source_label: string;
+  is_premium: boolean;
+  store_id: number | null;
+  preferred_store: string | null;
+  customer_state: string | null;
+  phone_brand: string | null;
+  preferred_date: string | null;
+  payment_ref: string | null;
+  payment_amount: number | null;
+  paid_at: string | null;
   full_name: string;
   phone: string;
   email: string;

@@ -185,6 +185,7 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
                     email=lead_data.get("email", ""),
                     created_time=created_time,
                     sheet_status_raw=raw_status[:100] if raw_status else None,
+                    source_channel="meta_sheet",
                     created_at=datetime.utcnow(),
                     **fields,
                 )

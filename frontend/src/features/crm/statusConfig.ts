@@ -123,4 +123,18 @@ export const ALERT_KIND_LABELS: Record<string, string> = {
   weekly_review: "Weekly review",
   coaching: "Coaching",
   sale_matched: "Sale matched",
+  premium_lead: "Premium website lead",
 };
+
+/** Premium = paid the ₹99 website reservation. Shown in green everywhere. */
+export const PREMIUM_COLOR = "#10b981";
+
+export const SOURCE_OPTIONS = [
+  { key: "premium", label: "Premium (₹99 paid)" },
+  { key: "website", label: "Website" },
+  { key: "meta_sheet", label: "Meta (sheet)" },
+  { key: "walk_in", label: "Walk-in" },
+  { key: "referral", label: "Referral" },
+  { key: "phone", label: "Phone" },
+  { key: "instagram", label: "Instagram" },
+];

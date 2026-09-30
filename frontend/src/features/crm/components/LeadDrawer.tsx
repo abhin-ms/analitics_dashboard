@@ -6,7 +6,7 @@ import {
 import { useToast } from "@/components/shared/Toast";
 import { PhoneActions } from "@/components/shared/PhoneActions";
 import { useCrmMeta, useLeadDetail, usePatchLead } from "../api";
-import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PRIORITIES, STAGES, STATUS_OPTIONS } from "../statusConfig";
+import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PREMIUM_COLOR, PRIORITIES, STAGES, STATUS_OPTIONS } from "../statusConfig";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { AssignDialog, BookAppointmentDialog, LogActivityDialog, ScheduleFollowupDialog } from "./dialogs";
 import { Button, Pill, PriorityBadge, StageBadge, StatusBadge, inputCls } from "./ui";
@@ -111,6 +111,8 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
           <div className="flex-1 overflow-y-auto">
             <div className="px-5 py-4 space-y-3 border-b border-[var(--border-subtle)]">
               <div className="flex flex-wrap gap-1.5">
+                {lead.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
+                <Pill label={`Source: ${lead.source_label}`} color={lead.is_premium ? PREMIUM_COLOR : "#94a3b8"} />
                 <StageBadge stage={lead.stage} />
                 <StatusBadge status={lead.status} />
                 <PriorityBadge priority={lead.priority} />
@@ -128,6 +130,13 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
             </div>
 
             <div className="px-5 py-3 border-b border-[var(--border-subtle)]">
+              {(lead.preferred_store || lead.customer_state) && (
+                <Row label="Preferred store">{[lead.preferred_store, lead.customer_state].filter(Boolean).join(" · ")}</Row>
+              )}
+              {lead.preferred_date && <Row label="Preferred date">{lead.preferred_date}</Row>}
+              {lead.is_premium && (
+                <Row label="Payment">₹{lead.payment_amount ?? 99}{lead.payment_ref ? ` · ${lead.payment_ref}` : ""}{lead.paid_at ? ` · ${fmtDateTime(lead.paid_at)}` : ""}</Row>
+              )}
               <Row label="Owner">{lead.owner_name || <span className="text-amber-400">Unassigned</span>}
                 {lead.assignment_source && <span className="text-[var(--text-muted)]"> · {lead.assignment_source}</span>}</Row>
               <Row label="Next follow-up"><span className={due.overdue ? "text-rose-400 font-semibold" : ""}>{due.text}</span></Row>

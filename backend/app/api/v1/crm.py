@@ -69,8 +69,38 @@ def _num(v):
     return float(v) if v is not None else None
 
 
+SOURCE_LABELS = {
+    "meta_sheet": "Meta (sheet)", "website": "Website", "walk_in": "Walk-in", "referral": "Referral",
+    "phone": "Phone", "whatsapp": "WhatsApp", "facebook": "Facebook", "instagram": "Instagram", "app": "Added in app",
+    "other": "Other",
+}
+
+
+def source_key(l: TeleCallLead) -> str:
+    """Where the lead came from. Older rows have no source_channel: sheet
+    rows are Meta leads; app-created rows use their typed source."""
+    if l.source_channel:
+        return l.source_channel
+    if l.spreadsheet_id:
+        return "meta_sheet"
+    typed = (l.lead_source or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return typed if typed in SOURCE_LABELS else "app"
+
+
 def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | None = None) -> dict:
+    src = source_key(l)
     return {
+        "source": src,
+        "source_label": SOURCE_LABELS.get(src, src.replace("_", " ").title()),
+        "is_premium": bool(l.is_premium),
+        "store_id": l.store_id,
+        "preferred_store": l.preferred_store_text,
+        "customer_state": l.customer_state,
+        "phone_brand": l.phone_brand,
+        "preferred_date": l.preferred_date,
+        "payment_ref": l.payment_ref,
+        "payment_amount": _num(l.payment_amount),
+        "paid_at": iso_utc(l.paid_at),
         "id": l.id,
         "full_name": l.full_name,
         "phone": l.phone,
@@ -141,9 +171,26 @@ def tab_clause(tab: str, user_id: int, now: datetime):
     return None
 
 
+def source_clause(source: str):
+    """SQL for the Source filter, matching source_key() above."""
+    if not source:
+        return None
+    if source == "premium":
+        return TeleCallLead.is_premium == True  # noqa: E712
+    if source == "meta_sheet":
+        return or_(TeleCallLead.source_channel == "meta_sheet",
+                   and_(TeleCallLead.source_channel.is_(None), func.coalesce(TeleCallLead.spreadsheet_id, "") != ""))
+    typed = func.replace(func.replace(func.lower(func.coalesce(TeleCallLead.lead_source, "")), "-", "_"), " ", "_")
+    return or_(TeleCallLead.source_channel == source,
+               and_(TeleCallLead.source_channel.is_(None), func.coalesce(TeleCallLead.spreadsheet_id, "") == "",
+                    typed == source))
+
+
 def filters_clause(*, status: str, stage: str, owner: str, sheet: str, priority: str, q: str,
-                   user_id: int, start: str = "", end: str = ""):
+                   user_id: int, start: str = "", end: str = "", source: str = ""):
     clauses = []
+    if source_clause(source) is not None:
+        clauses.append(source_clause(source))
     if status:
         clauses.append(func.coalesce(TeleCallLead.status, "") == ("" if status == NO_STATUS else status))
     if stage:
@@ -232,7 +279,7 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
 async def list_leads(
     tab: str = Query("all"), status: str = Query(""), stage: str = Query(""),
     owner: str = Query(""), sheet: str = Query(""), priority: str = Query(""),
-    q: str = Query(""), start: str = Query(""), end: str = Query(""),
+    q: str = Query(""), start: str = Query(""), end: str = Query(""), source: str = Query(""),
     sort: str = Query("smart"), group_by: str = Query(""),
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db), user=Depends(get_current_user),
@@ -242,7 +289,7 @@ async def list_leads(
     base = lead_filter(scope)
     tabc = tab_clause(tab, user.id, now)
     other = filters_clause(status="", stage=stage, owner=owner, sheet=sheet, priority=priority, q=q,
-                           user_id=user.id, start=start, end=end)
+                           user_id=user.id, start=start, end=end, source=source)
     statusc = filters_clause(status=status, stage="", owner="", sheet="", priority="", q="", user_id=user.id)
 
     def where(*extra):
@@ -352,6 +399,7 @@ async def create_lead(body: NewLeadRequest, db: AsyncSession = Depends(get_db), 
         created_time=to_ist(now).strftime("%Y-%m-%d %H:%M"), submitted_at=now, created_at=now,
         status="", remarks=body.remarks, phone_model=body.phone_model, service_type=body.service_type,
         coverage=body.coverage, person_calling="", edited_by_user=True,
+        source_channel=(body.lead_source or "Walk-in").strip().lower().replace("-", "_").replace(" ", "_")[:30],
     )
     refresh_derived(lead)
     db.add(lead)

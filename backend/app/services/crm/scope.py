@@ -25,6 +25,10 @@ class CrmScope:
     user: User
     role: str
     sheets: list[str] = field(default_factory=list)
+    # Stores whose leads this person also sees (website leads are routed by
+    # store → team leader, not by city sheet): a team leader's own stores; a
+    # telecaller's team leader's stores.
+    store_ids: list[int] = field(default_factory=list)
 
     @property
     def is_admin(self) -> bool:
@@ -62,11 +66,18 @@ async def get_role_name(db: AsyncSession, user: User) -> str:
 async def get_scope(db: AsyncSession, user: User) -> CrmScope:
     role = await get_role_name(db, user)
     sheets: list[str] = []
+    store_ids: list[int] = []
     if role in ("Team Leader", "Telecaller"):
         sheets = list((await db.execute(
             select(TeleSheetAssignment.sheet_tl_name).where(TeleSheetAssignment.user_id == user.id)
         )).scalars().all())
-    return CrmScope(user=user, role=role, sheets=sheets)
+        tl_id = user.id if role == "Team Leader" else user.team_leader_id
+        if tl_id:
+            from ...models.models import Store
+            store_ids = list((await db.execute(
+                select(Store.id).where(Store.team_leader_id == tl_id)
+            )).scalars().all())
+    return CrmScope(user=user, role=role, sheets=sheets, store_ids=store_ids)
 
 
 def lead_filter(scope: CrmScope):
@@ -74,9 +85,12 @@ def lead_filter(scope: CrmScope):
     if scope.is_admin:
         return TeleCallLead.id.isnot(None)
     if scope.role in ("Team Leader", "Telecaller"):
-        if not scope.sheets:
-            return false()
-        return TeleCallLead.sheet_tl_name.in_(scope.sheets)
+        clauses = [TeleCallLead.owner_user_id == scope.user.id]
+        if scope.sheets:
+            clauses.append(TeleCallLead.sheet_tl_name.in_(scope.sheets))
+        if scope.store_ids:
+            clauses.append(TeleCallLead.store_id.in_(scope.store_ids))
+        return or_(*clauses)
     if scope.is_salesperson:
         return or_(TeleCallLead.person_calling == scope.user.name,
                    TeleCallLead.owner_user_id == scope.user.id)
@@ -87,7 +101,8 @@ def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
     if scope.is_admin:
         return True
     if scope.role in ("Team Leader", "Telecaller"):
-        return lead.sheet_tl_name in scope.sheets
+        return (lead.sheet_tl_name in scope.sheets or lead.owner_user_id == scope.user.id
+                or (lead.store_id is not None and lead.store_id in scope.store_ids))
     if scope.is_salesperson:
         return lead.person_calling == scope.user.name or lead.owner_user_id == scope.user.id
     return False

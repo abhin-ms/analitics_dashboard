@@ -18,7 +18,8 @@ function LeadCard({ lead }: { lead: CrmLead }) {
   const due = fmtDue(lead.next_follow_up_at);
   const value = lead.stage === "converted" && lead.sale_amount_value ? lead.sale_amount_value : lead.potential_value;
   return (
-    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3 space-y-1.5">
+    <div className={`rounded-xl border p-3 space-y-1.5 ${lead.is_premium ? "border-emerald-500/50 bg-emerald-500/[0.07]" : "border-[var(--border-subtle)] bg-[var(--bg-primary)]"}`}>
+      {lead.is_premium && <span className="text-[10px] font-semibold text-emerald-400">Premium · ₹99 paid · {lead.source_label}</span>}
       <button onClick={() => openLead(lead.id)} className="text-sm font-medium text-blue-400 hover:underline cursor-pointer text-left">
         {lead.full_name}
       </button>

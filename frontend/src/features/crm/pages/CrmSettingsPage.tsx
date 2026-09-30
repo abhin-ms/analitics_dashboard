@@ -56,6 +56,35 @@ function IntegrationsTab() {
     <div className="space-y-4">
       <InfoNote>{data.direction}. Sync runs every {data.sync_interval_minutes} minute. Automation is {data.automation_enabled ? "on" : "off"}.
         {data.go_live && <> CRM tracking started {fmtDateTime(data.go_live, { withYear: true })}.</>}</InfoNote>
+      {data.website && (
+        <Card>
+          <CardHeader title="Website bookings (webhook)"
+            subtitle="Paid ₹99 bookings from the third-party website become premium leads" />
+          <div className="px-5 py-4 space-y-2 text-xs">
+            <p className="text-[var(--text-secondary)]">
+              Status: {data.website.configured
+                ? <span className="text-emerald-400 font-semibold">Ready</span>
+                : <span className="text-amber-400 font-semibold">Not set up — add WEBSITE_WEBHOOK_KEY to backend/.env and restart</span>}
+            </p>
+            <p className="text-[var(--text-secondary)]">Webhook: <code className="text-white">POST {window.location.origin}{data.website.endpoint}</code></p>
+            <p className="text-[var(--text-secondary)]">Store list for the website form: <code className="text-white">GET {window.location.origin}{data.website.stores_endpoint}</code></p>
+            <p className="text-[var(--text-muted)]">Last 7 days: {Object.entries(data.website.last_7_days).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(" · ") || "no calls yet"}</p>
+          </div>
+          {data.website.recent.length > 0 && (
+            <div className="divide-y divide-[var(--border-subtle)] border-t border-[var(--border-subtle)]">
+              {data.website.recent.map((r: any, i: number) => (
+                <div key={i} className="px-5 py-2 text-xs flex flex-wrap items-center gap-2">
+                  <span className="text-[var(--text-muted)] w-28">{fmtDateTime(r.at)}</span>
+                  <Pill label={r.status} color={r.status === "created" ? "#10b981" : r.status === "duplicate" ? "#94a3b8" : "#f59e0b"} />
+                  {r.lead_id ? <button onClick={() => openLead(r.lead_id)} className="text-blue-400 hover:underline cursor-pointer">{r.name || `Lead #${r.lead_id}`}</button>
+                    : <span className="text-white">{r.name || "—"}</span>}
+                  <span className="text-[var(--text-muted)]">{r.store || ""} · {r.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
       <Card>
         <CardHeader title="Meta lead sheets (Google Sheets)" />
         <div className="divide-y divide-[var(--border-subtle)]">

@@ -721,6 +721,21 @@ class TeleCallLead(Base):
     sheet_status_raw = Column(String(100), nullable=True)
     # Names of fields changed in the app, so the sync never overwrites them.
     edited_fields = Column(JSON, nullable=True)
+    # ── Lead source & website premium leads (migration 013) ──
+    # meta_sheet (city Google Sheets) | website | walk_in | referral | phone |
+    # whatsapp | facebook | … ; NULL on older rows = derived (sheet or app).
+    source_channel = Column(String(30), nullable=True, index=True)
+    is_premium = Column(Boolean, default=False, nullable=True)  # paid ₹99 on the website
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)
+    preferred_store_text = Column(String(200), nullable=True)   # store as typed/chosen on the form
+    customer_state = Column(String(100), nullable=True)
+    customer_country = Column(String(60), nullable=True)
+    phone_brand = Column(String(60), nullable=True)
+    preferred_date = Column(String(30), nullable=True)
+    payment_ref = Column(String(120), nullable=True)
+    payment_amount = Column(Numeric(12, 2), nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    external_ref = Column(String(120), nullable=True, unique=True)  # website entry id, for retry safety
 
     owner = relationship("User", foreign_keys=[owner_user_id])
 
@@ -866,6 +881,21 @@ class PriceBookEntry(Base):
     __table_args__ = (
         UniqueConstraint("phone_model", "service_type", "coverage", name="uq_price_book_entry"),
     )
+
+
+class LeadSubmission(Base):
+    """Raw log of every inbound lead webhook call (website now; WhatsApp and
+    Facebook later), kept even when no lead is created, so nothing is lost."""
+    __tablename__ = "lead_submissions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(30), nullable=False)
+    external_ref = Column(String(120), nullable=True, index=True)
+    status = Column(String(20), nullable=False)  # created | duplicate | rejected_unpaid | invalid | error
+    message = Column(String(300), nullable=True)
+    payload = Column(JSON, nullable=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="SET NULL"), nullable=True)
+    remote_ip = Column(String(60), nullable=True)
+    received_at = Column(DateTime, default=datetime.utcnow)
 
 
 class CrmSavedView(Base):

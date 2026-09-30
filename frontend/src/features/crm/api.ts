@@ -34,6 +34,7 @@ export function useCrmMeta() {
 
 export interface LeadQuery {
   tab?: string;
+  source?: string;
   status?: string;
   stage?: string;
   owner?: string;

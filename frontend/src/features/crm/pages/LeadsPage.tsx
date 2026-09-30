@@ -7,7 +7,7 @@ import { useToast } from "@/components/shared/Toast";
 import {
   downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews,
 } from "../api";
-import { PRIORITIES, STAGES, stageMeta } from "../statusConfig";
+import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, stageMeta } from "../statusConfig";
 import type { CrmLead } from "../types";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { openLead } from "../components/LeadDrawer";
@@ -26,7 +26,7 @@ const ALL_COLUMNS = [
 ] as const;
 const DEFAULT_COLUMNS = ["owner", "progress", "followup", "priority", "value"];
 const COLS_KEY = "crm.leads.columns";
-const FILTER_KEYS = ["list", "status", "stage", "owner", "sheet", "priority", "q", "group_by", "sort"] as const;
+const FILTER_KEYS = ["list", "status", "stage", "owner", "sheet", "priority", "source", "q", "group_by", "sort"] as const;
 
 function loadColumns(): string[] {
   try {
@@ -57,7 +57,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
     tab, page, page_size: 50,
     status: sp.get("status") || "", stage: sp.get("stage") || "", owner: sp.get("owner") || "",
     sheet: sp.get("sheet") || "", priority: sp.get("priority") || "", q: sp.get("q") || "",
-    group_by: sp.get("group_by") || "", sort: sp.get("sort") || "smart",
+    group_by: sp.get("group_by") || "", sort: sp.get("sort") || "smart", source: sp.get("source") || "",
   };
   const { data, isLoading, isFetching, error } = useCrmLeads(params);
   const [search, setSearch] = useState(params.q);
@@ -115,7 +115,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const row = (l: CrmLead) => {
     const due = fmtDue(l.next_follow_up_at);
     return (
-      <tr key={l.id} className="hover:bg-[var(--bg-card-hover)] align-top">
+      <tr key={l.id} className={`align-top ${l.is_premium ? "bg-emerald-500/[0.07] hover:bg-emerald-500/[0.12] shadow-[inset_3px_0_0_#10b981]" : "hover:bg-[var(--bg-card-hover)]"}`}>
         <td className="py-3 pl-4 pr-2">
           <input type="checkbox" checked={selected.has(l.id)}
             onChange={(e) => {
@@ -125,10 +125,14 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             }} />
         </td>
         <td className="py-3 pr-3 min-w-[180px]">
-          <button onClick={() => openLead(l.id)} className="text-sm font-medium text-blue-400 hover:underline cursor-pointer text-left">
+          <button onClick={() => openLead(l.id)} className={`text-sm font-medium hover:underline cursor-pointer text-left ${l.is_premium ? "text-emerald-400" : "text-blue-400"}`}>
             {l.full_name}
           </button>
           {l.is_urgent && <Flame size={12} className="inline ml-1 text-rose-400" />}
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
+            <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : "#94a3b8"} />
+          </div>
           <p className="text-[11px] text-[var(--text-muted)]">{l.city} · {l.lead_source || "—"}</p>
           {l.phone_model
             ? <p className="text-xs text-blue-300">{l.phone_model}</p>
@@ -175,10 +179,14 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const card = (l: CrmLead) => {
     const due = fmtDue(l.next_follow_up_at);
     return (
-      <div key={l.id} className="px-4 py-3 space-y-1.5">
+      <div key={l.id} className={`px-4 py-3 space-y-1.5 ${l.is_premium ? "bg-emerald-500/[0.07] shadow-[inset_3px_0_0_#10b981]" : ""}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <button onClick={() => openLead(l.id)} className="font-semibold text-blue-400 truncate cursor-pointer text-left">{l.full_name}</button>
+            <button onClick={() => openLead(l.id)} className={`font-semibold truncate cursor-pointer text-left ${l.is_premium ? "text-emerald-400" : "text-blue-400"}`}>{l.full_name}</button>
+            <div className="flex flex-wrap gap-1">
+              {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
+              <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : "#94a3b8"} />
+            </div>
             <p className="text-[11px] text-[var(--text-muted)]">{l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
           <PriorityBadge priority={l.priority} />
@@ -234,6 +242,10 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             <select className={`${inlineInputCls}`} value={params.stage} onChange={(e) => update({ stage: e.target.value })}>
               <option value="">All stages</option>
               {STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+            <select className={`${inlineInputCls}`} value={params.source} onChange={(e) => update({ source: e.target.value })}>
+              <option value="">All sources</option>
+              {SOURCE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
             <select className={`${inlineInputCls}`} value={params.priority} onChange={(e) => update({ priority: e.target.value })}>
               <option value="">Any priority</option>
