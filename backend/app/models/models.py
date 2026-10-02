@@ -898,6 +898,26 @@ class LeadSubmission(Base):
     received_at = Column(DateTime, default=datetime.utcnow)
 
 
+class CrmNotification(Base):
+    """Live "new lead" notification for one person (bell + sound + popup).
+    Separate from crm_alerts, which are SLA action items."""
+    __tablename__ = "crm_notifications"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=True)
+    kind = Column(String(30), nullable=False)  # lead_assigned | lead_branch | lead_unassigned
+    title = Column(String(200), nullable=False)
+    body = Column(String(300), nullable=True)
+    is_hot = Column(Boolean, default=False)
+    read_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_crm_notif_user_read", "user_id", "read_at"),
+        Index("ix_crm_notif_user_time", "user_id", "created_at"),
+    )
+
+
 class MetaLead(Base):
     """Every Meta (Facebook/Instagram) lead-form submission received by the
     webhook, with the ad it came from and the answers as Meta sent them.

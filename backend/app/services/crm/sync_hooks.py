@@ -33,6 +33,7 @@ class SyncContext:
         self.tracking_active = False
         self.round_robin = RoundRobin(db, self.now)
         self.new_alerts: list = []
+        self.new_notifications: list = []  # live "new lead" pushes, sent after commit
         self._members: dict[str, list[dict]] = {}
         self.stats = {"auto_assigned": 0, "sheet_assigned": 0, "first_call_tasks": 0, "unassigned_new": 0}
 
@@ -95,6 +96,13 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
             await transfer_ownership(db, lead, chosen["id"], source="auto", actor_id=None, now=ctx.now,
                                      automation=ctx.automation, reason="Round-robin to an available telecaller")
             ctx.stats["auto_assigned"] += 1
+
+    # New-lead notifications (owner and branch, or everyone if unassigned).
+    # A sheet row that attached to a lead the Meta webhook already created
+    # is not new (is_new is False), so nobody is told twice.
+    if tracked_new:
+        from .notify import notify_new_lead
+        ctx.new_notifications += await notify_new_lead(db, lead)
 
     # 3. First-call task (due N working minutes after the app received it).
     if tracked_new and not lead.status:

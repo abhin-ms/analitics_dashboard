@@ -10,6 +10,7 @@ import { FOLLOWUP_KIND_LABELS, STATUS_CHIP_ORDER, statusColor } from "../statusC
 import type { CrmLead, Followup } from "../types";
 import { fmtDue } from "../format";
 import { openLead } from "./LeadDrawer";
+import { wasJustNotified } from "./NotificationBell";
 import { LogActivityDialog } from "./dialogs";
 import { Avatar, Button, PriorityBadge, StatusBadge } from "./ui";
 
@@ -163,8 +164,9 @@ export function useCrmAlertListener() {
     if (!isAuthenticated) return;
     const socket = getSocket();
     if (!socket) return;
-    const onAlert = (a: { title: string; body?: string | null }) => {
-      toastRef.current.error(`${a.title}${a.body ? ` — ${a.body}` : ""}`);
+    const onAlert = (a: { title: string; body?: string | null; lead_id?: number | null }) => {
+      // A brand-new lead was already announced by the bell (with sound).
+      if (!wasJustNotified(a.lead_id)) toastRef.current.error(`${a.title}${a.body ? ` — ${a.body}` : ""}`);
       qc.invalidateQueries({ queryKey: [CRM_KEY] });
     };
     const onRefresh = (p: { section?: string }) => {

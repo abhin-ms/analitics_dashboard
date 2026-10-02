@@ -239,6 +239,8 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
         logger.info(f"Synced tele leads for {tl_name}: {synced} rows ({inserted} new)")
 
     await db.commit()
+    from .crm.notify import emit_notifications
+    await emit_notifications(ctx.new_notifications)  # first, so the browser skips a second popup
     await emit_alerts(ctx.new_alerts)
 
     try:

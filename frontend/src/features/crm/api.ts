@@ -421,6 +421,34 @@ export function useIntegrations(enabled = true) {
   });
 }
 
+export interface LeadNotification {
+  id: number;
+  lead_id: number | null;
+  kind: "lead_assigned" | "lead_branch" | "lead_unassigned";
+  title: string;
+  body: string | null;
+  is_hot: boolean;
+  read: boolean;
+  created_at: string | null;
+}
+
+export function useNotifications(enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "notifications"],
+    queryFn: () => api.get<{ items: LeadNotification[]; unread: number }>(`/crm/notifications?limit=30`),
+    enabled,
+    refetchInterval: 120_000, // safety net if the socket was down
+  });
+}
+
+export function useMarkNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids?: number[]) => api.post(`/crm/notifications/read`, { ids: ids ?? null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [CRM_KEY, "notifications"] }),
+  });
+}
+
 export interface MetaForm {
   form_id: string;
   form_name: string | null;

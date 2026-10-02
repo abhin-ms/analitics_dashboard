@@ -109,25 +109,9 @@ async def _real_team_leader(db: AsyncSession, store: Store | None) -> User | Non
 
 
 async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
-    """Available telecaller on this team leader's team (reports to them, or
-    shares one of their city sheets) with the fewest leads assigned today."""
-    tl_sheets = list((await db.execute(select(TeleSheetAssignment.sheet_tl_name)
-                                       .where(TeleSheetAssignment.user_id == tl.id))).scalars().all())
-    q = (select(User).join(Role, Role.id == User.role_id)
-         .where(Role.name == "Telecaller", User.is_active == True))  # noqa: E712
-    candidates = list((await db.execute(q)).scalars().all())
-    team = []
-    for u in candidates:
-        if u.available_for_leads is False:
-            continue
-        if u.team_leader_id == tl.id:
-            team.append(u)
-            continue
-        if tl_sheets:
-            mine = (await db.execute(select(TeleSheetAssignment.id).where(
-                TeleSheetAssignment.user_id == u.id, TeleSheetAssignment.sheet_tl_name.in_(tl_sheets)))).first()
-            if mine:
-                team.append(u)
+    """Available telecaller on this team leader's team with the fewest leads
+    assigned today."""
+    team = [u for u in await team_telecallers(db, tl) if u.available_for_leads is not False]
     if not team:
         return None
     start, end = ist_day_bounds_utc(ist_today())
@@ -137,6 +121,27 @@ async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
                TeleCallLead.assigned_at >= start, TeleCallLead.assigned_at < end)
         .group_by(TeleCallLead.owner_user_id))).all())
     return sorted(team, key=lambda u: (counts.get(u.id, 0), u.id))[0]
+
+
+async def team_telecallers(db: AsyncSession, tl: User) -> list[User]:
+    """Active telecallers on this team leader's team: report to them, or
+    share one of their city sheets."""
+    tl_sheets = list((await db.execute(select(TeleSheetAssignment.sheet_tl_name)
+                                       .where(TeleSheetAssignment.user_id == tl.id))).scalars().all())
+    q = (select(User).join(Role, Role.id == User.role_id)
+         .where(Role.name == "Telecaller", User.is_active == True))  # noqa: E712
+    candidates = list((await db.execute(q)).scalars().all())
+    team = []
+    for u in candidates:
+        if u.team_leader_id == tl.id:
+            team.append(u)
+            continue
+        if tl_sheets:
+            mine = (await db.execute(select(TeleSheetAssignment.id).where(
+                TeleSheetAssignment.user_id == u.id, TeleSheetAssignment.sheet_tl_name.in_(tl_sheets)))).first()
+            if mine:
+                team.append(u)
+    return team
 
 
 # City sheet that covers each state (sheet names are cities).
@@ -263,9 +268,12 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
                                scheduled_at=appt_dt if (to_ist(appt_dt).hour or to_ist(appt_dt).minute) else from_ist(datetime.combine(d, time(0, 0))),
                                purpose=lead.phone_model or "Store visit", attendance="scheduled", created_at=now))
 
+    from .notify import emit_notifications, notify_new_lead
+    notes = await notify_new_lead(db, lead)
     log("created", f"Lead created{'' if store else ' (store not matched)'}", lead.id)
     await db.commit()
     from .engine import emit_alerts
+    await emit_notifications(notes)  # first, so the browser skips a second popup for the same lead
     await emit_alerts(alerts)
     return {"ok": True, "status": "created", "lead_id": lead.id, "store": store.name if store else None,
             "team_leader": tl.name if tl else None, "owner_user_id": owner_id}

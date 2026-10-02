@@ -4,6 +4,7 @@ import { useUIStore } from "@/lib/uiStore";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { LogOut, Menu, User, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/lib/theme";
+import { NotificationBell } from "@/features/crm/components/NotificationBell";
 
 const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/dashboard": { title: "Dashboard", subtitle: "Overview & Key Business Metrics" },
@@ -183,6 +184,7 @@ export function Header() {
 
       {/* Right: User Info & Logout */}
       <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
+        <NotificationBell />
         <button
           onClick={toggleTheme}
           style={{

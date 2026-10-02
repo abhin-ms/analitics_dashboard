@@ -37,9 +37,10 @@ from ...models.models import MetaFormStore, MetaLead, Store, TeleCallLead, TeleS
 from .config import ensure_go_live, get_automation
 from .engine import (
     add_activity, admin_ids, create_alert, create_followup, emit_alerts, norm_phone, refresh_derived,
-    team_leader_ids, transfer_ownership,
+    transfer_ownership,
 )
 from .intake import _real_team_leader, match_store, pick_sheet, pick_telecaller
+from .notify import emit_notifications, notify_new_lead
 from .timeutil import add_working_minutes, parse_sheet_datetime, to_ist, utcnow
 
 logger = logging.getLogger(__name__)
@@ -259,7 +260,7 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
         add_activity(db, twin, "system", at=now, meta={"source": "meta", "leadgen_id": leadgen_id},
                      notes=f"{source} lead form ({branch_text or 'form'}){hot_note}")
         row.status, row.lead_id = "merged", twin.id
-        return await _finish(db, row, [], {"ok": True, "status": "merged", "lead_id": twin.id})
+        return await _finish(db, row, [], [], {"ok": True, "status": "merged", "lead_id": twin.id})
 
     automation = await get_automation(db)
     await ensure_go_live(db)
@@ -306,26 +307,23 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
                                     f"{'store has no team leader' if store else 'form not matched to a store'}. "
                                     f"Map the form in CRM Settings → Integrations, or assign from Leads.",
                                dedupe_key=f"meta_unassigned:{lead.id}:{rid}", out=alerts)
-    elif row.is_hot:
-        for rid in set(await team_leader_ids(db, None, owner_id)) | {owner_id} | ({tl.id} if tl else set()):
-            await create_alert(db, recipient_id=rid, kind="hot_lead", level=1, lead=lead,
-                               title=f"Hot {source} lead", body=f"{lead.full_name} · {store.name} · agreed to pre-book",
-                               dedupe_key=f"hot:{lead.id}:{rid}", out=alerts)
 
+    notes = await notify_new_lead(db, lead)  # owner / branch team, or everyone if unassigned
     row.status, row.lead_id = "created", lead.id
-    return await _finish(db, row, alerts, {"ok": True, "status": "created", "lead_id": lead.id,
+    return await _finish(db, row, alerts, notes, {"ok": True, "status": "created", "lead_id": lead.id,
                                            "store": store.name if store else None,
                                            "team_leader": tl.name if tl else None, "owner_user_id": owner_id,
                                            "hot": bool(row.is_hot), "platform": platform})
 
 
-async def _finish(db: AsyncSession, row: MetaLead, alerts: list, result: dict) -> dict:
+async def _finish(db: AsyncSession, row: MetaLead, alerts: list, notes: list, result: dict) -> dict:
     try:
         await db.commit()
     except IntegrityError:  # the same lead delivered twice at once
         await db.rollback()
         existing = (await db.execute(select(MetaLead.lead_id).where(MetaLead.leadgen_id == row.leadgen_id))).scalar()
         return {"ok": True, "status": "duplicate", "lead_id": existing}
+    await emit_notifications(notes)  # first, so the browser skips a second popup for the same lead
     await emit_alerts(alerts)
     try:
         from ...socket import sio

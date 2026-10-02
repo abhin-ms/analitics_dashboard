@@ -20,7 +20,7 @@ from app.db.base import Base  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.models import (  # noqa: E402
-    CrmAlert, MetaFormStore, MetaLead, Permission, Role, RolePermission, Setting, Store, TeleCallLead,
+    CrmAlert, CrmNotification, MetaFormStore, MetaLead, Permission, Role, RolePermission, Setting, Store, TeleCallLead,
     TeleLeadFollowup, TeleSheetAssignment, User,
 )
 from app.services.crm import meta_leads  # noqa: E402
@@ -92,13 +92,15 @@ async def env(monkeypatch):
         db.add_all([tl, admin])
         await db.flush()
         sureka = User(name="Sureka", email="s@x", password_hash="x", role_id=roles["Telecaller"].id, team_leader_id=tl.id)
-        db.add(sureka)
+        other = User(name="Other", email="o@x", password_hash="x", role_id=roles["Telecaller"].id)
+        db.add_all([sureka, other])
         db.add(TeleSheetAssignment(user_id=tl.id, sheet_tl_name="Kerala"))
         db.add(Store(name="Kochi Edappally", team_leader_id=tl.id, region="Kerala", currency_code="INR"))
         db.add(Store(name="Thrissur", team_leader_id=tl.id, region="Kerala", currency_code="INR"))
         db.add(Setting(key="crm.go_live_at", value='"2026-01-01T00:00:00"'))
         await db.commit()
-        ids = {"tl": tl.id, "sureka": sureka.id, "admin": admin.id}
+        await db.flush()
+        ids = {"tl": tl.id, "sureka": sureka.id, "other": other.id, "admin": admin.id}
 
     async def _db():
         async with Session() as s:
@@ -156,7 +158,11 @@ async def test_hot_instagram_lead_routed_to_store_team(env):
         assert m.is_hot and m.platform == "instagram" and m.adset_name.startswith("Kochi") and m.lead_id == l.id
         assert (await db.execute(select(MetaFormStore.match_source))).scalar() == "auto"
         assert (await db.execute(select(TeleLeadFollowup.kind))).scalar() == "first_call"
-        assert (await db.execute(select(func.count(CrmAlert.id)).where(CrmAlert.kind == "hot_lead"))).scalar() >= 1
+        notes = {(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()}
+        assert (ids["sureka"], "lead_assigned") in notes and (ids["tl"], "lead_branch") in notes
+        assert all(n[0] != ids["admin"] for n in notes)  # admins only for unassigned leads
+        n = (await db.execute(select(CrmNotification).where(CrmNotification.user_id == ids["sureka"]))).scalar_one()
+        assert n.is_hot and n.title.startswith("New 🔥 HOT Instagram lead")
 
     # Meta retries the same delivery → no second lead
     r2 = await client.post(URL, content=raw, headers=headers)
@@ -188,6 +194,10 @@ async def test_unmatched_form_alerts_admins_then_mapping_routes_it(env):
     async with Session() as db:
         alert = (await db.execute(select(CrmAlert).where(CrmAlert.kind == "unassigned"))).scalar_one()
         assert alert.recipient_user_id == ids["admin"] and alert.level == 3
+        # unassigned → every telecaller and admin is told
+        told = set((await db.execute(select(CrmNotification.user_id).where(
+            CrmNotification.kind == "lead_unassigned"))).scalars().all())
+        assert {ids["sureka"], ids["other"], ids["admin"]} <= told
         thrissur = (await db.execute(select(Store.id).where(Store.name == "Thrissur"))).scalar()
 
     forms = (await client.get("/api/v1/crm/meta/forms")).json()["forms"]
@@ -216,3 +226,20 @@ async def test_webhook_merges_into_lead_already_imported_from_sheet(env):
         assert (await db.execute(select(func.count(TeleCallLead.id)))).scalar() == 1
         l = await db.get(TeleCallLead, res["lead_id"])
         assert l.source_channel == "instagram" and l.priority == "hot" and l.store_id is not None
+
+
+@pytest.mark.asyncio
+async def test_bell_lists_and_marks_read(env):
+    client, Session, ids, store = env
+    store["L9"] = lead("L9")
+    raw, headers = signed(event("L9"))
+    await client.post(URL, content=raw, headers=headers)
+    # the signed-in user in this fixture is the admin: assigned lead → nothing for them
+    assert (await client.get("/api/v1/crm/notifications")).json()["unread"] == 0
+    store["L10"] = lead("L10", form_id="F2", adset="BNP 1")
+    raw, headers = signed(event("L10", form_id="F2"))
+    await client.post(URL, content=raw, headers=headers)
+    body = (await client.get("/api/v1/crm/notifications")).json()
+    assert body["unread"] == 1 and body["items"][0]["kind"] == "lead_unassigned" and body["items"][0]["lead_id"]
+    await client.post("/api/v1/crm/notifications/read", json={})
+    assert (await client.get("/api/v1/crm/notifications")).json()["unread"] == 0
