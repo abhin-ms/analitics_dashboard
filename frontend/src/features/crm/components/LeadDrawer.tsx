@@ -97,7 +97,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
             <h2 className="text-lg font-bold text-white truncate">{lead?.full_name || (isLoading ? "Loading…" : "Lead")}</h2>
             {lead && (
               <div className="text-xs text-[var(--text-muted)] mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span>{lead.city} · {lead.lead_source || "—"}</span>
+                <span>{lead.preferred_store || lead.city} · {lead.lead_source || "—"}</span>
                 <PhoneActions phone={lead.phone} />
               </div>
             )}

@@ -150,8 +150,12 @@ class SmartServiceClient:
                 json=payload,
             )
 
-            # Handle session errors — reset and retry once
-            if resp.status_code in (400, 401):
+            # Handle session errors — reset and retry. 404 is how the MCP
+            # server says "unknown session" (e.g. after it restarted); without
+            # this the stale session id was reused forever and every sync failed.
+            if resp.status_code in (400, 401, 404) and attempt < retries:
+                if resp.status_code == 401:
+                    self._token = None  # token may have been revoked too
                 self._reset_session()
                 continue
 

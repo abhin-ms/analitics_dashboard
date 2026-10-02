@@ -133,7 +133,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
             <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : "#94a3b8"} />
           </div>
-          <p className="text-[11px] text-[var(--text-muted)]">{l.city} · {l.lead_source || "—"}</p>
+          <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.lead_source || "—"}</p>
           {l.phone_model
             ? <p className="text-xs text-blue-300">{l.phone_model}</p>
             : <button onClick={() => openLead(l.id)} className="text-xs text-blue-400 hover:underline cursor-pointer">+ Add phone model</button>}
@@ -187,7 +187,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
               <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : "#94a3b8"} />
             </div>
-            <p className="text-[11px] text-[var(--text-muted)]">{l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
+            <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
           <PriorityBadge priority={l.priority} />
         </div>
