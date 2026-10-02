@@ -7,7 +7,7 @@ import { useToast } from "@/components/shared/Toast";
 import {
   downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews,
 } from "../api";
-import { HOT_COLOR, PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, isHotHighlight, stageMeta } from "../statusConfig";
+import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, isHotHighlight, sourceColor, stageMeta } from "../statusConfig";
 import type { CrmLead } from "../types";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { openLead } from "../components/LeadDrawer";
@@ -57,7 +57,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
     tab, page, page_size: 50,
     status: sp.get("status") || "", stage: sp.get("stage") || "", owner: sp.get("owner") || "",
     sheet: sp.get("sheet") || "", priority: sp.get("priority") || "", q: sp.get("q") || "",
-    group_by: sp.get("group_by") || "", sort: sp.get("sort") || "smart", source: sp.get("source") || "",
+    group_by: sp.get("group_by") || "", sort: sp.get("sort") || "newest", source: sp.get("source") || "",
   };
   const { data, isLoading, isFetching, error } = useCrmLeads(params);
   const [search, setSearch] = useState(params.q);
@@ -131,7 +131,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
           {l.is_urgent && <Flame size={12} className="inline ml-1 text-rose-400" />}
           <div className="flex flex-wrap gap-1 mt-0.5">
             {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
-            <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : isHotHighlight(l) ? HOT_COLOR : "#94a3b8"} />
+            <Pill label={l.source_label} color={sourceColor(l)} />
           </div>
           <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.lead_source || "—"}</p>
           {l.phone_model
@@ -185,7 +185,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             <button onClick={() => openLead(l.id)} className={`font-semibold truncate cursor-pointer text-left ${l.is_premium ? "text-emerald-400" : "text-blue-400"}`}>{l.full_name}</button>
             <div className="flex flex-wrap gap-1">
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
-              <Pill label={l.source_label} color={l.is_premium ? PREMIUM_COLOR : isHotHighlight(l) ? HOT_COLOR : "#94a3b8"} />
+              <Pill label={l.source_label} color={sourceColor(l)} />
             </div>
             <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
@@ -290,8 +290,8 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
           <div className="flex items-center gap-2">
             <span>Sort</span>
             <select className={`${inlineInputCls} py-1 text-xs`} value={params.sort} onChange={(e) => update({ sort: e.target.value })}>
-              <option value="smart">Urgent & due first</option>
               <option value="newest">Newest</option>
+              <option value="smart">Urgent & due first</option>
               <option value="oldest">Oldest</option>
               <option value="value">Highest value</option>
               <option value="name">Name</option>

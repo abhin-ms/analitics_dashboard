@@ -138,6 +138,19 @@ export function isHotHighlight(l: { is_premium: boolean; priority: string }) {
   return !l.is_premium && l.priority === "hot";
 }
 
+/** Brand colour per lead source: Facebook blue, Instagram pink. */
+export const SOURCE_COLORS: Record<string, string> = {
+  facebook: "#1877F2",
+  instagram: "#E1306C",
+};
+
+/** Colour of the source tag: premium green, then the source's brand
+ *  colour, then red for other hot leads, else grey. */
+export function sourceColor(l: { is_premium: boolean; priority: string; source: string }) {
+  if (l.is_premium) return PREMIUM_COLOR;
+  return SOURCE_COLORS[l.source] || (isHotHighlight(l) ? HOT_COLOR : "#94a3b8");
+}
+
 export const SOURCE_OPTIONS = [
   { key: "premium", label: "Premium (₹99 paid)" },
   { key: "website", label: "Website" },
