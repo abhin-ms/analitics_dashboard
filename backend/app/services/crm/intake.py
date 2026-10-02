@@ -139,6 +139,27 @@ async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
     return sorted(team, key=lambda u: (counts.get(u.id, 0), u.id))[0]
 
 
+# City sheet that covers each state (sheet names are cities).
+STATE_TO_SHEET = {
+    "kerala": "Kerala", "tamilnadu": "Chennai", "karnataka": "Bangalore",
+    "delhi": "Delhi", "newdelhi": "Delhi", "assam": "Guwahati",
+}
+
+
+def pick_sheet(tl_sheets: list[str], state: str | None, region: str | None, store_text: str | None) -> str:
+    if not tl_sheets:
+        return "Website"
+    for hint in (state, region):
+        wanted = STATE_TO_SHEET.get(_norm(hint))
+        if wanted in tl_sheets:
+            return wanted
+    text = _norm(store_text)
+    for sheet in tl_sheets:  # e.g. store text mentions "Chennai" or "Bangalore"
+        if _norm(sheet) and _norm(sheet) in text:
+            return sheet
+    return sorted(tl_sheets)[0]
+
+
 def _amount(text: str) -> Decimal | None:
     try:
         return Decimal(re.sub(r"[^0-9.]", "", text)) if text else None
@@ -181,6 +202,10 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
     tl = await _real_team_leader(db, store)
     tl_sheets = list((await db.execute(select(TeleSheetAssignment.sheet_tl_name)
                                        .where(TeleSheetAssignment.user_id == tl.id))).scalars().all()) if tl else []
+    # A team leader can cover several city sheets; use the one for the
+    # customer's state / the store's region, not simply the first one
+    # (which put a Thrissur booking under "Chennai").
+    home_sheet = pick_sheet(tl_sheets, pick(payload, "state"), store.region if store else None, store_text)
     brand, model = pick(payload, "brand"), pick(payload, "model")
     pref_date = pick(payload, "preferred_date")
     paid_at = parse_sheet_datetime(pick(payload, "paid_at")) or now
@@ -188,7 +213,7 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
     lead = TeleCallLead(
         # City sheet = the team leader's city, so the lead also shows on their
         # existing pages; "Website" when the store has no team leader yet.
-        sheet_tl_name=(tl_sheets[0] if tl_sheets else "Website"), spreadsheet_id="",
+        sheet_tl_name=home_sheet, spreadsheet_id="",
         full_name=name[:200], phone=phone[:30], email=pick(payload, "email")[:200],
         lead_source="Website (₹99 paid)", source_channel="website", is_premium=True,
         created_time=to_ist(now).strftime("%Y-%m-%d %H:%M"), submitted_at=paid_at, created_at=now,
