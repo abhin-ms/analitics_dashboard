@@ -7,7 +7,7 @@ import { useToast } from "@/components/shared/Toast";
 import {
   downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews,
 } from "../api";
-import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, isHotHighlight, sourceColor, stageMeta } from "../statusConfig";
+import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, accentStyle, rowAccent, sourceColor, stageMeta } from "../statusConfig";
 import type { CrmLead } from "../types";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { openLead } from "../components/LeadDrawer";
@@ -115,7 +115,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const row = (l: CrmLead) => {
     const due = fmtDue(l.next_follow_up_at);
     return (
-      <tr key={l.id} className={`align-top ${l.is_premium ? "bg-emerald-500/[0.07] hover:bg-emerald-500/[0.12] shadow-[inset_3px_0_0_#10b981]" : isHotHighlight(l) ? "bg-rose-500/[0.07] hover:bg-rose-500/[0.12] shadow-[inset_3px_0_0_#ef4444]" : "hover:bg-[var(--bg-card-hover)]"}`}>
+      <tr key={l.id} className={`align-top ${rowAccent(l) ? "hover:brightness-110" : "hover:bg-[var(--bg-card-hover)]"}`} style={accentStyle(rowAccent(l))}>
         <td className="py-3 pl-4 pr-2">
           <input type="checkbox" checked={selected.has(l.id)}
             onChange={(e) => {
@@ -125,7 +125,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             }} />
         </td>
         <td className="py-3 pr-3 min-w-[180px]">
-          <button onClick={() => openLead(l.id)} className={`text-sm font-medium hover:underline cursor-pointer text-left ${l.is_premium ? "text-emerald-400" : "text-blue-400"}`}>
+          <button onClick={() => openLead(l.id)} className="text-sm font-medium hover:underline cursor-pointer text-left text-blue-400" style={rowAccent(l) ? { color: rowAccent(l)! } : undefined}>
             {l.full_name}
           </button>
           {l.is_urgent && <Flame size={12} className="inline ml-1 text-rose-400" />}
@@ -179,10 +179,10 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const card = (l: CrmLead) => {
     const due = fmtDue(l.next_follow_up_at);
     return (
-      <div key={l.id} className={`px-4 py-3 space-y-1.5 ${l.is_premium ? "bg-emerald-500/[0.07] shadow-[inset_3px_0_0_#10b981]" : isHotHighlight(l) ? "bg-rose-500/[0.07] shadow-[inset_3px_0_0_#ef4444]" : ""}`}>
+      <div key={l.id} className="px-4 py-3 space-y-1.5" style={accentStyle(rowAccent(l))}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <button onClick={() => openLead(l.id)} className={`font-semibold truncate cursor-pointer text-left ${l.is_premium ? "text-emerald-400" : "text-blue-400"}`}>{l.full_name}</button>
+            <button onClick={() => openLead(l.id)} className="font-semibold truncate cursor-pointer text-left text-blue-400" style={rowAccent(l) ? { color: rowAccent(l)! } : undefined}>{l.full_name}</button>
             <div className="flex flex-wrap gap-1">
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
               <Pill label={l.source_label} color={sourceColor(l)} />

@@ -144,6 +144,21 @@ export const SOURCE_COLORS: Record<string, string> = {
   instagram: "#E1306C",
 };
 
+/** Row highlight for a lead: premium green, Facebook blue, Instagram pink,
+ *  then red for other hot leads; null = no highlight. */
+export function rowAccent(l: { is_premium: boolean; priority: string; source: string }): string | null {
+  if (l.is_premium) return PREMIUM_COLOR;
+  return SOURCE_COLORS[l.source] || (isHotHighlight(l) ? HOT_COLOR : null);
+}
+
+/** Inline style for a highlighted row/card (tinted background + left bar). */
+export function accentStyle(color: string | null, withBorder = false) {
+  if (!color) return undefined;
+  return withBorder
+    ? { backgroundColor: `${color}12`, borderColor: `${color}80` }
+    : { backgroundColor: `${color}12`, boxShadow: `inset 3px 0 0 ${color}` };
+}
+
 /** Colour of the source tag: premium green, then the source's brand
  *  colour, then red for other hot leads, else grey. */
 export function sourceColor(l: { is_premium: boolean; priority: string; source: string }) {
