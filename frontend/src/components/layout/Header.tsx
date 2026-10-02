@@ -58,7 +58,9 @@ export function Header() {
     return () => mql.removeEventListener("change", handler as (e: MediaQueryListEvent) => void);
   }, []);
 
-  const currentRoute = ROUTE_MAP[location.pathname] || {
+  const currentRoute = ROUTE_MAP[location.pathname]
+    || (location.pathname.startsWith("/team-leaders/") ? { title: "Team Leader", subtitle: "Monthly sales performance" } : undefined)
+    || {
     title: "Analytics Platform",
     subtitle: "BreakProtection Platform",
   };

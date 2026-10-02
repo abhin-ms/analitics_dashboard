@@ -53,3 +53,28 @@ async def country_comparison(
     """Per-country sales normalized to USD, as captured during the last
     sync (see sync_mcp_sales) rather than calling MCP directly."""
     return await get_country_comparison_snapshot(db)
+
+
+@router.get("/team-leader/{tl_id}/performance")
+async def team_leader_performance_report(
+    tl_id: int,
+    month: str = None,   # YYYY-MM, default current month
+    as_of: str = None,   # YYYY-MM-DD within that month, default today / month end
+    db: AsyncSession = Depends(get_db),
+    _user: User = require_admin_tier(),
+):
+    """One team leader's month against the weekly target plan (35/25/25/15)."""
+    from datetime import date as _date
+    from fastapi import HTTPException
+    from ...services.tl_performance import team_leader_performance
+    today = _date.today()
+    try:
+        y, m = (int(x) for x in month.split("-")) if month else (today.year, today.month)
+        as_of_d = _date.fromisoformat(as_of) if as_of else None
+        _date(y, m, 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM and as_of YYYY-MM-DD")
+    data = await team_leader_performance(db, tl_id, y, m, as_of_d)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Team leader not found")
+    return data

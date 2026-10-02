@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { AISummary } from "@/components/dashboard/AISummary";
-import { Filter, Store, TrendingUp } from "lucide-react";
+import { ArrowRight, Filter, Store, TrendingUp } from "lucide-react";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
@@ -278,6 +278,12 @@ export default function TeamLeaders() {
               <p className="text-[11px] text-[var(--text-muted)]">
                 Stores: <span className="text-[var(--text-secondary)]">{tl.stores.length ? tl.stores.join(", ") : "None assigned yet"}</span>
               </p>
+              <div className="flex justify-end mt-3">
+                <Link to={`/team-leaders/${tl.id}`}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] text-blue-400 hover:bg-blue-500/10 transition-colors">
+                  View performance <ArrowRight size={13} />
+                </Link>
+              </div>
             </div>
           ))}
         </div>
