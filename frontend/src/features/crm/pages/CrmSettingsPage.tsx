@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
-import { useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useSetAlias, useSetAvailability, useTeam } from "../api";
+import { useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useMapMetaForm, useMetaBackfill, useMetaForms, useSetAlias, useSetAvailability, useTeam } from "../api";
+import { HOT_COLOR } from "../statusConfig";
 import { fmtDateTime, fmtRelative } from "../format";
 import { openLead } from "../components/LeadDrawer";
 import { Button, Card, CardHeader, Empty, InfoNote, PageHeader, Pill, Tabs, inputCls, inlineInputCls } from "../components/ui";
@@ -49,6 +52,94 @@ function AccessTab() {
   );
 }
 
+const META_STATUS_COLOR: Record<string, string> = { created: "#10b981", merged: "#3b82f6", error: "#ef4444" };
+
+function MetaLeadsCard({ meta }: { meta: any }) {
+  const toast = useToast();
+  const { data: forms } = useMetaForms();
+  const { data: stores } = useQuery({ queryKey: ["stores"], queryFn: () => api.get<any[]>("/stores/") });
+  const mapForm = useMapMetaForm();
+  const backfill = useMetaBackfill();
+  const [hours, setHours] = useState(24);
+  const unmatched = forms?.forms.filter((f) => !f.store_id).length ?? 0;
+  return (
+    <Card>
+      <CardHeader title="Meta lead forms (Facebook / Instagram webhook)"
+        subtitle="Each new lead form submission arrives instantly, goes to the form's store team, and merges with its Google Sheet copy" />
+      <div className="px-5 py-4 space-y-2 text-xs">
+        <p className="text-[var(--text-secondary)]">
+          Status: {meta.configured
+            ? <span className="text-emerald-400 font-semibold">Ready</span>
+            : <span className="text-amber-400 font-semibold">Not set up — add {meta.missing.join(", ")} to backend/.env and restart</span>}
+        </p>
+        <p className="text-[var(--text-secondary)]">Callback URL for Meta → Webhooks → Page → leadgen: <code className="text-white">{window.location.origin}{meta.endpoint}</code></p>
+        <p className="text-[var(--text-muted)]">Last 7 days: {Object.entries(meta.last_7_days).map(([k, v]) => `${v} ${k}`).join(" · ") || "no leads yet"}.
+          {" "}Answered “yes” to the pre-booking question → <span className="text-rose-400 font-semibold">Hot</span>.</p>
+        {forms?.can_edit && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-[var(--text-secondary)]">Import missed leads from the last</span>
+            <select className={`${inlineInputCls} py-1 text-xs`} value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+              {[6, 24, 72, 168].map((h) => <option key={h} value={h}>{h < 48 ? `${h} hours` : `${h / 24} days`}</option>)}
+            </select>
+            <Button size="sm" loading={backfill.isPending} onClick={async () => {
+              try {
+                const r = await backfill.mutateAsync(hours);
+                toast.success(`Checked ${r.seen} leads: ${r.created} new, ${r.merged} merged with the sheet, ${r.duplicate} already here${r.error ? `, ${r.error} failed` : ""}`);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Import failed");
+              }
+            }}>Import</Button>
+          </div>
+        )}
+      </div>
+      {forms && forms.forms.length > 0 && (
+        <div className="border-t border-[var(--border-subtle)]">
+          <p className="px-5 pt-3 text-xs font-semibold text-white">
+            Lead form → store {unmatched > 0 && <span className="text-amber-400 font-normal">· {unmatched} form{unmatched > 1 ? "s" : ""} not matched — their leads stay unassigned</span>}
+          </p>
+          <div className="divide-y divide-[var(--border-subtle)]">
+            {forms.forms.map((f) => (
+              <div key={f.form_id} className="px-5 py-2 text-xs flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className={`truncate ${f.store_id ? "text-white" : "text-amber-400"}`}>{f.form_name || f.form_id}</p>
+                  <p className="text-[11px] text-[var(--text-muted)]">{f.leads} leads{f.last_lead_at ? ` · last ${fmtRelative(f.last_lead_at)}` : ""}{f.match_source === "auto" ? " · matched automatically" : ""}</p>
+                </div>
+                <select className={`${inlineInputCls} py-1 text-xs`} disabled={!forms.can_edit || mapForm.isPending}
+                  value={f.store_id ?? ""} onChange={async (e) => {
+                    const store_id = e.target.value ? Number(e.target.value) : null;
+                    try {
+                      const r = await mapForm.mutateAsync({ form_id: f.form_id, store_id });
+                      toast.success(`Saved${r.routed_leads ? ` · ${r.routed_leads} waiting lead${r.routed_leads > 1 ? "s" : ""} assigned` : ""}`);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Could not save");
+                    }
+                  }}>
+                  <option value="">Not matched</option>
+                  {(stores || []).filter((s) => s.is_active !== false).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {meta.recent.length > 0 && (
+        <div className="divide-y divide-[var(--border-subtle)] border-t border-[var(--border-subtle)]">
+          {meta.recent.map((r: any, i: number) => (
+            <div key={i} className="px-5 py-2 text-xs flex flex-wrap items-center gap-2">
+              <span className="text-[var(--text-muted)] w-28">{fmtDateTime(r.at)}</span>
+              <Pill label={r.status} color={META_STATUS_COLOR[r.status] || "#94a3b8"} />
+              {r.hot && <Pill label="Hot" color={HOT_COLOR} />}
+              {r.lead_id ? <button onClick={() => openLead(r.lead_id)} className="text-blue-400 hover:underline cursor-pointer">{r.name || `Lead #${r.lead_id}`}</button>
+                : <span className="text-white">{r.name || "—"}</span>}
+              <span className="text-[var(--text-muted)]">{r.platform === "instagram" ? "Instagram" : "Facebook"} · {r.form || ""}{r.error ? ` · ${r.error}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function IntegrationsTab() {
   const { data, isLoading } = useIntegrations();
   if (isLoading || !data) return <TableSkeleton />;
@@ -85,6 +176,7 @@ function IntegrationsTab() {
           )}
         </Card>
       )}
+      {data.meta && <MetaLeadsCard meta={data.meta} />}
       <Card>
         <CardHeader title="Meta lead sheets (Google Sheets)" />
         <div className="divide-y divide-[var(--border-subtle)]">

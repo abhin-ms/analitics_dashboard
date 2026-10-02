@@ -124,17 +124,27 @@ export const ALERT_KIND_LABELS: Record<string, string> = {
   coaching: "Coaching",
   sale_matched: "Sale matched",
   premium_lead: "Premium website lead",
+  hot_lead: "Hot lead",
 };
 
 /** Premium = paid the ₹99 website reservation. Shown in green everywhere. */
 export const PREMIUM_COLOR = "#10b981";
 
+/** Hot leads that aren't premium (e.g. a Meta lead who agreed to pre-book):
+ *  highlighted in red so they stand out from paid website leads. */
+export const HOT_COLOR = "#ef4444";
+
+export function isHotHighlight(l: { is_premium: boolean; priority: string }) {
+  return !l.is_premium && l.priority === "hot";
+}
+
 export const SOURCE_OPTIONS = [
   { key: "premium", label: "Premium (₹99 paid)" },
   { key: "website", label: "Website" },
+  { key: "facebook", label: "Facebook" },
+  { key: "instagram", label: "Instagram" },
   { key: "meta_sheet", label: "Meta (sheet)" },
   { key: "walk_in", label: "Walk-in" },
   { key: "referral", label: "Referral" },
   { key: "phone", label: "Phone" },
-  { key: "instagram", label: "Instagram" },
 ];

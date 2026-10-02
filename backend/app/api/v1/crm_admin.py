@@ -521,12 +521,108 @@ async def integrations(db: AsyncSession = Depends(get_db), user=Depends(get_curr
                 "store": (x.payload or {}).get("preferred_store") or (x.payload or {}).get("store"),
             } for x in subs],
         }
+    meta = None
+    if scope.is_admin:
+        from ...core.config import settings as app_settings
+        from ...models.models import MetaLead
+        counts = dict((await db.execute(
+            select(MetaLead.status, func.count(MetaLead.id))
+            .where(MetaLead.received_at >= utcnow() - timedelta(days=7)).group_by(MetaLead.status)
+        )).all())
+        recent = (await db.execute(select(MetaLead).order_by(MetaLead.received_at.desc()).limit(25))).scalars().all()
+        meta = {
+            "configured": bool(app_settings.META_APP_SECRET and app_settings.META_VERIFY_TOKEN
+                               and app_settings.META_ACCESS_TOKEN),
+            "missing": [k for k in ("META_APP_SECRET", "META_VERIFY_TOKEN", "META_ACCESS_TOKEN", "META_PAGE_ID")
+                        if not getattr(app_settings, k)],
+            "endpoint": "/api/v1/public/meta/leads-webhook",
+            "last_7_days": {k: int(v) for k, v in counts.items()},
+            "recent": [{
+                "at": iso_utc(x.received_at), "status": x.status, "lead_id": x.lead_id, "name": x.full_name,
+                "platform": x.platform, "form": x.adset_name or x.form_name, "hot": bool(x.is_hot), "error": x.error,
+            } for x in recent],
+        }
     return {
         "website": website,
+        "meta": meta,
         "sheets": sheets, "direction": "Google Sheet → app (read-only; the app never writes to the sheets)",
         "sync_interval_minutes": 1, "automation_enabled": automation.get("enabled", True),
         "go_live": iso_utc(await get_go_live(db)),
     }
+
+
+# ── Meta lead forms → stores ───────────────────────────────────────
+@router.get("/meta/forms")
+async def meta_forms(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Lead forms seen by the Meta webhook, the store each one routes to,
+    and how many leads came from it. Unmatched forms first."""
+    from ...models.models import MetaFormStore, MetaLead, Store
+    scope = await _scope(db, user)
+    if not scope.is_admin:
+        raise HTTPException(status_code=403, detail="Admins only")
+    counts = {r[0]: (int(r[1]), r[2]) for r in (await db.execute(
+        select(MetaLead.form_id, func.count(MetaLead.id), func.max(MetaLead.received_at)).group_by(MetaLead.form_id)
+    )).all()}
+    stores = {s.id: s.name for s in (await db.execute(select(Store))).scalars().all()}
+    rows = (await db.execute(select(MetaFormStore))).scalars().all()
+    forms = [{
+        "form_id": f.form_id, "form_name": f.form_name, "store_id": f.store_id,
+        "store_name": stores.get(f.store_id), "match_source": f.match_source,
+        "leads": counts.get(f.form_id, (0, None))[0], "last_lead_at": iso_utc(counts.get(f.form_id, (0, None))[1]),
+    } for f in rows]
+    forms.sort(key=lambda f: (f["store_id"] is not None, -(f["leads"] or 0)))
+    return {"forms": forms, "can_edit": scope.can_edit_settings}
+
+
+class MetaFormMap(BaseModel):
+    store_id: Optional[int] = None
+
+
+@router.put("/meta/forms/{form_id}")
+async def map_meta_form(form_id: str, body: MetaFormMap, db: AsyncSession = Depends(get_db),
+                        user=Depends(get_current_user)):
+    """Set (or clear) the store for a lead form. Its unassigned leads are
+    then given to that store's team."""
+    from ...models.models import MetaFormStore, Store
+    from ...services.crm.meta_leads import route_unassigned_for_form
+    scope = await _scope(db, user)
+    if not scope.can_edit_settings:
+        raise HTTPException(status_code=403, detail="Only Admin can map lead forms")
+    row = (await db.execute(select(MetaFormStore).where(MetaFormStore.form_id == form_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Form not seen yet")
+    if body.store_id is not None and not await db.get(Store, body.store_id):
+        raise HTTPException(status_code=400, detail="Unknown store")
+    before = {"store_id": row.store_id}
+    row.store_id, row.match_source, row.updated_by, row.updated_at = body.store_id, "manual", user.id, utcnow()
+    routed = await route_unassigned_for_form(db, form_id, user) if body.store_id else 0
+    record_audit(db, user.id, "meta_form_map", "meta_form_stores", row.id, before=before,
+                 after={"store_id": body.store_id, "routed": routed})
+    await db.commit()
+    return {"ok": True, "routed_leads": routed}
+
+
+class MetaBackfill(BaseModel):
+    hours: int = 24
+
+
+@router.post("/meta/backfill")
+async def meta_backfill(body: MetaBackfill, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Import Meta leads from the last N hours that the webhook missed
+    (server down, first setup). Leads already in the CRM are not doubled."""
+    from ...services.crm.meta_leads import MetaApiError, backfill
+    scope = await _scope(db, user)
+    if not scope.can_edit_settings:
+        raise HTTPException(status_code=403, detail="Only Admin can import Meta leads")
+    if not 1 <= body.hours <= 24 * 30:
+        raise HTTPException(status_code=400, detail="hours must be 1–720")
+    try:
+        stats = await backfill(db, utcnow() - timedelta(hours=body.hours))
+    except MetaApiError as e:
+        raise HTTPException(status_code=502, detail=f"Meta: {e}")
+    record_audit(db, user.id, "meta_backfill", "meta_leads", None, after={"hours": body.hours, **stats})
+    await db.commit()
+    return {"ok": True, **stats}
 
 
 # ── Team view (Leads → Team tab) ───────────────────────────────────

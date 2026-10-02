@@ -1,7 +1,7 @@
 """Fetch tele call leads from 5 TL Google Sheets and sync to DB."""
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..models.models import TeleCallLead
@@ -97,6 +97,28 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
     total_synced = 0
     ctx = await SyncContext.build(db)
 
+    # Meta leads the webhook already created (not yet tied to a sheet row):
+    # the sheet copy of the same lead attaches to them instead of becoming
+    # a second lead. Matched on phone + submission time within a day.
+    from .crm.meta_leads import MERGE_WINDOW
+    from .crm.timeutil import parse_sheet_datetime
+    webhook_leads: dict[str, list[TeleCallLead]] = {}
+    for row in (await db.execute(select(TeleCallLead).where(
+        TeleCallLead.external_ref.like("meta:%"), TeleCallLead.spreadsheet_id == "",
+        TeleCallLead.created_at >= datetime.utcnow() - timedelta(days=7),
+    ))).scalars().all():
+        webhook_leads.setdefault(_norm_phone(row.phone), []).append(row)
+
+    def webhook_twin(phone: str, created_time: str) -> TeleCallLead | None:
+        at = parse_sheet_datetime(created_time)
+        cands = [r for r in webhook_leads.get(_norm_phone(phone), [])
+                 if at and r.submitted_at and abs(r.submitted_at - at) <= MERGE_WINDOW]
+        if not cands:
+            return None
+        twin = min(cands, key=lambda r: abs(r.submitted_at - at))
+        webhook_leads[_norm_phone(phone)].remove(twin)
+        return twin
+
     for sheet_cfg in TELE_CALL_SHEETS:
         spreadsheet_id = sheet_cfg["spreadsheet_id"]
         tl_name = sheet_cfg["tl_name"]
@@ -139,6 +161,15 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
                     candidate.phone = phone
                     by_key[(full_name, phone, created_time)] = candidate
                     existing = candidate
+            if existing is None:
+                twin = webhook_twin(phone, created_time)
+                if twin is not None:
+                    # Same Meta lead the webhook already created: from now on
+                    # it is this sheet row (keeps its owner, source and Hot flag).
+                    twin.spreadsheet_id = spreadsheet_id
+                    twin.full_name, twin.phone, twin.created_time = full_name, phone, created_time
+                    by_key[(full_name, phone, created_time)] = twin
+                    existing = twin
 
             raw_status = lead_data.get("status", "")
             fields = {

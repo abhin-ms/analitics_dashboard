@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # Shared secret the third-party website sends with each paid booking
     # (X-Api-Key header or ?key=). Empty = website webhook disabled.
     WEBSITE_WEBHOOK_KEY: str = ""
+    # Meta Lead Ads webhook (Facebook/Instagram lead forms). App secret signs
+    # each webhook call; the verify token is what you type in Meta → Webhooks;
+    # the system-user token (never expires) reads the lead details.
+    META_APP_SECRET: str = ""
+    META_VERIFY_TOKEN: str = ""
+    META_ACCESS_TOKEN: str = ""
+    META_PAGE_ID: str = ""
+    META_GRAPH_VERSION: str = "v26.0"
     SMARTSERVICE_MCP_URL: str = "https://smartserviceapitemp.azurewebsites.net/mcp"
     SMARTSERVICE_CLIENT_ID: str = "Abhin"
     SMARTSERVICE_CLIENT_SECRET: str = ""

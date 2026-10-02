@@ -421,6 +421,34 @@ export function useIntegrations(enabled = true) {
   });
 }
 
+export interface MetaForm {
+  form_id: string;
+  form_name: string | null;
+  store_id: number | null;
+  store_name: string | null;
+  match_source: "auto" | "manual" | null;
+  leads: number;
+  last_lead_at: string | null;
+}
+
+export function useMetaForms(enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "meta-forms"],
+    queryFn: () => api.get<{ forms: MetaForm[]; can_edit: boolean }>(`/crm/meta/forms`),
+    enabled,
+  });
+}
+
+export function useMapMetaForm() {
+  return useCrmMutation((body: { form_id: string; store_id: number | null }) =>
+    api.put<{ ok: boolean; routed_leads: number }>(`/crm/meta/forms/${body.form_id}`, { store_id: body.store_id }));
+}
+
+export function useMetaBackfill() {
+  return useCrmMutation((hours: number) =>
+    api.post<Record<string, number>>(`/crm/meta/backfill`, { hours }));
+}
+
 export function useAliases(enabled = true) {
   return useQuery({
     queryKey: [CRM_KEY, "aliases"],

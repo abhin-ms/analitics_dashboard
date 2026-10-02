@@ -898,6 +898,55 @@ class LeadSubmission(Base):
     received_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MetaLead(Base):
+    """Every Meta (Facebook/Instagram) lead-form submission received by the
+    webhook, with the ad it came from and the answers as Meta sent them.
+    lead_id links it to the CRM lead it created or was merged into."""
+    __tablename__ = "meta_leads"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    leadgen_id = Column(String(40), nullable=False, unique=True)
+    page_id = Column(String(40), nullable=True)
+    form_id = Column(String(40), nullable=True, index=True)
+    form_name = Column(String(200), nullable=True)
+    ad_id = Column(String(40), nullable=True)
+    ad_name = Column(String(200), nullable=True)
+    adset_id = Column(String(40), nullable=True)
+    adset_name = Column(String(200), nullable=True)
+    campaign_id = Column(String(40), nullable=True)
+    campaign_name = Column(String(200), nullable=True)
+    platform = Column(String(20), nullable=True)  # facebook | instagram
+    is_organic = Column(Boolean, nullable=True)
+    full_name = Column(String(200), nullable=True)
+    phone = Column(String(30), nullable=True)
+    email = Column(String(200), nullable=True)
+    city = Column(String(100), nullable=True)
+    phone_brand = Column(String(60), nullable=True)
+    prebook_answer = Column(String(20), nullable=True)  # the "₹99 pre-booking" question: yes | no
+    phone_verified = Column(Boolean, nullable=True)
+    is_hot = Column(Boolean, default=False, nullable=True)
+    field_data = Column(JSON, nullable=True)
+    meta_created_at = Column(DateTime, nullable=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)
+    # created | merged (attached to the same lead from the sheet) | error
+    status = Column(String(20), nullable=False, default="created")
+    error = Column(String(300), nullable=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="SET NULL"), nullable=True, index=True)
+    received_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MetaFormStore(Base):
+    """Meta lead form → our store. Filled automatically from the form / ad
+    set name on the first lead; an admin can set or correct it."""
+    __tablename__ = "meta_form_stores"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    form_id = Column(String(40), nullable=False, unique=True)
+    form_name = Column(String(200), nullable=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)
+    match_source = Column(String(20), nullable=True)  # auto | manual
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CrmSavedView(Base):
     __tablename__ = "crm_saved_views"
     id = Column(Integer, primary_key=True, autoincrement=True)
