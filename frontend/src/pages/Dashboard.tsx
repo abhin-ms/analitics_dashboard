@@ -8,7 +8,7 @@ import { StatCardSkeleton } from "@/components/shared/Skeleton";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import {
   DollarSign, Target, TrendingUp, Users, Phone, Briefcase, Award, AlertTriangle, PieChart as PieIcon, BarChart3,
-  Globe, Video, MessageCircle, Star, Eye, Package, Filter, MapPin, Store, RefreshCw
+  Globe, Package, Filter, MapPin, Store, RefreshCw
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
 import { AISummary } from "@/components/dashboard/AISummary";
+import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { DashboardInbox } from "@/features/crm/components/DashboardInbox";
 import {
   CardFilterPopover,
@@ -467,84 +468,6 @@ export default function Dashboard() {
       { name: "Calls Made", value: callsMade },
       { name: "Calls Connected", value: callsConnected },
     ];
-  }, [activeData]);
-
-  // Marketing data from daily_tracker (xlsx)
-  const marketingData = useMemo(() => {
-    const tracker = activeData?.daily_tracker || [];
-    if (!tracker.length) return null;
-
-    // tracker rows are ordered by date desc, so the first row seen per store
-    // is its latest snapshot — mtd_revenue is already a cumulative running
-    // total as of that date, so it must be read once, never summed across days.
-    const storeMap: Record<string, any> = {};
-    for (const r of tracker) {
-      const s = r.store;
-      if (!s) continue;
-      if (!storeMap[s]) {
-        storeMap[s] = {
-          store: s, country: r.country, storeType: r.store_type,
-          dailyRevenue: 0, mtdRevenue: r.mtd_revenue || 0, monthlyTarget: r.monthly_target || 0, unitsSold: 0, carePlus: 0, prebookings: 0,
-          igVideos: 0, igViewsTarget: 0, igViewsAchieved: 0, igFollowers: 0, igNewFollowers: 0,
-          igLikes: 0, igComments: 0, igSaves: 0, igShares: 0, igDms: 0, igPosts: 0,
-          ytViews: 0, ytLikes: 0, ytComments: 0,
-          ttViews: 0, ttLikes: 0, ttFollowers: 0,
-          scViews: 0, scShares: 0,
-          waChats: 0, waWalkins: 0,
-          googleRating: null as number | null, googleReviews: 0,
-        };
-      }
-      const m = storeMap[s];
-      m.dailyRevenue += r.daily_revenue || 0;
-      m.unitsSold += r.units_sold || 0;
-      m.carePlus += r.care_plus_attached || 0;
-      m.prebookings += r.prebookings || 0;
-      m.igVideos += r.ig_videos_posted || 0;
-      m.igViewsTarget += r.ig_views_target || 0;
-      m.igViewsAchieved += r.ig_views_achieved || 0;
-      m.igFollowers = r.ig_followers || m.igFollowers;
-      m.igNewFollowers += r.ig_new_followers || 0;
-      m.igLikes += r.ig_likes || 0;
-      m.igComments += r.ig_comments || 0;
-      m.igSaves += r.ig_saves || 0;
-      m.igShares += r.ig_shares || 0;
-      m.igDms += r.ig_dms_received || 0;
-      m.igPosts += r.ig_posts_published || 0;
-      m.ytViews += r.yt_views || 0;
-      m.ytLikes += r.yt_likes || 0;
-      m.ytComments += r.yt_comments || 0;
-      m.ttViews += r.tt_views || 0;
-      m.ttLikes += r.tt_likes || 0;
-      m.ttFollowers = r.tt_followers || m.ttFollowers;
-      m.scViews += r.sc_views || 0;
-      m.scShares += r.sc_shares || 0;
-      m.waChats += r.wa_chats_received || 0;
-      m.waWalkins += r.wa_walkins_booked || 0;
-      if (r.google_rating) m.googleRating = r.google_rating;
-      m.googleReviews += r.google_new_reviews || 0;
-    }
-
-    const stores = Object.values(storeMap);
-    const totals = stores.reduce((acc, s) => ({
-      mtdRevenue: acc.mtdRevenue + s.mtdRevenue,
-      monthlyTarget: acc.monthlyTarget + s.monthlyTarget,
-      totalViews: acc.totalViews + s.igViewsAchieved + s.ytViews + s.ttViews + s.scViews,
-      totalEngagements: acc.totalEngagements + s.igLikes + s.igComments + s.igSaves + s.igShares + s.ytLikes + s.ttLikes,
-      totalDms: acc.totalDms + s.igDms,
-      totalWaChats: acc.totalWaChats + s.waChats,
-      totalWaWalkins: acc.totalWaWalkins + s.waWalkins,
-      totalPrebookings: acc.totalPrebookings + s.prebookings,
-      totalGoogleReviews: acc.totalGoogleReviews + s.googleReviews,
-    }), { mtdRevenue: 0, monthlyTarget: 0, totalViews: 0, totalEngagements: 0, totalDms: 0, totalWaChats: 0, totalWaWalkins: 0, totalPrebookings: 0, totalGoogleReviews: 0 });
-
-    const socialByPlatform = [
-      { name: "Instagram", views: stores.reduce((s, st) => s + st.igViewsAchieved, 0), engagements: stores.reduce((s, st) => s + st.igLikes + st.igComments + st.igSaves + st.igShares, 0), color: "#E1306C" },
-      { name: "YouTube", views: stores.reduce((s, st) => s + st.ytViews, 0), engagements: stores.reduce((s, st) => s + st.ytLikes + st.ytComments, 0), color: "#FF0000" },
-      { name: "TikTok", views: stores.reduce((s, st) => s + st.ttViews, 0), engagements: stores.reduce((s, st) => s + st.ttLikes, 0), color: "#00f2ea" },
-      { name: "Snapchat", views: stores.reduce((s, st) => s + st.scViews, 0), engagements: stores.reduce((s, st) => s + st.scShares, 0), color: "#FFFC00" },
-    ];
-
-    return { stores, totals, socialByPlatform };
   }, [activeData]);
 
   if (!activeLoading && !activeData) {
@@ -1331,94 +1254,8 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ══════════ MARKETING & SOCIAL MEDIA SECTION (from xlsx) ══════════ */}
-        {marketingData && (
-          <>
-            {/* Marketing KPI Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 min-w-0">
-              {[
-                { label: "Total Social Reach", value: fmtNum(marketingData.totals.totalViews), icon: <Eye size={20} />, color: "#3b82f6", suffix: "views" },
-                { label: "Total Engagements", value: fmtNum(marketingData.totals.totalEngagements), icon: <Video size={20} />, color: "#E1306C", suffix: "" },
-                { label: "WhatsApp Leads", value: marketingData.totals.totalWaChats.toLocaleString(), icon: <MessageCircle size={20} />, color: "#25d366", suffix: `chats · ${marketingData.totals.totalWaWalkins} walk-ins` },
-                { label: "Google Reviews", value: marketingData.totals.totalGoogleReviews.toLocaleString(), icon: <Star size={20} />, color: "#f59e0b", suffix: `across ${marketingData.stores.length} stores` },
-              ].map((k, i) => (
-                <div key={i} className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 relative overflow-hidden">
-                  <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: k.color }} />
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-2 rounded-lg" style={{ background: `${k.color}20` }}>
-                      <div style={{ color: k.color }}>{k.icon}</div>
-                    </div>
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">{k.label}</p>
-                  </div>
-                  <p className="text-xl font-extrabold text-white">{k.value}</p>
-                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{k.suffix}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Social Media Performance Chart */}
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 sm:p-6 min-w-0">
-              <h3 className="text-base font-bold text-white tracking-tight mb-1">Social Media Performance by Platform</h3>
-              <p className="text-xs text-[var(--text-muted)] mb-4">Views vs Engagements across Instagram, YouTube, TikTok, Snapchat</p>
-              <div className="h-64 w-full min-w-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={marketingData.socialByPlatform}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-                    <YAxis tick={{ fontSize: 10, fill: "#a1a1aa" }} />
-                    <Tooltip contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
-                    <Bar dataKey="views" fill="#3b82f6" name="Views" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="engagements" fill="#a855f7" name="Engagements" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Store Marketing Table */}
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 sm:p-6 min-w-0">
-              <div className="flex items-center gap-2 mb-4">
-                <Globe className="text-[#E1306C]" size={20} />
-                <div>
-                  <h3 className="text-base font-bold text-white tracking-tight">Store Marketing Summary</h3>
-                  <p className="text-xs text-[var(--text-muted)]">Social media + WhatsApp + Google Reviews by store</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto w-full">
-                <table className="w-full text-sm text-left border-collapse min-w-[900px]">
-                  <thead>
-                    <tr className="text-[var(--text-muted)] text-xs uppercase tracking-wider border-b border-[var(--border-subtle)]">
-                      <th className="py-3 px-3 font-semibold">Store</th>
-                      <th className="py-3 px-3 font-semibold text-right">IG Views</th>
-                      <th className="py-3 px-3 font-semibold text-right">IG Followers</th>
-                      <th className="py-3 px-3 font-semibold text-right">IG Engagements</th>
-                      <th className="py-3 px-3 font-semibold text-right">YT Views</th>
-                      <th className="py-3 px-3 font-semibold text-right">TT Views</th>
-                      <th className="py-3 px-3 font-semibold text-right">WA Chats</th>
-                      <th className="py-3 px-3 font-semibold text-right">Google Reviews</th>
-                      <th className="py-3 px-3 font-semibold text-right">MTD Revenue</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {marketingData.stores.sort((a: any, b: any) => b.mtdRevenue - a.mtdRevenue).map((s: any, i: number) => (
-                      <tr key={i} className="hover:bg-[var(--bg-card-hover)] transition-colors">
-                        <td className="py-3 px-3 font-medium text-white text-xs">{shortStore(s.store)}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.igViewsAchieved || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.igFollowers || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.igLikes + s.igComments + s.igSaves + s.igShares).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.ytViews || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.ttViews || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.waChats || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs">{(s.googleReviews || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right text-xs font-semibold text-white">{"\u20b9"}{(s.mtdRevenue || 0).toLocaleString("en-IN")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </>
-        )}
+        {/* ══════════ SOCIAL & REPUTATION (Daily Tracker sheet) ══════════ */}
+        <SocialSnapshotCard />
 
         {/* Loading indicator for sheets */}
         {sheetsLoading && (

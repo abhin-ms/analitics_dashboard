@@ -1,8 +1,10 @@
 """Download and parse .xlsx files from Google Drive using service account."""
 import io
 import os
+import re
 import time
 import logging
+from datetime import date, datetime
 from typing import Optional
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -80,6 +82,128 @@ def parse_daily_input(file_id: str) -> list[dict]:
     return parse_daily_input_buf(buf)
 
 
+# Daily Input columns, found by (section banner, header text) instead of by
+# position — the sheet has gained unlabelled spacer columns before (e.g. the
+# blank column after "Followers (total)"), and a fixed index silently shifts
+# every later field by one (Google rating read from Walkins, etc.).
+# Each entry: field -> (section, header prefixes, kind). Section None = any.
+_DAILY_INPUT_COLUMNS: dict[str, tuple[Optional[str], tuple[str, ...], str]] = {
+    "date": (None, ("date",), "str"),
+    "store": (None, ("store name",), "str"),
+    "country": (None, ("country",), "str"),
+    "store_type": (None, ("store type",), "str"),
+    "daily_revenue": ("SALES", ("daily revenue",), "num"),
+    "monthly_target": ("SALES", ("monthly target",), "num"),
+    "mtd_revenue": ("SALES", ("mtd revenue",), "num"),
+    "units_sold": ("SALES", ("units sold",), "int"),
+    "care_plus_attached": ("SALES", ("care plus",), "int"),
+    "prebookings": ("SALES", ("prebooking",), "int"),
+    "ig_videos_posted": ("INSTAGRAM", ("total videos posted",), "int"),
+    "ig_views_target": ("INSTAGRAM", ("total views target",), "num"),
+    "ig_views_achieved": ("INSTAGRAM", ("total views achieved",), "num"),
+    "ig_views_achd_pct": ("INSTAGRAM", ("achd",), "num"),
+    "ig_followers": ("INSTAGRAM", ("followers (total)", "followers"), "int"),
+    "ig_new_followers": ("INSTAGRAM", ("new followers",), "int"),
+    "ig_likes": ("INSTAGRAM", ("likes",), "int"),
+    "ig_comments": ("INSTAGRAM", ("comments",), "int"),
+    "ig_saves": ("INSTAGRAM", ("saves",), "int"),
+    "ig_shares": ("INSTAGRAM", ("shares",), "int"),
+    "ig_reposts": ("INSTAGRAM", ("repost", "reshare"), "int"),
+    "ig_dms_received": ("INSTAGRAM", ("dms received", "dms"), "int"),
+    "ig_manychat_handled": ("INSTAGRAM", ("manychat",), "int"),
+    "ig_posts_published": ("INSTAGRAM", ("posts published",), "int"),
+    "yt_views": ("YOUTUBE", ("views",), "int"),
+    "yt_likes": ("YOUTUBE", ("likes",), "int"),
+    "yt_comments": ("YOUTUBE", ("comments",), "int"),
+    "tt_views": ("TIKTOK", ("views",), "int"),
+    "tt_likes": ("TIKTOK", ("likes",), "int"),
+    "tt_followers": ("TIKTOK", ("followers",), "int"),
+    "sc_views": ("SNAPCHAT", ("views",), "int"),
+    "sc_shares": ("SNAPCHAT", ("shares",), "int"),
+    "wa_chats_received": ("WHATSAPP", ("overall wa chats", "wa chats"), "int"),
+    "wa_walkins_booked": (None, ("walkins booked", "walk-ins booked"), "int"),
+    "google_rating": (None, ("google rating",), "num"),
+    "google_new_reviews": (None, ("new reviews",), "int"),
+    "google_review_response": (None, ("review response",), "str"),
+}
+
+# Positions used before the header lookup existed, kept as the fallback for a
+# sheet whose header row can't be read.
+_DAILY_INPUT_LEGACY_ORDER = [
+    "date", "store", "country", "store_type", "daily_revenue", "monthly_target",
+    "mtd_revenue", "units_sold", "care_plus_attached", "prebookings",
+    "ig_videos_posted", "ig_views_target", "ig_views_achieved", "ig_views_achd_pct",
+    "ig_followers", "ig_new_followers", "ig_likes", "ig_comments", "ig_saves",
+    "ig_shares", "ig_reposts", "ig_dms_received", "ig_manychat_handled",
+    "ig_posts_published", "yt_views", "yt_likes", "yt_comments", "tt_views",
+    "tt_likes", "tt_followers", "sc_views", "sc_shares", "wa_chats_received",
+    "wa_walkins_booked", "google_rating", "google_new_reviews", "google_review_response",
+]
+
+
+def _daily_input_column_map(section_row, header_row) -> dict[str, int]:
+    """Map each Daily Input field to its column index from the two header rows."""
+    sections: list[str] = []
+    current = ""
+    for i in range(len(header_row)):
+        banner = section_row[i] if i < len(section_row) else None
+        if banner and str(banner).strip():
+            current = str(banner).strip().upper()
+        sections.append(current)
+    headers = [str(h).strip().lower() if h else "" for h in header_row]
+
+    taken: set[int] = set()
+    col_map: dict[str, int] = {}
+    # Longer prefixes first, so "new followers" claims its column before the
+    # generic "followers" prefix can.
+    specs = sorted(_DAILY_INPUT_COLUMNS.items(), key=lambda kv: -max(len(p) for p in kv[1][1]))
+    for field, (section, prefixes, _kind) in specs:
+        for prefix in prefixes:
+            idx = next(
+                (i for i, h in enumerate(headers)
+                 if i not in taken and h.startswith(prefix)
+                 and (section is None or sections[i].startswith(section))),
+                None,
+            )
+            if idx is not None:
+                col_map[field] = idx
+                taken.add(idx)
+                break
+    return col_map
+
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def normalize_tracker_date(val) -> str:
+    """Turn a Daily Input date cell into an ISO date string.
+
+    Store managers enter a single day ("15-Aug-2026", a real date cell) or, for
+    a month summary row, a range like "01 to 31-Aug-2026" — that becomes the
+    range's last day, the date the totals are "as of". Anything unrecognised
+    is returned as-is so the row is still stored."""
+    if val is None:
+        return ""
+    if isinstance(val, datetime):
+        return val.date().isoformat()
+    if isinstance(val, date):
+        return val.isoformat()
+    s = str(val).strip()
+    m = re.match(r"^\d{1,2}\s*(?:to|-|–)\s*(\d{1,2})[\s/-]+([A-Za-z]{3,})[\s/-]+(\d{4})$", s, re.I)
+    if m and m.group(2)[:3].lower() in _MONTHS:
+        try:
+            return date(int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1))).isoformat()
+        except ValueError:
+            return s
+    for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%B-%Y", "%d %b %Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return s
+
+
 def parse_daily_input_buf(buf: io.BytesIO) -> list[dict]:
     """Parse the 'Daily Input' tab from an already-downloaded xlsx buffer."""
     wb = _parse_from_buf(buf)
@@ -94,54 +218,35 @@ def parse_daily_input_buf(buf: io.BytesIO) -> list[dict]:
     if len(rows) < 5:
         return []
 
+    col_map = _daily_input_column_map(rows[2], rows[3])
+    if "store" not in col_map or "date" not in col_map:
+        logger.warning("Daily Input header row not recognised; falling back to fixed column positions")
+        col_map = {f: i for i, f in enumerate(_DAILY_INPUT_LEGACY_ORDER)}
+
+    def cell(row, field):
+        i = col_map.get(field)
+        return row[i] if i is not None and i < len(row) else None
+
     data = []
     for row in rows[4:]:
         if not row or len(row) < 10:
             continue
-        store_name = row[1] if row[1] else ""
+        store_name = cell(row, "store")
         if not store_name or not str(store_name).strip():
             continue
-        store_name = str(store_name).strip()
 
-        data.append({
-            "date": str(row[0]).strip() if row[0] else "",
-            "store": store_name,
-            "country": str(row[2]).strip() if len(row) > 2 and row[2] else "",
-            "store_type": str(row[3]).strip() if len(row) > 3 and row[3] else "",
-            "daily_revenue": _num(row[4]) if len(row) > 4 else None,
-            "monthly_target": _num(row[5]) if len(row) > 5 else None,
-            "mtd_revenue": _num(row[6]) if len(row) > 6 else None,
-            "units_sold": _int(row[7]) if len(row) > 7 else None,
-            "care_plus_attached": _int(row[8]) if len(row) > 8 else None,
-            "prebookings": _int(row[9]) if len(row) > 9 else None,
-            "ig_videos_posted": _int(row[10]) if len(row) > 10 else None,
-            "ig_views_target": _num(row[11]) if len(row) > 11 else None,
-            "ig_views_achieved": _num(row[12]) if len(row) > 12 else None,
-            "ig_views_achd_pct": _num(row[13]) if len(row) > 13 else None,
-            "ig_followers": _int(row[14]) if len(row) > 14 else None,
-            "ig_new_followers": _int(row[15]) if len(row) > 15 else None,
-            "ig_likes": _int(row[16]) if len(row) > 16 else None,
-            "ig_comments": _int(row[17]) if len(row) > 17 else None,
-            "ig_saves": _int(row[18]) if len(row) > 18 else None,
-            "ig_shares": _int(row[19]) if len(row) > 19 else None,
-            "ig_reposts": _int(row[20]) if len(row) > 20 else None,
-            "ig_dms_received": _int(row[21]) if len(row) > 21 else None,
-            "ig_manychat_handled": _int(row[22]) if len(row) > 22 else None,
-            "ig_posts_published": _int(row[23]) if len(row) > 23 else None,
-            "yt_views": _int(row[24]) if len(row) > 24 else None,
-            "yt_likes": _int(row[25]) if len(row) > 25 else None,
-            "yt_comments": _int(row[26]) if len(row) > 26 else None,
-            "tt_views": _int(row[27]) if len(row) > 27 else None,
-            "tt_likes": _int(row[28]) if len(row) > 28 else None,
-            "tt_followers": _int(row[29]) if len(row) > 29 else None,
-            "sc_views": _int(row[30]) if len(row) > 30 else None,
-            "sc_shares": _int(row[31]) if len(row) > 31 else None,
-            "wa_chats_received": _int(row[32]) if len(row) > 32 else None,
-            "wa_walkins_booked": _int(row[33]) if len(row) > 33 else None,
-            "google_rating": _num(row[34]) if len(row) > 34 else None,
-            "google_new_reviews": _int(row[35]) if len(row) > 35 else None,
-            "google_review_response": str(row[36]).strip() if len(row) > 36 and row[36] else "",
-        })
+        rec: dict = {}
+        for field, (_section, _prefixes, kind) in _DAILY_INPUT_COLUMNS.items():
+            v = cell(row, field)
+            if kind == "num":
+                rec[field] = _num(v)
+            elif kind == "int":
+                rec[field] = _int(v)
+            else:
+                rec[field] = str(v).strip() if v is not None and str(v).strip() else ""
+        rec["store"] = str(store_name).strip()
+        rec["date"] = normalize_tracker_date(cell(row, "date"))
+        data.append(rec)
 
     wb.close()
     return data
@@ -203,13 +308,16 @@ def parse_store_dashboard_buf(buf: io.BytesIO) -> list[dict]:
 def _num(val) -> Optional[float]:
     if val is None:
         return None
+    if isinstance(val, (int, float)):
+        return float(val)
     s = str(val).strip().replace(",", "").replace("₹", "").replace("%", "").replace("—", "")
     if not s or s.lower() in ("n/a", "—", "-", "none"):
         return None
-    try:
-        return float(s)
-    except (ValueError, TypeError):
+    # Hand-typed cells like "370+" or "49 ( till 15 )" — keep the leading number.
+    m = re.match(r"^(-?\d+(?:\.\d+)?)\s*(?:\+|\(.*\))?$", s)
+    if not m:
         return None
+    return float(m.group(1))
 
 
 def _int(val) -> Optional[int]:

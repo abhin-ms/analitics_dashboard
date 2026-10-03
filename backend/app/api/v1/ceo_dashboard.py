@@ -1,4 +1,5 @@
 import asyncio
+import re
 import logging
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends
@@ -472,6 +473,8 @@ async def ceo_sheets_data(
             return {"tl_report": []}
         elif tab == "daily_tracker":
             return {"daily_tracker": await _get_daily_tracker(db, month, start, end)}
+        elif tab == "tracker_months":
+            return {"months": await _get_tracker_months(db)}
         elif tab == "store_dashboard_snap":
             return {"store_dashboard": await _get_store_dashboard_snap(db)}
         else:
@@ -890,6 +893,15 @@ async def _get_daily_tracker(db: AsyncSession, month: str = None, start: str = N
         }
         for r in rows
     ]
+
+
+async def _get_tracker_months(db: AsyncSession) -> list[str]:
+    """Months ("YYYY-MM") that have Daily Input rows, newest first — lets the
+    Social Performance page open on the latest month with data rather than
+    the current (often still empty) one."""
+    result = await db.execute(select(DailyStoreTracker.date).distinct())
+    months = {d[:7] for (d,) in result.all() if d and re.match(r"^\d{4}-\d{2}-\d{2}$", d)}
+    return sorted(months, reverse=True)
 
 
 async def _get_store_dashboard_snap(db: AsyncSession) -> list[dict]:

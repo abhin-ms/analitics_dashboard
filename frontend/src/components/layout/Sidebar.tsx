@@ -8,7 +8,7 @@ import {
   DollarSign, TrendingUp, X, ChevronLeft, ChevronRight, ShieldCheck,
   Camera, MessageCircle, Shield, Table, Settings2, ChevronDown,
   RefreshCw, Brain, Package, Globe, PhoneCall, MapPin,
-  Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset,
+  Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset, Share2,
 } from "lucide-react";
 
 interface NavItem {
@@ -31,6 +31,7 @@ const MAIN_NAV_ITEMS: NavItem[] = [
   { to: "/tasks", label: "Tasks", icon: CheckSquare, resource: "tasks" },
   { to: "/investments", label: "Investments", icon: DollarSign, resource: "investments" },
   { to: "/performance", label: "Performance", icon: BarChart3, resource: "performance" },
+  { to: "/social-performance", label: "Social Performance", icon: Share2, resource: "dashboard" },
   { to: "/reports", label: "Reports", icon: FileText, resource: "reports" },
   { to: "/stock-position", label: "Stock Position", icon: Package, resource: "dashboard" },
   { to: "/country-comparison", label: "Country Comparison", icon: Globe, resource: "dashboard" },
@@ -252,8 +253,8 @@ export function Sidebar() {
   // a Team Leader has their own scoped dashboard/leads-update pages instead.
   // "/leads" is the tabbed telecalling Leads page (role-scoped), so team
   // leaders and telecallers see it too.
-  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance"];
-  const HIDDEN_FOR_TELECALLER = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/campaigns", "/tasks", "/performance", "/reports"];
+  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance", "/social-performance"];
+  const HIDDEN_FOR_TELECALLER = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/campaigns", "/tasks", "/performance", "/reports", "/social-performance"];
 
   const visibleMainItems = MAIN_NAV_ITEMS.filter((item) => {
     if (!hasPermission(item.resource, "view")) return false;

@@ -18,6 +18,7 @@ import LeadDetail from "./pages/LeadDetail";
 import Campaigns from "./pages/Campaigns";
 import Tasks from "./pages/Tasks";
 import Performance from "./pages/Performance";
+import SocialPerformance from "./pages/SocialPerformance";
 import Reports from "./pages/Reports";
 import Investments from "./pages/Investments";
 import StockPosition from "./pages/StockPosition";
@@ -94,6 +95,7 @@ export default function App() {
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/performance" element={<Performance />} />
+          <Route path="/social-performance" element={<SocialPerformance />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/stock-position" element={<StockPosition />} />
           <Route path="/country-comparison" element={<CountryComparison />} />
