@@ -1,0 +1,79 @@
+# Production stack for dash.breakprotection.com — copied to the server by
+# .github/workflows/deploy.yml, which also writes .env, app.env and
+# secrets/google-sa.json next to it. See docs/DEPLOYMENT.md.
+#
+#   db      MariaDB (same family as local dev), data in the db_data volume,
+#           not published outside Docker
+#   app     FastAPI + the built React app, on 127.0.0.1:${APP_PORT} only —
+#           the server's existing nginx terminates HTTPS and proxies to it
+#           (deploy/nginx-dash.breakprotection.com.conf)
+#   backup  nightly gzip'd dump into ./backups, keeps the last 14 days
+
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD missing from .env}
+      MARIADB_DATABASE: bp_analytics
+      MARIADB_USER: bp
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD missing from .env}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE missing from .env}
+    restart: unless-stopped
+    env_file: app.env
+    environment:
+      DATABASE_URL: mysql+aiomysql://bp:${DB_PASSWORD}@db:3306/bp_analytics
+      GOOGLE_SERVICE_ACCOUNT_JSON: /run/secrets/google-sa.json
+      CORS_ORIGINS: https://${DOMAIN:?DOMAIN missing from .env}
+      FRONTEND_URL: https://${DOMAIN}
+      SECURE_COOKIES: "true"
+      TZ: Asia/Kolkata
+    ports:
+      # localhost only: reachable by the host's nginx, not from the internet
+      - "127.0.0.1:${APP_PORT:-8010}:8000"
+    volumes:
+      - ./secrets/google-sa.json:/run/secrets/google-sa.json:ro
+      - app_logs:/app/backend/logs
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backup:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: Asia/Kolkata
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/bp_analytics_$$(date +%Y-%m-%d_%H%M).sql.gz
+          if mariadb-dump -h db -u root -p"$$DB_ROOT_PASSWORD" --single-transaction --routines --triggers bp_analytics | gzip > "$$f.tmp"; then
+            mv "$$f.tmp" "$$f" && echo "backup ok: $$f"
+          else
+            rm -f "$$f.tmp"; echo "backup FAILED"
+          fi
+          find /backups -name 'bp_analytics_*.sql.gz' -mtime +14 -delete
+          sleep 86400
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  app_logs:
