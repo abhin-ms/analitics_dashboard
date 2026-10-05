@@ -151,7 +151,7 @@ export function Header() {
               <button
                 onClick={() => setSearchParams({ tab: mainTabId })}
                 style={{
-                  fontSize: isMd ? "18px" : "16px",
+                  fontSize: isMd ? "18px" : "15px",
                   fontWeight: 700,
                   color: currentTab === mainTabId ? "var(--text-primary)" : "var(--text-muted)",
                   background: "none",
@@ -168,7 +168,7 @@ export function Header() {
               <button
                 onClick={() => setSearchParams({ tab: secondTabId })}
                 style={{
-                  fontSize: isMd ? "18px" : "16px",
+                  fontSize: isMd ? "18px" : "15px",
                   fontWeight: 700,
                   color: currentTab === secondTabId ? "var(--text-primary)" : "var(--text-muted)",
                   background: "none",
@@ -244,7 +244,9 @@ export function Header() {
           </span>
         )}
 
-        <div
+        {/* Phones: no avatar — the page title needs the room, and its
+            name/role tooltip can't be opened on a touch screen anyway. */}
+        {isMd && <div
           title={user ? `${user.name} · ${user.role_name}` : undefined}
           style={{
             width: isMd ? "36px" : "32px",
@@ -262,7 +264,7 @@ export function Header() {
           }}
         >
           {user?.name ? user.name.charAt(0).toUpperCase() : <User size={16} />}
-        </div>
+        </div>}
 
         <div style={{ display: isWide ? "flex" : "none", flexDirection: "column" }}>
           <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.3 }}>

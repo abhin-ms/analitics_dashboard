@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bell, BellRing, Flame, Volume2, VolumeX, X } from "lucide-react";
 import { getSocket } from "@/lib/socket";
@@ -37,7 +38,24 @@ export function NotificationBell() {
   const timer = useRef<number | null>(null);
   const popupKey = useRef(1);
 
+  // Phones and tablets get a centred panel; desktop keeps the dropdown under the bell.
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
+
   useEffect(() => unlockAudioOnFirstGesture(), []);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -94,6 +112,53 @@ export function NotificationBell() {
     setOpen(false);
   };
 
+  const panel = (
+    <>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
+        <p className="text-sm font-semibold text-white">New leads</p>
+        <div className="flex items-center gap-3 text-xs">
+          <button onClick={() => { setSoundMuted(!muted); setMuted(!muted); if (muted) playLeadChime(); }}
+            className="text-[var(--text-muted)] hover:text-white cursor-pointer" title={muted ? "Turn sound on" : "Mute sound"}>
+            {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+          </button>
+          {unread > 0 && (
+            <button onClick={() => markRead.mutate(undefined)} className="text-blue-400 hover:underline cursor-pointer">Mark all read</button>
+          )}
+          {!isDesktop && (
+            <button onClick={() => setOpen(false)} className="text-[var(--text-muted)] hover:text-white cursor-pointer" aria-label="Close notifications">
+              <X size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+      {perm === "default" && (
+        <button onClick={async () => setPerm(await Notification.requestPermission())}
+          className="w-full text-left px-4 py-2 text-xs text-blue-400 hover:bg-[var(--bg-card-hover)] border-b border-[var(--border-subtle)] cursor-pointer">
+          Turn on desktop notifications — get alerted even when this tab is in the background
+        </button>
+      )}
+      {perm === "denied" && (
+        <p className="px-4 py-2 text-[11px] text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
+          Desktop notifications are blocked for this site — allow them in the browser's site settings.
+        </p>
+      )}
+      <div className="max-h-[60vh] overflow-y-auto divide-y divide-[var(--border-subtle)]">
+        {items.length === 0 && <p className="px-4 py-6 text-center text-xs text-[var(--text-muted)]">No notifications yet</p>}
+        {items.map((n) => (
+          <button key={n.id} onClick={() => openOne(n.lead_id, n.read ? [] : [n.id])}
+            className={`w-full text-left px-4 py-2.5 hover:bg-[var(--bg-card-hover)] cursor-pointer ${n.read ? "opacity-60" : ""}`}
+            style={{ boxShadow: n.read ? undefined : `inset 3px 0 0 ${n.is_hot ? "#ef4444" : KIND_COLOR[n.kind]}` }}>
+            <p className="text-xs font-semibold text-white flex items-center gap-1">
+              {n.is_hot && <Flame size={12} className="text-rose-400 shrink-0" />}{n.title}
+            </p>
+            {n.body && <p className="text-[11px] text-[var(--text-secondary)] truncate">{n.body}</p>}
+            <p className="text-[10px] text-[var(--text-muted)]">{n.created_at ? fmtRelative(n.created_at) : ""}</p>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+
   return (
     <>
       <div className="relative">
@@ -110,71 +175,54 @@ export function NotificationBell() {
           )}
         </button>
 
-        {open && (
+        {/* Desktop: dropdown under the bell */}
+        {open && isDesktop && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <div className="absolute right-0 mt-2 z-50 w-[min(380px,calc(100vw-2rem))] rounded-xl border border-[var(--border-subtle)] shadow-2xl overflow-hidden"
+            <div className="absolute right-0 mt-2 z-50 w-[380px] rounded-xl border border-[var(--border-subtle)] shadow-2xl overflow-hidden"
               style={{ background: "var(--bg-card)" }}>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
-                <p className="text-sm font-semibold text-white">New leads</p>
-                <div className="flex items-center gap-3 text-xs">
-                  <button onClick={() => { setSoundMuted(!muted); setMuted(!muted); if (muted) playLeadChime(); }}
-                    className="text-[var(--text-muted)] hover:text-white cursor-pointer" title={muted ? "Turn sound on" : "Mute sound"}>
-                    {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-                  </button>
-                  {unread > 0 && (
-                    <button onClick={() => markRead.mutate(undefined)} className="text-blue-400 hover:underline cursor-pointer">Mark all read</button>
-                  )}
-                </div>
-              </div>
-              {perm === "default" && (
-                <button onClick={async () => setPerm(await Notification.requestPermission())}
-                  className="w-full text-left px-4 py-2 text-xs text-blue-400 hover:bg-[var(--bg-card-hover)] border-b border-[var(--border-subtle)] cursor-pointer">
-                  Turn on desktop notifications — get alerted even when this tab is in the background
-                </button>
-              )}
-              {perm === "denied" && (
-                <p className="px-4 py-2 text-[11px] text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
-                  Desktop notifications are blocked for this site — allow them in the browser's site settings.
-                </p>
-              )}
-              <div className="max-h-[60vh] overflow-y-auto divide-y divide-[var(--border-subtle)]">
-                {items.length === 0 && <p className="px-4 py-6 text-center text-xs text-[var(--text-muted)]">No notifications yet</p>}
-                {items.map((n) => (
-                  <button key={n.id} onClick={() => openOne(n.lead_id, n.read ? [] : [n.id])}
-                    className={`w-full text-left px-4 py-2.5 hover:bg-[var(--bg-card-hover)] cursor-pointer ${n.read ? "opacity-60" : ""}`}
-                    style={{ boxShadow: n.read ? undefined : `inset 3px 0 0 ${n.is_hot ? "#ef4444" : KIND_COLOR[n.kind]}` }}>
-                    <p className="text-xs font-semibold text-white flex items-center gap-1">
-                      {n.is_hot && <Flame size={12} className="text-rose-400 shrink-0" />}{n.title}
-                    </p>
-                    {n.body && <p className="text-[11px] text-[var(--text-secondary)] truncate">{n.body}</p>}
-                    <p className="text-[10px] text-[var(--text-muted)]">{n.created_at ? fmtRelative(n.created_at) : ""}</p>
-                  </button>
-                ))}
-              </div>
+              {panel}
             </div>
           </>
         )}
       </div>
 
-      {/* Live popups (top right) */}
-      <div className="fixed top-20 right-4 z-[110] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))]">
-        {popups.map((p) => (
-          <div key={p.key} role="alert"
-            className="rounded-xl border shadow-2xl px-4 py-3 flex items-start gap-3 cursor-pointer animate-in"
-            style={{ background: "var(--bg-card)", borderColor: p.hot ? "#ef444480" : "#3b82f680" }}
-            onClick={() => { openOne(p.leadId, p.ids); setPopups((x) => x.filter((y) => y.key !== p.key)); }}>
-            {p.hot ? <Flame size={18} className="text-rose-400 shrink-0 mt-0.5" /> : <BellRing size={18} className="text-blue-400 shrink-0 mt-0.5" />}
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white">{p.title}</p>
-              {p.body && <p className="text-[11px] text-[var(--text-secondary)] line-clamp-2">{p.body}</p>}
-              {p.leadId && <p className="text-[10px] text-blue-400 mt-0.5">Click to open the lead</p>}
-            </div>
-            <button onClick={(e) => { e.stopPropagation(); setPopups((x) => x.filter((y) => y.key !== p.key)); }}
-              className="text-[var(--text-muted)] hover:text-white cursor-pointer shrink-0"><X size={14} /></button>
+      {/* Phones/tablets: centred on screen. Rendered on <body> because the
+          header's backdrop blur would otherwise trap "fixed" inside it. */}
+      {open && !isDesktop && createPortal(
+        <>
+          <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
+          <div role="dialog" aria-label="Notifications"
+            className="fixed left-1/2 top-[72px] z-[101] w-[calc(100vw-1.5rem)] max-w-md -translate-x-1/2 rounded-xl border border-[var(--border-subtle)] shadow-2xl overflow-hidden"
+            style={{ background: "var(--bg-card)" }}>
+            {panel}
           </div>
-        ))}
-      </div>
+        </>,
+        document.body,
+      )}
+
+      {/* Live popups — top right on desktop, centred on phones/tablets. Also
+          on <body> so the header's backdrop blur can't trap them. */}
+      {createPortal(
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-4 z-[110] flex flex-col gap-2 w-[min(360px,calc(100vw-1.5rem))]">
+          {popups.map((p) => (
+            <div key={p.key} role="alert"
+              className="rounded-xl border shadow-2xl px-4 py-3 flex items-start gap-3 cursor-pointer animate-in"
+              style={{ background: "var(--bg-card)", borderColor: p.hot ? "#ef444480" : "#3b82f680" }}
+              onClick={() => { openOne(p.leadId, p.ids); setPopups((x) => x.filter((y) => y.key !== p.key)); }}>
+              {p.hot ? <Flame size={18} className="text-rose-400 shrink-0 mt-0.5" /> : <BellRing size={18} className="text-blue-400 shrink-0 mt-0.5" />}
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white">{p.title}</p>
+                {p.body && <p className="text-[11px] text-[var(--text-secondary)] line-clamp-2">{p.body}</p>}
+                {p.leadId && <p className="text-[10px] text-blue-400 mt-0.5">Click to open the lead</p>}
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); setPopups((x) => x.filter((y) => y.key !== p.key)); }}
+                className="text-[var(--text-muted)] hover:text-white cursor-pointer shrink-0"><X size={14} /></button>
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
     </>
   );
 }
