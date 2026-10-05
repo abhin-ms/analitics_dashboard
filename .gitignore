@@ -50,3 +50,6 @@ Thumbs.db
 *-service-account*.json
 service-account*.json
 backend/bp-analytics-sync-75ca3b0a13a4.json
+
+# Login credentials handout — keep out of git (contains passwords)
+BP_Analytics_Credentials.*
