@@ -23,6 +23,25 @@
     --accent-red: #ef4444;
     --accent-yellow: #f59e0b;
 
+    /* Sign-in pages (Login / Forgot / Set password) */
+    --auth-page-bg: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    --auth-card-bg: rgba(30, 41, 59, 0.7);
+    --auth-card-border: rgba(148, 163, 184, 0.15);
+    --auth-card-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+    --auth-logo-bg: #0f172a;
+    --auth-logo-border: rgba(255, 255, 255, 0.1);
+    --auth-title-grad: linear-gradient(90deg, #60a5fa, #a78bfa);
+    --auth-input-bg: rgba(15, 23, 42, 0.6);
+    --auth-input-border: rgba(148, 163, 184, 0.2);
+    --auth-text: #f1f5f9;
+    --auth-label: #e2e8f0;
+    --auth-code: #cbd5e1;
+    --auth-muted: #94a3b8;
+    --auth-link: #60a5fa;
+    --auth-link-hover: #93bbfd;
+    --auth-error: #f87171;
+    --auth-success: #34d399;
+
     color-scheme: dark;
   }
 
@@ -40,6 +59,24 @@
     --text-primary: #1c1c1f;
     --text-secondary: #52525b;
     --text-muted: #6b6b72;
+
+    --auth-page-bg: linear-gradient(135deg, #eeece5 0%, #f8f7f2 50%, #e9e6dc 100%);
+    --auth-card-bg: rgba(255, 255, 255, 0.85);
+    --auth-card-border: rgba(15, 23, 42, 0.08);
+    --auth-card-shadow: 0 25px 50px rgba(15, 23, 42, 0.12);
+    --auth-logo-bg: #ffffff;
+    --auth-logo-border: rgba(15, 23, 42, 0.08);
+    --auth-title-grad: linear-gradient(90deg, #2563eb, #7c3aed);
+    --auth-input-bg: #ffffff;
+    --auth-input-border: rgba(15, 23, 42, 0.15);
+    --auth-text: #1c1c1f;
+    --auth-label: #3f3f46;
+    --auth-code: #334155;
+    --auth-muted: #52525b;
+    --auth-link: #2563eb;
+    --auth-link-hover: #1d4ed8;
+    --auth-error: #dc2626;
+    --auth-success: #047857;
 
     color-scheme: light;
   }

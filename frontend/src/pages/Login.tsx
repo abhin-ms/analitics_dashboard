@@ -29,7 +29,7 @@ export default function Login() {
     <div
       style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)",
+        background: "var(--auth-page-bg)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -60,7 +60,7 @@ export default function Login() {
             <div
               style={{
                 position: "relative",
-                background: "#0f172a",
+                background: "var(--auth-logo-bg)",
                 borderRadius: "20px",
                 padding: "16px",
                 display: "flex",
@@ -68,17 +68,17 @@ export default function Login() {
                 justifyContent: "center",
                 width: "72px",
                 height: "72px",
-                border: "1px solid rgba(255,255,255,0.1)",
+                border: "1px solid var(--auth-logo-border)",
               }}
             >
-              <ShieldCheck size={36} style={{ color: "#60a5fa" }} />
+              <ShieldCheck size={36} style={{ color: "var(--auth-link)" }} />
             </div>
           </div>
           <h1
             style={{
               fontSize: "32px",
               fontWeight: 700,
-              background: "linear-gradient(90deg, #60a5fa, #a78bfa)",
+              background: "var(--auth-title-grad)",
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               marginBottom: "8px",
@@ -87,7 +87,7 @@ export default function Login() {
           >
             BP Analytics
           </h1>
-          <p style={{ color: "#94a3b8", fontSize: "14px" }}>
+          <p style={{ color: "var(--auth-muted)", fontSize: "14px" }}>
             Welcome back! Please sign in to your account
           </p>
         </div>
@@ -95,12 +95,12 @@ export default function Login() {
         {/* Login Form Card */}
         <div
           style={{
-            background: "rgba(30, 41, 59, 0.7)",
-            border: "1px solid rgba(148, 163, 184, 0.15)",
+            background: "var(--auth-card-bg)",
+            border: "1px solid var(--auth-card-border)",
             borderRadius: "24px",
             padding: "48px 40px",
             backdropFilter: "blur(20px)",
-            boxShadow: "0 25px 50px rgba(0,0,0,0.4)",
+            boxShadow: "var(--auth-card-shadow)",
           }}
         >
           <form onSubmit={handleSubmit}>
@@ -118,8 +118,8 @@ export default function Login() {
                   marginBottom: "32px",
                 }}
               >
-                <AlertCircle size={18} style={{ color: "#f87171", flexShrink: 0, marginTop: "2px" }} />
-                <span style={{ color: "#f87171", fontSize: "14px", fontWeight: 500 }}>{error}</span>
+                <AlertCircle size={18} style={{ color: "var(--auth-error)", flexShrink: 0, marginTop: "2px" }} />
+                <span style={{ color: "var(--auth-error)", fontSize: "14px", fontWeight: 500 }}>{error}</span>
               </div>
             )}
 
@@ -131,7 +131,7 @@ export default function Login() {
                   display: "block",
                   fontSize: "14px",
                   fontWeight: 600,
-                  color: "#e2e8f0",
+                  color: "var(--auth-label)",
                   marginBottom: "12px",
                 }}
               >
@@ -162,10 +162,10 @@ export default function Login() {
                     paddingTop: "16px",
                     paddingBottom: "16px",
                     fontSize: "15px",
-                    background: "rgba(15, 23, 42, 0.6)",
-                    border: "1px solid rgba(148, 163, 184, 0.2)",
+                    background: "var(--auth-input-bg)",
+                    border: "1px solid var(--auth-input-border)",
                     borderRadius: "16px",
-                    color: "#f1f5f9",
+                    color: "var(--auth-text)",
                     outline: "none",
                     transition: "border-color 0.3s, box-shadow 0.3s",
                     boxSizing: "border-box",
@@ -175,7 +175,7 @@ export default function Login() {
                     e.target.style.boxShadow = "0 0 0 3px rgba(59,130,246,0.15)";
                   }}
                   onBlur={(e) => {
-                    e.target.style.borderColor = "rgba(148, 163, 184, 0.2)";
+                    e.target.style.borderColor = "var(--auth-input-border)";
                     e.target.style.boxShadow = "none";
                   }}
                 />
@@ -190,7 +190,7 @@ export default function Login() {
                   display: "block",
                   fontSize: "14px",
                   fontWeight: 600,
-                  color: "#e2e8f0",
+                  color: "var(--auth-label)",
                   marginBottom: "12px",
                 }}
               >
@@ -221,10 +221,10 @@ export default function Login() {
                     paddingTop: "16px",
                     paddingBottom: "16px",
                     fontSize: "15px",
-                    background: "rgba(15, 23, 42, 0.6)",
-                    border: "1px solid rgba(148, 163, 184, 0.2)",
+                    background: "var(--auth-input-bg)",
+                    border: "1px solid var(--auth-input-border)",
                     borderRadius: "16px",
-                    color: "#f1f5f9",
+                    color: "var(--auth-text)",
                     outline: "none",
                     transition: "border-color 0.3s, box-shadow 0.3s",
                     boxSizing: "border-box",
@@ -234,7 +234,7 @@ export default function Login() {
                     e.target.style.boxShadow = "0 0 0 3px rgba(59,130,246,0.15)";
                   }}
                   onBlur={(e) => {
-                    e.target.style.borderColor = "rgba(148, 163, 184, 0.2)";
+                    e.target.style.borderColor = "var(--auth-input-border)";
                     e.target.style.boxShadow = "none";
                   }}
                 />
@@ -247,13 +247,13 @@ export default function Login() {
                 to="/forgot-password"
                 style={{
                   fontSize: "14px",
-                  color: "#60a5fa",
+                  color: "var(--auth-link)",
                   textDecoration: "none",
                   fontWeight: 500,
                   transition: "color 0.2s",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "#93bbfd")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "#60a5fa")}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--auth-link-hover)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--auth-link)")}
               >
                 Forgot password?
               </Link>

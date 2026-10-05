@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import Globe, { GlobeMethods } from "react-globe.gl";
 import { Globe as GlobeIcon, ArrowLeft, MapPin } from "lucide-react";
 import { formatByCountry as fmtByCountry } from "@/lib/formatMoney";
+import { useAppliedTheme } from "@/lib/theme";
 
 export interface GlobeBranch {
   shop: string;
@@ -181,9 +182,11 @@ function spreadOverlaps<T extends { lat: number; lng: number }>(items: T[], radi
   return out;
 }
 
-/** Opening view: zoomed on the region that holds most branches. Countries
- * far from it (e.g. a single UK branch) stay reachable from their chip
- * instead of forcing the whole map out to a tiny globe. */
+/** Opening view: centred on the region that holds most branches, far enough
+ * out that the whole globe fits the 560px box (camera fov 50° → the sphere
+ * fits from altitude ≈1.37), so it never shows as a dark ball sliced off at
+ * the top and bottom and no country pin falls outside the box. Countries
+ * far from the centre (e.g. a single UK branch) stay reachable from their chip. */
 function fitView(countries: string[], counts: Record<string, number>) {
   const all = countries.filter((c) => COUNTRY_CENTERS[c]);
   if (!all.length) return { lat: 20, lng: 70, altitude: 1.6 };
@@ -200,9 +203,35 @@ function fitView(countries: string[], counts: Record<string, number>) {
   return {
     lat: (Math.max(...lats) + Math.min(...lats)) / 2,
     lng: (Math.max(...lngs) + Math.min(...lngs)) / 2,
-    altitude: Math.min(2.2, Math.max(0.75, span / 30)),
+    altitude: Math.min(2.2, Math.max(HOME_ALTITUDE, span / 30)),
   };
 }
+const HOME_ALTITUDE = 1.45;
+const PIN_ALTITUDE = 0.035;
+
+// Label pill colours per theme; the globe image and borders follow too.
+const PILL = {
+  dark: { bg: "rgba(17,19,30,0.92)", text: "#fff", border: "rgba(255,255,255,0.08)", dotRing: "rgba(17,19,30,0.9)" },
+  light: { bg: "rgba(255,255,255,0.96)", text: "#1c1c1f", border: "rgba(15,23,42,0.12)", dotRing: "#ffffff" },
+};
+
+/** Vertical nudges (px) that stop country labels drawn on top of each other
+ * (Bahrain / Qatar / UAE / Oman sit within a few degrees). Greedy: place
+ * labels top to bottom; a label that hits an already placed one moves down
+ * until it's clear. */
+function spreadLabels(items: { key: string; x: number; y: number; w: number }[], h = 24, gap = 4) {
+  const placed: { x: number; y: number; w: number }[] = [];
+  const dy: Record<string, number> = {};
+  for (const it of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    let y = it.y;
+    const hit = () => placed.some((p) => Math.abs(p.x - it.x) < (p.w + it.w) / 2 + gap && Math.abs(p.y - y) < h + gap);
+    for (let i = 0; i < 12 && hit(); i++) y += h + gap;
+    placed.push({ x: it.x, y, w: it.w });
+    dy[it.key] = Math.round(y - it.y);
+  }
+  return dy;
+}
+
 const COUNTRIES_URL =
   "https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson";
 
@@ -214,6 +243,9 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [hoverCountry, setHoverCountry] = useState<CountryFeature | null>(null);
   const [selectedStore, setSelectedStore] = useState<(GlobeBranch & { lat: number; lng: number }) | null>(null);
+  const [labelDy, setLabelDy] = useState<Record<string, number>>({});
+  const theme = useAppliedTheme();
+  const pill = PILL[theme];
 
   const branchCountries = useMemo(() => {
     const set = new Set<string>();
@@ -338,19 +370,46 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
     });
   }, [branches, branchCountryList, selectedCountry]);
 
+  // Work out label nudges for the world view from where each pin lands on
+  // screen. Re-run when the view, the box size or the data changes.
+  useEffect(() => {
+    if (selectedCountry) return;
+    const t = window.setTimeout(() => {
+      const g = globeRef.current;
+      if (!g) return;
+      const items = countryMarkers.map((c) => {
+        const pt = g.getScreenCoords(c.lat, c.lng, PIN_ALTITUDE);
+        const label = `${c.country}${c.pct !== null ? ` · ${c.pct.toFixed(0)}%` : ""}`;
+        return { key: c.country, x: pt.x, y: pt.y, w: 34 + label.length * 6.6 };
+      });
+      setLabelDy(spreadLabels(items));
+    }, 60);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCountry, homeView, size.width, size.height, countries.length, branches]);
+
   const makeCountryEl = useCallback((d: object) => {
     const c = d as { country: string; count: number; pct: number | null; lat: number; lng: number };
     const color = COUNTRY_COLORS[c.country] || "#3b82f6";
+    const dy = labelDy[c.country] || 0;
     const el = document.createElement("div");
     el.dataset.lat = String(c.lat);
     el.dataset.lng = String(c.lng);
     el.style.cursor = "pointer";
-    el.style.transform = "translate(-50%, -50%)";
+    // A 0×0 box at the country's real position: the pill hangs off it, moved
+    // down by dy when it would cover another label, with a thin leader line
+    // and a dot marking where the country actually is.
+    el.style.width = "0";
+    el.style.height = "0";
+    el.style.position = "relative";
     el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 4px;border-radius:9999px;
-        background:rgba(17,19,30,0.92);border:1px solid ${color};box-shadow:0 0 10px ${color}66;
-        font-size:11px;font-weight:600;color:#fff;white-space:nowrap;font-family:inherit;">
-        <span style="min-width:18px;height:18px;border-radius:9999px;background:${color};display:inline-flex;
+      ${dy ? `<div style="position:absolute;left:-1px;top:0;width:2px;height:${dy}px;background:${color};opacity:0.7;"></div>
+        <div style="position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:9999px;background:${color};
+          box-shadow:0 0 0 2px ${pill.dotRing};"></div>` : ""}
+      <div style="position:absolute;left:0;top:${dy}px;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;
+        padding:3px 8px 3px 4px;border-radius:9999px;background:${pill.bg};border:1px solid ${color};
+        box-shadow:0 0 10px ${color}55;font-size:11px;font-weight:600;color:${pill.text};white-space:nowrap;font-family:inherit;">
+        <span style="min-width:18px;height:18px;border-radius:9999px;background:${color};display:inline-flex;color:#fff;
           align-items:center;justify-content:center;font-size:10px;padding:0 4px;">${c.count}</span>
         ${c.country}${c.pct !== null ? ` · <span style="color:${ragColor(c.pct)}">${c.pct.toFixed(0)}%</span>` : ""}
       </div>`;
@@ -359,7 +418,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
       flyToCountry(c.country);
     };
     return el;
-  }, [flyToCountry]);
+  }, [flyToCountry, labelDy, pill]);
 
   const makeMarkerEl = useCallback((d: object) => {
     const branch = d as GlobeBranch & { lat: number; lng: number };
@@ -377,12 +436,12 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
         width:10px;height:10px;border-radius:9999px;
         background:${color};
         box-shadow:0 0 0 3px ${color}33, 0 0 8px ${color};
-        border:1.5px solid rgba(17,19,30,0.9);
+        border:1.5px solid ${pill.dotRing};
       "></div>
       <div style="
         margin-top:4px;padding:2px 6px;border-radius:6px;
-        background:rgba(17,19,30,0.92);border:1px solid rgba(255,255,255,0.08);
-        font-size:10px;font-weight:600;color:#fff;white-space:nowrap;
+        background:${pill.bg};border:1px solid ${pill.border};
+        font-size:10px;font-weight:600;color:${pill.text};white-space:nowrap;
         font-family:inherit;
       ">${shortStore(branch.shop)} · ${branch.achievement_pct.toFixed(0)}%</div>
     `;
@@ -391,7 +450,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
       setSelectedStore(d as GlobeBranch & { lat: number; lng: number });
     };
     return el;
-  }, []);
+  }, [pill]);
 
   return (
     <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 sm:p-6 min-w-0">
@@ -440,7 +499,10 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
           width={size.width}
           height={size.height}
           backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+          globeImageUrl={theme === "light"
+            ? "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+            : "//unpkg.com/three-globe/example/img/earth-night.jpg"}
+          atmosphereColor={theme === "light" ? "#7cb4f5" : "lightskyblue"}
           polygonsData={countries}
           polygonAltitude={(f: object) => (countryForFeature(f as CountryFeature) ? 0.02 : 0.006)}
           polygonCapColor={(f: object) => {
@@ -451,18 +513,20 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
               const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
               return `rgba(${r},${g},${b},0.65)`;
             }
-            if (feat === hoverCountry) return "rgba(255,255,255,0.12)";
-            return "rgba(255,255,255,0.04)";
+            if (feat === hoverCountry) return theme === "light" ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.12)";
+            return theme === "light" ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)";
           }}
           polygonSideColor={() => "rgba(0,0,0,0.2)"}
-          polygonStrokeColor={(f: object) => (countryForFeature(f as CountryFeature) ? "#60a5fa" : "#1f2430")}
+          polygonStrokeColor={(f: object) => (countryForFeature(f as CountryFeature)
+            ? (theme === "light" ? "#1d4ed8" : "#60a5fa")
+            : (theme === "light" ? "rgba(15,23,42,0.35)" : "#1f2430"))}
           polygonLabel={(f: object) => (f as CountryFeature).properties?.NAME || ""}
           onPolygonHover={(f: object | null) => setHoverCountry(f as CountryFeature | null)}
           onPolygonClick={handlePolygonClick}
           htmlElementsData={selectedCountry ? storeMarkers : countryMarkers}
           htmlLat={(d: object) => (d as { lat: number }).lat}
           htmlLng={(d: object) => (d as { lng: number }).lng}
-          htmlAltitude={0.035}
+          htmlAltitude={PIN_ALTITUDE}
           htmlTransitionDuration={0}
           // Keep every pin in the page and just fade the ones on the far side.
           // The library's default hides them outright, and it misjudged pins
@@ -486,7 +550,7 @@ export default function BranchGlobe({ branches }: BranchGlobeProps) {
         />
 
         {selectedStore && (
-          <div className="absolute top-3 left-3 w-56 rounded-xl border border-[var(--border-subtle)] bg-[#11131e]/95 backdrop-blur p-3 shadow-xl">
+          <div className="absolute top-3 left-3 w-56 rounded-xl border border-[var(--border-subtle)] backdrop-blur p-3 shadow-xl" style={{ background: "var(--bg-glass)" }}>
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-bold text-white">{shortStore(selectedStore.shop)}</span>
               <button onClick={() => setSelectedStore(null)} className="text-[var(--text-muted)] hover:text-white text-xs">
