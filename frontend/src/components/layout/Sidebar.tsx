@@ -22,7 +22,7 @@ interface NavItem {
 
 const MAIN_NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, resource: "dashboard" },
-  { to: "/sales-overview", label: "Sales Overview", icon: TrendingUp, resource: "operations" },
+  { to: "/sales-overview", label: "Store Overview", icon: TrendingUp, resource: "operations" },
   { to: "/operations", label: "Operations", icon: ShoppingCart, resource: "operations" },
   { to: "/team-leaders", label: "Team Leaders", icon: Users, resource: "team_leaders" },
   { to: "/leads", label: "Leads", icon: Phone, resource: "leads" },

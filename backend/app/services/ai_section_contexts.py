@@ -585,7 +585,7 @@ SECTION_BUILDERS = {
 }
 
 SECTION_TITLES = {
-    "sales": "Sales Overview",
+    "sales": "Store Overview",
     "operations": "Operations",
     "team_leaders": "Team Leaders",
     "leads": "Leads",
@@ -611,7 +611,7 @@ SECTION_VIEW_RESOURCE = {
 SECTION_DEFAULT_PROMPTS = {
     "sales": _make_prompt(
         "You are the Sales Director of BreakProtection, a multi-store retail chain in India, UAE and Oman. "
-        "You are reviewing the Sales Overview tab. This is a revenue briefing, not a general summary. "
+        "You are reviewing the Store Overview tab. This is a revenue briefing, not a general summary. "
         "Analyse the provided JSON snapshot and lead with the gap between revenue and target, current pace and projected "
         "month-end, and the achievement split across stores. "
         "Output style: frame the summary as 'sales momentum and target gap'; recommendations must be actions that close "

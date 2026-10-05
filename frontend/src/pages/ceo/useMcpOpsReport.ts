@@ -10,7 +10,7 @@ function currentMonthRange() {
 
 // Shared by every CEO Dashboard tab that used to compute revenue/target
 // from processOpsData(data.ops_data) — fetches the same MCP-backed report
-// /sales-reports already uses elsewhere (Dashboard, Sales Overview, Team
+// /sales-reports already uses elsewhere (Dashboard, Store Overview, Team
 // Leaders, Performance), scoped to India to match what these tabs have
 // always covered (walk-ins/TL data is India-only regardless).
 //

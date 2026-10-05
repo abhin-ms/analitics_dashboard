@@ -8,7 +8,7 @@ import { NotificationBell } from "@/features/crm/components/NotificationBell";
 
 const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/dashboard": { title: "Dashboard", subtitle: "Overview & Key Business Metrics" },
-  "/sales-overview": { title: "Sales Overview", subtitle: "Retail Store Performance" },
+  "/sales-overview": { title: "Store Overview", subtitle: "Retail Store Performance" },
   "/operations": { title: "Daily Operations", subtitle: "Daily Submissions & Metrics" },
   "/operations/submit": { title: "New Submission", subtitle: "Log Daily Store Operations" },
   "/team-leaders": { title: "Team Leaders", subtitle: "Leader Performance & Target Tracking" },

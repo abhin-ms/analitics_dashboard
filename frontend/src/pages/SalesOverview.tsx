@@ -183,7 +183,7 @@ export default function SalesOverview() {
   return (
     <ErrorBoundary>
       {tab === "analytics" ? (
-        <AISummary section="sales" title="Sales Overview AI Summary" />
+        <AISummary section="sales" title="Store Overview AI Summary" />
       ) : (
         <div className="space-y-6">
 
