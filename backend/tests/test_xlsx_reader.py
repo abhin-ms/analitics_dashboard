@@ -64,7 +64,10 @@ def test_hand_typed_numbers():
 def test_normalize_tracker_date():
     assert normalize_tracker_date("01 to 31-Aug-2026") == "2026-08-31"
     assert normalize_tracker_date("1 - 15 Sep 2026") == "2026-09-15"
+    assert normalize_tracker_date("01 to 31-Sept-2026") == "2026-09-30"  # Sept has 30 days
+    assert normalize_tracker_date("01 to 30-Feb-2028") == "2028-02-29"
     assert normalize_tracker_date("15-Aug-2026") == "2026-08-15"
+    assert normalize_tracker_date("15-Sept-2026") == "2026-09-15"
     assert normalize_tracker_date(datetime(2026, 8, 5)) == "2026-08-05"
     assert normalize_tracker_date("2026-08-05") == "2026-08-05"
     assert normalize_tracker_date(None) == ""

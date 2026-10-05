@@ -106,6 +106,7 @@ async def get_sales_report(
     country: Optional[str] = None,
     region: Optional[str] = None,
     group_by: str = "none",
+    store_ids: Optional[list[int]] = None,
 ) -> dict:
     if granularity not in ("day", "week", "month"):
         granularity = "month"
@@ -124,6 +125,8 @@ async def get_sales_report(
         store_q = store_q.where(Store.team_leader_id == team_leader_id)
     if store_id is not None:
         store_q = store_q.where(Store.id == store_id)
+    if store_ids is not None:
+        store_q = store_q.where(Store.id.in_(store_ids or [-1]))
     if country:
         store_q = store_q.where(Store.country == country)
     if region:

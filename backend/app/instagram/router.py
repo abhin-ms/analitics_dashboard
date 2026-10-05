@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from ..db.session import get_db
 from ..core.deps import require_permission, get_current_user
-from ..models.models import User
+from ..models.models import Lead, User
 from .models import (
     IGAccount, IGConversation, IGMessage, IGComment,
     IGCommentRule, AIProvider, AIUsageLog, IGBotSettings,

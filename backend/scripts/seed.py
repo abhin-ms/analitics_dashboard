@@ -64,6 +64,9 @@ ROLE_PERMISSIONS = {
         "dashboard": {"view"}, "operations": {"view", "create"},
         "leads": {"view", "create"}, "tasks": {"view"},
     },
+    "Store Owner": {
+        "dashboard": {"view"},
+    },
     "Telecaller": {
         "dashboard": {"view"}, "leads": {"view", "create", "edit"},
         "operations": {"view"},

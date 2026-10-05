@@ -25,6 +25,8 @@ from .crm_admin import router as crm_admin_router
 from .public_leads import router as public_leads_router
 from .meta_webhook import router as meta_webhook_router
 from .notifications import router as notifications_router
+from .social import router as social_router
+from .store_owner import router as store_owner_router
 from ...instagram.router import router as instagram_router
 from ...instagram.webhook_handler import router as instagram_webhook_router
 from ...instagram.form_router import router as instagram_form_router
@@ -57,6 +59,8 @@ api_router.include_router(crm_admin_router)
 api_router.include_router(public_leads_router)
 api_router.include_router(meta_webhook_router)
 api_router.include_router(notifications_router)
+api_router.include_router(social_router)
+api_router.include_router(store_owner_router)
 api_router.include_router(instagram_webhook_router)
 api_router.include_router(instagram_router)
 api_router.include_router(instagram_form_router)

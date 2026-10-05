@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { statusColor } from "@/features/crm/statusConfig";
 import { TeamCrmPanel } from "@/features/crm/components/DashboardPanels";
+import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { PeriodKey, periodRange } from "@/features/crm/components/shared";
 
 const COLORS = ["#3b82f6", "#10b981", "#a855f7", "#f97316", "#ec4899", "#06b6d4", "#f59e0b", "#ef4444"];
@@ -59,6 +60,9 @@ export default function TeamLeaderDashboard() {
 
         {/* Telecalling: team queue, status, status-by-telecaller, performance (new) */}
         <TeamCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
+
+        {/* Social media + Google reviews for the stores this leader manages */}
+        <SocialSnapshotCard />
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

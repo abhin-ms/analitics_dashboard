@@ -41,6 +41,13 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/crm/automation": { title: "Automation", subtitle: "Telecalling · contact workflow rules" },
   "/crm/pricing": { title: "Pricing", subtitle: "Telecalling · phone model price book" },
   "/settings/crm": { title: "Telecalling Settings", subtitle: "Access, integrations and data quality" },
+  "/social-performance": { title: "Social Performance", subtitle: "Social media, Google reviews & sheet updates" },
+  "/stock-position": { title: "Stock Position", subtitle: "Branch stock from MCP" },
+  "/country-comparison": { title: "Country Comparison", subtitle: "Sales by country" },
+  "/sales-reports": { title: "Sales Reports", subtitle: "Revenue by period, branch and team leader" },
+  "/settings/branch-assignment": { title: "Team Leaders & Branches", subtitle: "Who leads which store" },
+  "/settings/sheet-assignments": { title: "Sheet Assignments", subtitle: "City sheets per person" },
+  "/settings/social-targets": { title: "Social Targets", subtitle: "Monthly views target per store" },
 };
 
 export function Header() {
@@ -49,6 +56,9 @@ export function Header() {
   const toggleMobileMenu = useUIStore((s) => s.toggleMobileMenu);
   const location = useLocation();
   const [isMd, setIsMd] = useState(false);
+  // Role badge, name block and the "Logout" label only fit next to the
+  // sidebar on wide screens; below that the avatar's tooltip carries them.
+  const [isWide, setIsWide] = useState(false);
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
@@ -56,7 +66,14 @@ export function Header() {
     const handler = (e: MediaQueryListEvent | MediaQueryList) => setIsMd(e.matches);
     handler(mql);
     mql.addEventListener("change", handler as (e: MediaQueryListEvent) => void);
-    return () => mql.removeEventListener("change", handler as (e: MediaQueryListEvent) => void);
+    const wide = window.matchMedia("(min-width: 1280px)");
+    const wideHandler = (e: MediaQueryListEvent | MediaQueryList) => setIsWide(e.matches);
+    wideHandler(wide);
+    wide.addEventListener("change", wideHandler as (e: MediaQueryListEvent) => void);
+    return () => {
+      mql.removeEventListener("change", handler as (e: MediaQueryListEvent) => void);
+      wide.removeEventListener("change", wideHandler as (e: MediaQueryListEvent) => void);
+    };
   }, []);
 
   const currentRoute = ROUTE_MAP[location.pathname]
@@ -92,12 +109,13 @@ export function Header() {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 24px",
+        padding: isMd ? "0 24px" : "0 12px",
+        gap: isMd ? "16px" : "8px",
         flexShrink: 0,
       }}
     >
       {/* Left: Mobile Menu + Page Title */}
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMd ? "12px" : "8px", minWidth: 0, flex: 1 }}>
         {!isMd && (
           <button
             onClick={toggleMobileMenu}
@@ -119,18 +137,21 @@ export function Header() {
           </button>
         )}
 
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-muted)", fontWeight: 500 }}>
-            <span>BP Analytics</span>
-            <ChevronRight size={12} style={{ color: "var(--text-muted)" }} />
-            <span style={{ color: "var(--accent-blue)", fontWeight: 600 }}>{currentRoute.title}</span>
-          </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          {/* Breadcrumb only where there's room for it; phones show just the title. */}
+          {isMd && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--text-muted)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden" }}>
+              <span>BP Analytics</span>
+              <ChevronRight size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              <span style={{ color: "var(--accent-blue)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{currentRoute.title}</span>
+            </div>
+          )}
           {hasTabs ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "16px", marginTop: "2px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: isMd ? "16px" : "12px", marginTop: isMd ? "2px" : 0, whiteSpace: "nowrap", overflow: "hidden" }}>
               <button
                 onClick={() => setSearchParams({ tab: mainTabId })}
                 style={{
-                  fontSize: "18px",
+                  fontSize: isMd ? "18px" : "16px",
                   fontWeight: 700,
                   color: currentTab === mainTabId ? "var(--text-primary)" : "var(--text-muted)",
                   background: "none",
@@ -147,7 +168,7 @@ export function Header() {
               <button
                 onClick={() => setSearchParams({ tab: secondTabId })}
                 style={{
-                  fontSize: "18px",
+                  fontSize: isMd ? "18px" : "16px",
                   fontWeight: 700,
                   color: currentTab === secondTabId ? "var(--text-primary)" : "var(--text-muted)",
                   background: "none",
@@ -165,7 +186,7 @@ export function Header() {
           ) : (
             <h1
               style={{
-                fontSize: "18px",
+                fontSize: isMd ? "18px" : "16px",
                 fontWeight: 700,
                 color: "var(--text-primary)",
                 letterSpacing: "-0.01em",
@@ -183,7 +204,7 @@ export function Header() {
       </div>
 
       {/* Right: User Info & Logout */}
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: isMd ? "12px" : "6px", flexShrink: 0 }}>
         <NotificationBell />
         <button
           onClick={toggleTheme}
@@ -205,7 +226,7 @@ export function Header() {
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
 
-        {user?.role_name && (
+        {isWide && user?.role_name && (
           <span
             style={{
               fontSize: "12px",
@@ -224,9 +245,10 @@ export function Header() {
         )}
 
         <div
+          title={user ? `${user.name} · ${user.role_name}` : undefined}
           style={{
-            width: "36px",
-            height: "36px",
+            width: isMd ? "36px" : "32px",
+            height: isMd ? "36px" : "32px",
             borderRadius: "50%",
             background: "linear-gradient(135deg, #3b82f6, #6366f1)",
             display: "flex",
@@ -242,7 +264,7 @@ export function Header() {
           {user?.name ? user.name.charAt(0).toUpperCase() : <User size={16} />}
         </div>
 
-        <div className="hidden sm:flex" style={{ flexDirection: "column" }}>
+        <div style={{ display: isWide ? "flex" : "none", flexDirection: "column" }}>
           <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.3 }}>
             {user?.name || "User"}
           </span>
@@ -257,7 +279,7 @@ export function Header() {
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            padding: "6px 12px",
+            padding: isWide ? "6px 12px" : "8px",
             fontSize: "12px",
             fontWeight: 500,
             borderRadius: "8px",
@@ -281,7 +303,7 @@ export function Header() {
           title="Sign out"
         >
           <LogOut size={15} />
-          <span className="hidden md:inline">Logout</span>
+          {isWide && <span>Logout</span>}
         </button>
       </div>
     </header>

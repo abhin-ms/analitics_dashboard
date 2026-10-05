@@ -63,7 +63,7 @@ export function BarRow({ label, pct, color, value, tip, refPct }: {
   return (
     <Tip content={tip}>
       <div className="grid grid-cols-[minmax(90px,140px)_1fr_56px] items-center gap-2 rounded-md px-1 py-[3px] text-xs hover:bg-[var(--bg-card-hover)]">
-        <span className="truncate text-[var(--text-secondary)]">{label}</span>
+        <span className="min-w-0 truncate text-[var(--text-secondary)]" title={label}>{label}</span>
         <span className="relative h-3.5">
           <b
             className="absolute inset-y-0 left-0 rounded-r"

@@ -15,11 +15,14 @@ import {
 } from "recharts";
 import { STATUS_COLORS } from "@/features/crm/statusConfig";
 import { TelecallerCrmPanel } from "@/features/crm/components/DashboardPanels";
+import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
+import { useAuthStore } from "@/lib/authStore";
 import { PeriodKey, periodRange } from "@/features/crm/components/shared";
 import { openLead } from "@/features/crm/components/LeadDrawer";
 const COLORS = ["#10b981", "#3b82f6", "#a855f7", "#f59e0b", "#ef4444", "#64748b", "#6b7280", "#374151"];
 
 export default function TelecallerDashboard() {
+  const role = useAuthStore((s) => s.user?.role_name);
   // "All time" by default, so the original numbers below stay as they were.
   const [periodKey, setPeriodKey] = useState<PeriodKey>("all");
   const [custom, setCustom] = useState(() => periodRange("month"));
@@ -49,6 +52,9 @@ export default function TelecallerDashboard() {
 
         {/* Telecalling: today queue, lead status, my numbers (new) */}
         <TelecallerCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
+
+        {/* A salesperson works in one store: show that store's social media + Google reviews */}
+        {role === "Salesperson" && <SocialSnapshotCard />}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">

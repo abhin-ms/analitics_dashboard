@@ -1,4 +1,5 @@
 """Download and parse .xlsx files from Google Drive using service account."""
+import calendar
 import io
 import os
 import re
@@ -120,6 +121,9 @@ _DAILY_INPUT_COLUMNS: dict[str, tuple[Optional[str], tuple[str, ...], str]] = {
     "tt_followers": ("TIKTOK", ("followers",), "int"),
     "sc_views": ("SNAPCHAT", ("views",), "int"),
     "sc_shares": ("SNAPCHAT", ("shares",), "int"),
+    # Not in the sheet yet — picked up as soon as a FACEBOOK section with a
+    # "Views" column is added to Daily Input.
+    "fb_views": ("FACEBOOK", ("views",), "int"),
     "wa_chats_received": ("WHATSAPP", ("overall wa chats", "wa chats"), "int"),
     "wa_walkins_booked": (None, ("walkins booked", "walk-ins booked"), "int"),
     "google_rating": (None, ("google rating",), "num"),
@@ -190,12 +194,13 @@ def normalize_tracker_date(val) -> str:
     if isinstance(val, date):
         return val.isoformat()
     s = str(val).strip()
-    m = re.match(r"^\d{1,2}\s*(?:to|-|–)\s*(\d{1,2})[\s/-]+([A-Za-z]{3,})[\s/-]+(\d{4})$", s, re.I)
+    m = re.match(r"^(?:\d{1,2}\s*(?:to|-|–)\s*)?(\d{1,2})[\s/-]+([A-Za-z]{3,})[\s/-]+(\d{4})$", s, re.I)
     if m and m.group(2)[:3].lower() in _MONTHS:
-        try:
-            return date(int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1))).isoformat()
-        except ValueError:
-            return s
+        year, month = int(m.group(3)), _MONTHS[m.group(2)[:3].lower()]
+        # "01 to 31-Sept-2026": a month-end typed as 31 for a 30-day month
+        # still means the last day of that month.
+        day = min(int(m.group(1)), calendar.monthrange(year, month)[1])
+        return date(year, month, day).isoformat() if day >= 1 else s
     for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%B-%Y", "%d %b %Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(s, fmt).date().isoformat()

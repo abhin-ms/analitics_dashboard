@@ -8,7 +8,7 @@ import {
   DollarSign, TrendingUp, X, ChevronLeft, ChevronRight, ShieldCheck,
   Camera, MessageCircle, Shield, Table, Settings2, ChevronDown,
   RefreshCw, Brain, Package, Globe, PhoneCall, MapPin,
-  Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset, Share2,
+  Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset, Share2, Target,
 } from "lucide-react";
 
 interface NavItem {
@@ -55,6 +55,7 @@ const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/branch-assignment", label: "Team Leaders & Branches", icon: MapPin, resource: "settings" },
   { to: "/settings/sheet-assignments", label: "Sheet Assignments", icon: PhoneCall, resource: "leads" },
   { to: "/settings/kpi-weights", label: "KPI Weights", icon: BarChart3, resource: "settings" },
+  { to: "/settings/social-targets", label: "Social Targets", icon: Target, resource: "settings" },
   { to: "/settings/data-sync", label: "Data Sync", icon: RefreshCw, resource: "settings" },
   { to: "/settings/currency", label: "Currency", icon: DollarSign, resource: "settings" },
   { to: "/settings/instagram-forms", label: "Instagram Forms", icon: FileText, resource: "settings" },
@@ -243,6 +244,9 @@ export function Sidebar() {
   const role = user?.role_name || "";
   const isTelecaller = role === "Telecaller";
   const isTeamLeader = role === "Team Leader";
+  // Store accounts only see their own store(s); the company-wide pages
+  // behind the "dashboard" permission would just 403 for them.
+  const isStoreAccount = role === "Store Owner" || role === "Store Staff";
 
   const [igOpen, setIgOpen] = useState(() => location.pathname.startsWith("/instagram"));
   const [settingsOpen, setSettingsOpen] = useState(() => location.pathname.startsWith("/settings"));
@@ -253,13 +257,14 @@ export function Sidebar() {
   // a Team Leader has their own scoped dashboard/leads-update pages instead.
   // "/leads" is the tabbed telecalling Leads page (role-scoped), so team
   // leaders and telecallers see it too.
-  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance", "/social-performance"];
+  const HIDDEN_FOR_TL = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/reports", "/performance"];
   const HIDDEN_FOR_TELECALLER = ["/operations", "/stock-position", "/country-comparison", "/investments", "/instagram", "/sales-overview", "/sales-reports", "/team-leaders", "/campaigns", "/tasks", "/performance", "/reports", "/social-performance"];
 
   const visibleMainItems = MAIN_NAV_ITEMS.filter((item) => {
     if (!hasPermission(item.resource, "view")) return false;
     if (isTelecaller) return !HIDDEN_FOR_TELECALLER.includes(item.to);
     if (isTeamLeader) return !HIDDEN_FOR_TL.includes(item.to);
+    if (isStoreAccount) return !HIDDEN_FOR_TL.includes(item.to);
     return true;
   });
   const visibleIgItems = isTelecaller || isTeamLeader ? [] : INSTAGRAM_NAV_ITEMS.filter((item) =>

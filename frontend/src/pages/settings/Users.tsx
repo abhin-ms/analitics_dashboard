@@ -10,8 +10,8 @@ const EMPTY_FORM = { name: "", email: "", password: "", role_id: "", store_ids: 
 
 // Which store/manager control (if any) a role should show in the create/edit form.
 function roleFieldKind(roleName: string): "none" | "tl-note" | "rm-multi" | "single" {
-  if (roleName === "Regional Manager") return "rm-multi";
-  if (roleName === "Telecaller" || roleName === "Salesperson") return "single";
+  if (roleName === "Regional Manager" || roleName === "Store Owner") return "rm-multi";
+  if (roleName === "Telecaller" || roleName === "Salesperson" || roleName === "Store Staff") return "single";
   if (roleName === "Team Leader") return "tl-note";
   return "none";
 }
@@ -581,7 +581,7 @@ function RoleScopedFields({
     );
   }
 
-  // kind === "single" (Telecaller / Salesperson)
+  // kind === "single" (Telecaller / Salesperson / Store Staff)
   return (
     <div className={compact ? "flex flex-col gap-1" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
       <select value={storeId} onChange={(e) => onStoreIdChange(e.target.value)} className={inputCls}>

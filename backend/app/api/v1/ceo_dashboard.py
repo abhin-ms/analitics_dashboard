@@ -851,48 +851,8 @@ async def _get_daily_tracker(db: AsyncSession, month: str = None, start: str = N
         .where(DailyStoreTracker.date >= start_date, DailyStoreTracker.date <= end_date)
         .order_by(DailyStoreTracker.date.desc())
     )
-    rows = result.scalars().all()
-    return [
-        {
-            "date": r.date,
-            "store": r.store_name,
-            "country": r.country,
-            "store_type": r.store_type,
-            "daily_revenue": float(r.daily_revenue or 0),
-            "monthly_target": float(r.monthly_target or 0),
-            "mtd_revenue": float(r.mtd_revenue or 0),
-            "units_sold": r.units_sold,
-            "care_plus_attached": r.care_plus_attached,
-            "prebookings": r.prebookings,
-            "ig_videos_posted": r.ig_videos_posted,
-            "ig_views_target": float(r.ig_views_target or 0),
-            "ig_views_achieved": float(r.ig_views_achieved or 0),
-            "ig_followers": r.ig_followers,
-            "ig_new_followers": r.ig_new_followers,
-            "ig_likes": r.ig_likes,
-            "ig_comments": r.ig_comments,
-            "ig_saves": r.ig_saves,
-            "ig_shares": r.ig_shares,
-            "ig_reposts": r.ig_reposts,
-            "ig_dms_received": r.ig_dms_received,
-            "ig_manychat_handled": r.ig_manychat_handled,
-            "ig_posts_published": r.ig_posts_published,
-            "yt_views": r.yt_views,
-            "yt_likes": r.yt_likes,
-            "yt_comments": r.yt_comments,
-            "tt_views": r.tt_views,
-            "tt_likes": r.tt_likes,
-            "tt_followers": r.tt_followers,
-            "sc_views": r.sc_views,
-            "sc_shares": r.sc_shares,
-            "wa_chats_received": r.wa_chats_received,
-            "wa_walkins_booked": r.wa_walkins_booked,
-            "google_rating": r.google_rating,
-            "google_new_reviews": r.google_new_reviews,
-            "google_review_response": r.google_review_response,
-        }
-        for r in rows
-    ]
+    from .social import tracker_row_dict
+    return [tracker_row_dict(r) for r in result.scalars().all()]
 
 
 async def _get_tracker_months(db: AsyncSession) -> list[str]:

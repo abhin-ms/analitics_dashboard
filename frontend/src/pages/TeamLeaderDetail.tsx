@@ -148,8 +148,11 @@ export default function TeamLeaderDetail() {
           {data.weeks.map((w, i) => (
             <div key={w.week} className="min-w-0">
               <div className="h-3 rounded-full" style={{ backgroundColor: WEEK_COLORS[i], opacity: w.state === "upcoming" ? 0.45 : 1 }} />
-              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: WEEK_COLORS[i] }}>
-                W{w.week} · Days {Number(w.start.slice(8))}–{Number(w.end.slice(8))} · {w.weight_pct}%
+              <p className="text-[11px] font-semibold mt-1 truncate" style={{ color: WEEK_COLORS[i] }}
+                title={`Week ${w.week} · Days ${Number(w.start.slice(8))}–${Number(w.end.slice(8))} · ${w.weight_pct}% of the month`}>
+                {/* Short label until there's room for the full one (it's cut off below xl). */}
+                <span className="xl:hidden">W{w.week} · {w.weight_pct}%</span>
+                <span className="hidden xl:inline">W{w.week} · Days {Number(w.start.slice(8))}–{Number(w.end.slice(8))} · {w.weight_pct}%</span>
               </p>
             </div>
           ))}
@@ -197,11 +200,13 @@ export default function TeamLeaderDetail() {
                 <div className="absolute inset-y-0 left-0 rounded-full bg-blue-500" style={{ width: `${Math.min(100, data.achievement_pct || 0)}%` }} />
                 <div className="absolute -top-1 h-5 w-0.5 bg-purple-400" style={{ left: `${Math.min(100, data.target_till_today_pct || 0)}%` }} />
               </div>
-              <div className="relative h-8 text-[11px] mt-1">
-                <span className="absolute left-0 text-[var(--text-muted)]">0%</span>
-                <span className="absolute -translate-x-1/2 text-purple-400 text-center" style={{ left: `${Math.min(96, Math.max(4, data.target_till_today_pct || 0))}%` }}>{pct(data.target_till_today_pct)}<br />Target till date</span>
-                <span className="absolute -translate-x-1/2 text-blue-400 text-center top-0" style={{ left: `${Math.min(96, Math.max(4, data.achievement_pct || 0))}%`, marginLeft: (data.achievement_pct || 0) - (data.target_till_today_pct || 0) < 8 ? 40 : 0 }}>{pct(data.achievement_pct)}<br />Sold</span>
-                <span className="absolute right-0 text-[var(--text-muted)] text-right">100%<br />Target</span>
+              {/* Two label rows — "sold" above, "target till date" below — so
+                  the two markers never collide however close they are. */}
+              <div className="relative h-10 text-[11px] mt-1 whitespace-nowrap">
+                {(data.achievement_pct || 0) > 12 && <span className="absolute left-0 top-0 text-[var(--text-muted)]">0%</span>}
+                <span className="absolute top-0 -translate-x-1/2 font-semibold text-blue-400" style={{ left: `${Math.min(88, Math.max(12, data.achievement_pct || 0))}%` }}>{pct(data.achievement_pct)} sold</span>
+                {(data.achievement_pct || 0) < 80 && <span className="absolute right-0 top-0 text-[var(--text-muted)]">100% target</span>}
+                <span className="absolute top-5 -translate-x-1/2 text-purple-400" style={{ left: `${Math.min(80, Math.max(20, data.target_till_today_pct || 0))}%` }}>{pct(data.target_till_today_pct)} target till date</span>
               </div>
             </div>
           )}

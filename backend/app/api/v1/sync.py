@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from ...core.deps import get_db, require_permission
+from ...core.deps import get_db, require_permission, require_admin_tier
 from ...models.models import SheetSource, SheetSyncLog, User
 from ...schemas import SheetSourceCreate, SheetSourceUpdate, SheetSourceResponse
 
@@ -43,6 +43,53 @@ async def mcp_sync_status(
     result = await db.execute(select(Setting).where(Setting.key == LAST_SYNC_SETTING_KEY))
     setting = result.scalar_one_or_none()
     return {"last_synced_at": setting.value if setting else None}
+
+
+async def _daily_tracker_source(db: AsyncSession) -> SheetSource | None:
+    """The sheet source holding the Daily Tracker xlsx ("Daily Input" tab)."""
+    result = await db.execute(select(SheetSource).where(SheetSource.is_xlsx_upload.is_(True)))
+    return next((s for s in result.scalars().all() if "daily_input" in (s.tab_mappings or {})), None)
+
+
+@router.get("/daily-tracker/status")
+async def daily_tracker_sync_status(
+    db: AsyncSession = Depends(get_db),
+    _user: User = require_admin_tier(),
+):
+    """Last sync of the Daily Tracker sheet, for the Social Performance page."""
+    source = await _daily_tracker_source(db)
+    if not source:
+        return {"configured": False}
+    result = await db.execute(
+        select(SheetSyncLog)
+        .where(SheetSyncLog.sheet_source_id == source.id)
+        .order_by(SheetSyncLog.created_at.desc())
+        .limit(1)
+    )
+    log = result.scalar_one_or_none()
+    return {
+        "configured": True,
+        "enabled": source.is_enabled,
+        "interval_minutes": source.sync_interval_minutes,
+        "last_synced_at": log.last_synced_at.isoformat() if log and log.last_synced_at else None,
+        "last_status": log.status if log else "",
+        "rows_synced": log.rows_synced if log else 0,
+    }
+
+
+@router.post("/daily-tracker")
+async def daily_tracker_sync(
+    db: AsyncSession = Depends(get_db),
+    _user: User = require_admin_tier(),
+):
+    """Re-read the Daily Tracker sheet now instead of waiting for the
+    scheduled sync. Open to the same roles that can view the Social
+    Performance page, unlike /manual/{id} which needs sheet_sync:edit."""
+    source = await _daily_tracker_source(db)
+    if not source:
+        raise HTTPException(status_code=404, detail="Daily Tracker sheet source is not configured")
+    from ...services.sheet_sync_service import SheetSyncService
+    return await SheetSyncService().sync_source(db, source.id)
 
 
 @router.get("/sources", response_model=list[SheetSourceResponse])

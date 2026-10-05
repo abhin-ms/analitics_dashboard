@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, Text, DateTime, Date,
+    Column, String, Integer, BigInteger, Float, Boolean, Text, DateTime, Date,
     ForeignKey, Numeric, JSON, UniqueConstraint, Index
 )
 from sqlalchemy.orm import relationship, backref
@@ -570,11 +570,17 @@ class DailyStoreTracker(Base):
     tt_followers = Column(Integer, default=0)
     sc_views = Column(Integer, default=0)
     sc_shares = Column(Integer, default=0)
+    fb_views = Column(Integer, default=0)
     wa_chats_received = Column(Integer, default=0)
     wa_walkins_booked = Column(Integer, default=0)
     google_rating = Column(Float, nullable=True)
     google_new_reviews = Column(Integer, default=0)
     google_review_response = Column(String(20), default="")
+    # Fingerprint of the row as last read from the sheet, and when it last
+    # changed — the sheet has no per-row "edited at", so this is how the
+    # dashboard knows when each store last updated its figures.
+    row_hash = Column(String(64), nullable=True)
+    sheet_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -584,6 +590,22 @@ class DailyStoreTracker(Base):
         UniqueConstraint("store_id", "date"),
         Index("ix_tracker_store_date", "store_id", "date"),
     )
+
+
+# ── Social media view targets (per store, per platform, per month) ──
+class SocialViewTarget(Base):
+    """Monthly views target a store must hit on one platform. Stores without
+    a row use the company default (Setting "social_target_default:<platform>",
+    else 1,000,000). A team leader's target is the sum over their stores."""
+    __tablename__ = "social_view_targets"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    store_id = Column(Integer, ForeignKey("stores.id", ondelete="CASCADE"), nullable=False)
+    platform = Column(String(20), nullable=False)
+    monthly_target = Column(BigInteger, nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("store_id", "platform"),)
 
 
 # ── MCP Daily Sales (synced from SmartService, all countries incl. India) ──

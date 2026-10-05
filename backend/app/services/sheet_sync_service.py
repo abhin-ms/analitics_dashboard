@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import logging
 from datetime import datetime, date, timezone
 from typing import Optional
@@ -536,6 +538,7 @@ class SheetSyncService:
                     "tt_followers": r.get("tt_followers") or 0,
                     "sc_views": r.get("sc_views") or 0,
                     "sc_shares": r.get("sc_shares") or 0,
+                    "fb_views": r.get("fb_views") or 0,
                     "wa_chats_received": r.get("wa_chats_received") or 0,
                     "wa_walkins_booked": r.get("wa_walkins_booked") or 0,
                     "google_rating": r.get("google_rating"),
@@ -543,11 +546,25 @@ class SheetSyncService:
                     "google_review_response": r.get("google_review_response", ""),
                 }
 
+                # Fingerprint the row as the sheet has it, so a store's
+                # "last updated in sheet" time moves only when its figures
+                # actually change — not on every scheduled re-sync.
+                row_hash = hashlib.sha256(
+                    json.dumps(r, sort_keys=True, default=str).encode()
+                ).hexdigest()
                 if tracker:
                     for k, v in fields.items():
                         setattr(tracker, k, v)
+                    if tracker.row_hash != row_hash:
+                        # A pre-tracking row (no hash yet) keeps its back-filled time.
+                        if tracker.row_hash is not None or tracker.sheet_updated_at is None:
+                            tracker.sheet_updated_at = datetime.utcnow()
+                        tracker.row_hash = row_hash
                 else:
-                    tracker = DailyStoreTracker(store_id=store.id, date=r.get("date", ""), **fields)
+                    tracker = DailyStoreTracker(
+                        store_id=store.id, date=r.get("date", ""), row_hash=row_hash,
+                        sheet_updated_at=datetime.utcnow(), **fields,
+                    )
                     db.add(tracker)
                 total_rows += 1
 
