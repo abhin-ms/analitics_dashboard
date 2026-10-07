@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from .config import settings
-from .security import decode_token
+from .security import decode_token, token_matches_user
 from ..db.session import get_db
 from ..models.models import User, Role, Permission, RolePermission, UserStoreAccess
 
@@ -36,6 +36,8 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+    if not token_matches_user(payload, user):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session ended — please sign in again")
     return user
 
 

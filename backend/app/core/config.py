@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""
     TOKEN_ENCRYPTION_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Sliding: renewed on every use, so active users stay signed in until
+    # they log out (Facebook/Instagram style).
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 90
     SECURE_COOKIES: bool = False
     GOOGLE_SERVICE_ACCOUNT_JSON_PATH: str = ""
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:8001,http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000"

@@ -76,6 +76,9 @@ class User(Base):
     password_hash = Column(String(200), nullable=False)
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
     is_active = Column(Boolean, default=True)
+    # Bumped to sign the user out on every device (password change,
+    # deactivation). Every token carries the version it was issued with.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     invite_token = Column(String(200), nullable=True)
     invite_expires_at = Column(DateTime, nullable=True)
     # Single assigned store (Telecaller/Salesperson — one store each). Not

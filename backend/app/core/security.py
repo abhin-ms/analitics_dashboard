@@ -24,6 +24,25 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 
+def session_claims(user) -> dict:
+    """Claims every access/refresh token for this user carries: who it is
+    and which session version it belongs to (see User.token_version)."""
+    return {"sub": str(user.id), "tv": user.token_version or 0}
+
+
+def token_matches_user(payload: dict, user) -> bool:
+    """False once the user's sessions were ended (password changed,
+    deactivated) after this token was issued. Tokens from before session
+    versions existed carry no "tv" and count as version 0."""
+    return int(payload.get("tv", 0) or 0) == (user.token_version or 0)
+
+
+def create_password_reset_token(user_id: int) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    return jwt.encode({"sub": str(user_id), "exp": expire, "type": "password_reset"},
+                      settings.JWT_SECRET_KEY, algorithm=ALGORITHM)
+
+
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)

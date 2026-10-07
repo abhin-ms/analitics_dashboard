@@ -38,6 +38,9 @@ services:
       CORS_ORIGINS: https://${DOMAIN:?DOMAIN missing from .env}
       FRONTEND_URL: https://${DOMAIN}
       SECURE_COOKIES: "true"
+      # Sliding 90-day sign-in (renewed on every use) — overrides the value
+      # in app.env so the deploy, not the copied .env, decides it.
+      REFRESH_TOKEN_EXPIRE_DAYS: "90"
       TZ: Asia/Kolkata
     ports:
       # localhost only: reachable by the host's nginx, not from the internet

@@ -6,7 +6,8 @@ from sqlalchemy import select, func
 from ...core.config import settings
 from ...core.security import (
     hash_password, verify_password, create_access_token,
-    create_refresh_token, decode_token,
+    create_refresh_token, decode_token, session_claims, token_matches_user,
+    create_password_reset_token,
 )
 from ...core.deps import get_db, get_current_user, get_user_permissions
 from ...models.models import User, Role
@@ -18,6 +19,20 @@ from ...schemas import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    # Sliding session: every refresh re-issues the cookie with a fresh
+    # REFRESH_TOKEN_EXPIRE_DAYS (90 by default), so anyone who opens the
+    # dashboard at least that often stays signed in until they log out.
+    response.set_cookie(
+        key="refresh_token",
+        value=token,
+        httponly=True,
+        secure=settings.SECURE_COOKIES,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+    )
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
@@ -27,18 +42,9 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
 
-    access_token = create_access_token({"sub": str(user.id)})
-    refresh_token = create_refresh_token({"sub": str(user.id)})
-
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=settings.SECURE_COOKIES,
-        samesite="lax",
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-    )
-    return TokenResponse(access_token=access_token)
+    claims = session_claims(user)
+    _set_refresh_cookie(response, create_refresh_token(claims))
+    return TokenResponse(access_token=create_access_token(claims))
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -56,18 +62,13 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not token_matches_user(payload, user):
+        response.delete_cookie("refresh_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session ended — please sign in again")
 
-    access_token = create_access_token({"sub": str(user.id)})
-    new_refresh = create_refresh_token({"sub": str(user.id)})
-    response.set_cookie(
-        key="refresh_token",
-        value=new_refresh,
-        httponly=True,
-        secure=settings.SECURE_COOKIES,
-        samesite="lax",
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-    )
-    return TokenResponse(access_token=access_token)
+    claims = session_claims(user)
+    _set_refresh_cookie(response, create_refresh_token(claims))
+    return TokenResponse(access_token=create_access_token(claims))
 
 
 @router.get("/me", response_model=UserMeResponse)
@@ -90,7 +91,9 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie("refresh_token")
+    # Signs out this browser only (like Facebook/Instagram); other devices
+    # stay signed in. Password changes and deactivation end every session.
+    response.delete_cookie("refresh_token", httponly=True, secure=settings.SECURE_COOKIES, samesite="lax")
     return {"message": "Logged out"}
 
 
@@ -99,7 +102,7 @@ async def forgot_password(body: PasswordResetRequest, request: Request, db: Asyn
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if user:
-        token = create_access_token({"sub": str(user.id), "type": "password_reset"})
+        token = create_password_reset_token(user.id)
         user.invite_token = token
         user.invite_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
         await db.commit()
@@ -117,9 +120,13 @@ async def set_password(body: SetPasswordRequest, db: AsyncSession = Depends(get_
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
+    # Single use: only the link most recently issued for this user works.
+    if user.invite_token != body.token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset link has already been used or replaced")
 
     user.password_hash = hash_password(body.new_password)
     user.invite_token = None
     user.invite_expires_at = None
+    user.token_version = (user.token_version or 0) + 1  # sign out every device
     await db.commit()
     return {"message": "Password updated"}

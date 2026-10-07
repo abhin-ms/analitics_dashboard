@@ -1,6 +1,7 @@
 import logging
 import socketio
-from .core.security import decode_token
+from sqlalchemy import select
+from .core.security import decode_token, token_matches_user
 from .core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,15 @@ async def connect(sid, environ, auth):
     if not token:
         raise socketio.exceptions.ConnectionRefusedError("Authentication required")
     payload = decode_token(token)
-    if not payload:
+    if not payload or payload.get("type") != "access" or not payload.get("sub"):
+        # Expired pass: the client renews it and reconnects on its own.
         raise socketio.exceptions.ConnectionRefusedError("Invalid token")
+    from .db.session import AsyncSessionLocal
+    from .models.models import User
+    async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(User.id == int(payload["sub"])))).scalar_one_or_none()
+    if not user or not user.is_active or not token_matches_user(payload, user):
+        raise socketio.exceptions.ConnectionRefusedError("Session ended")
     await sio.save_session(sid, {
         "user_id": payload.get("sub"),
         "role": payload.get("role"),

@@ -92,6 +92,7 @@ async def reset_user_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.password_hash = hash_password(body.new_password)
+    user.token_version = (user.token_version or 0) + 1  # sign out every device
     await db.commit()
     return {"message": f"Password updated for {user.name}"}
 
@@ -134,11 +135,15 @@ async def update_user(
         if not role_exists.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Invalid role_id")
 
+    was_active = user.is_active
     for field, value in body.model_dump(exclude_unset=True, exclude={"store_ids", "password"}).items():
         setattr(user, field, value)
 
+    # A new password or deactivation signs the user out on every device.
     if body.password:
         user.password_hash = hash_password(body.password)
+    if body.password or (was_active and not user.is_active):
+        user.token_version = (user.token_version or 0) + 1
 
     if body.store_ids is not None:
         await db.execute(

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { api } from "./apiClient";
+import { api, ApiError } from "./apiClient";
 
 export interface Permission {
   resource: string;
@@ -36,6 +36,7 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
 
       login: async (email: string, password: string) => {
+        await api.settleLogout();
         const res = await api.post<{ access_token: string }>("/auth/login", {
           email,
           password,
@@ -46,19 +47,29 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        try {
-          await api.post("/auth/logout");
-        } catch {}
-        api.setToken(null);
+        // Signed out here immediately; the server-side cookie deletion
+        // finishes in the background (after any renewal in flight).
+        void api.logout();
         set({ user: null, token: null, isAuthenticated: false });
       },
 
       fetchMe: async () => {
         try {
           const user = await api.get<User>("/auth/me");
-          set({ user });
-        } catch {
-          set({ user: null, isAuthenticated: false });
+          set({ user, isAuthenticated: true });
+        } catch (e) {
+          if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+            // The server ended the session (logged out elsewhere by a
+            // password change, deactivated, or 90 days unused).
+            api.setToken(null);
+            set({ user: null, token: null, isAuthenticated: false });
+          } else {
+            // Network blip, server restart or deploy: stay signed in and
+            // try again shortly instead of throwing the user out.
+            window.setTimeout(() => {
+              if (get().token) get().fetchMe();
+            }, 5000);
+          }
         }
       },
 
@@ -86,4 +97,9 @@ export const useAuthStore = create<AuthState>()(
 
 api.setOnTokenRefreshed((token) => {
   useAuthStore.setState({ token });
+});
+
+// Refresh rejected: clear the session; AppLayout then shows the login page.
+api.setOnSessionEnded(() => {
+  useAuthStore.setState({ user: null, token: null, isAuthenticated: false });
 });

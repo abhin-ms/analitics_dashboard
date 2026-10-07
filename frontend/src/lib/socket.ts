@@ -1,5 +1,6 @@
 import { io, Socket } from "socket.io-client";
 import { useAuthStore } from "./authStore";
+import { api } from "./apiClient";
 
 let socket: Socket | null = null;
 
@@ -19,6 +20,19 @@ export function getSocket(): Socket {
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionAttempts: Infinity,
+  });
+
+  // The server refuses an expired 15-minute pass. socket.io doesn't retry a
+  // refused connection by itself, so renew the pass (sharing any renewal an
+  // API call already started) and reconnect — live lead alerts keep working
+  // after the app has been idle or the network dropped. A rejected renewal
+  // ends the session instead, so this can't loop.
+  socket.on("connect_error", async () => {
+    if (!useAuthStore.getState().token) return;
+    const renewed = await api.renewSession();
+    if (renewed === "ok" && socket && !socket.active) {
+      window.setTimeout(() => socket?.connect(), 500);
+    }
   });
 
   return socket;
