@@ -82,7 +82,7 @@ export default function HostedForm() {
           value={value}
           onChange={(e) => setPhase2Values({ ...phase2Values, [field.field_key]: e.target.value })}
           required={field.required}
-          className="w-full px-4 py-3 rounded-xl bg-[#1a1c2e] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
+          className="w-full px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
         >
           <option value="">{field.placeholder || `Select ${field.label}`}</option>
           {field.options.map((opt) => (
@@ -99,7 +99,7 @@ export default function HostedForm() {
           value={value}
           onChange={(e) => setPhase2Values({ ...phase2Values, [field.field_key]: e.target.value })}
           required={field.required}
-          className="w-full px-4 py-3 rounded-xl bg-[#1a1c2e] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
+          className="w-full px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
         />
       );
     }
@@ -112,7 +112,7 @@ export default function HostedForm() {
           onChange={(e) => setPhase2Values({ ...phase2Values, [field.field_key]: e.target.value })}
           required={field.required}
           placeholder={field.placeholder}
-          className="w-full px-4 py-3 rounded-xl bg-[#1a1c2e] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
+          className="w-full px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
         />
       );
     }
@@ -124,14 +124,14 @@ export default function HostedForm() {
         onChange={(e) => setPhase2Values({ ...phase2Values, [field.field_key]: e.target.value })}
         required={field.required}
         placeholder={field.placeholder}
-        className="w-full px-4 py-3 rounded-xl bg-[#1a1c2e] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
+        className="w-full px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500"
       />
     );
   };
 
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh", background: "#0d0f1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Loader2 className="animate-spin text-blue-400" size={32} />
       </div>
     );
@@ -139,7 +139,7 @@ export default function HostedForm() {
 
   if (error) {
     return (
-      <div style={{ minHeight: "100vh", background: "#0d0f1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="text-center">
           <p className="text-red-400 text-sm font-semibold">{error}</p>
         </div>
@@ -149,7 +149,7 @@ export default function HostedForm() {
 
   if (completed) {
     return (
-      <div style={{ minHeight: "100vh", background: "#0d0f1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="text-center space-y-3">
           <CheckCircle className="text-emerald-400 mx-auto" size={48} />
           <h2 className="text-xl font-bold text-white">Booking Confirmed</h2>
@@ -161,7 +161,7 @@ export default function HostedForm() {
 
   if (!data || data.phase2_fields.length === 0) {
     return (
-      <div style={{ minHeight: "100vh", background: "#0d0f1a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div className="text-center">
           <p className="text-sm text-gray-400">No additional fields required.</p>
         </div>
@@ -170,7 +170,7 @@ export default function HostedForm() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0d0f1a", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-white">{data.form_name}</h1>
@@ -178,7 +178,7 @@ export default function HostedForm() {
         </div>
 
         {Object.keys(data.phase1_data).length > 0 && (
-          <div className="rounded-2xl bg-[#1a1c2e] border border-white/10 p-4 space-y-2">
+          <div className="rounded-2xl bg-[var(--bg-subtle)] border border-white/10 p-4 space-y-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Your Details</p>
             {Object.entries(data.phase1_data).map(([key, val]) => (
               <div key={key} className="flex justify-between text-sm">
@@ -189,7 +189,7 @@ export default function HostedForm() {
           </div>
         )}
 
-        <div className="rounded-2xl bg-[#1a1c2e] border border-white/10 p-5 space-y-4">
+        <div className="rounded-2xl bg-[var(--bg-subtle)] border border-white/10 p-5 space-y-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Select Your Options</p>
           {data.phase2_fields.map((field) => (
             <div key={field.field_key}>

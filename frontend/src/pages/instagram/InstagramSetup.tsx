@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { BrandIcon, InstagramIcon } from "@/components/shared/BrandIcon";
 import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { useState, useEffect } from "react";
@@ -12,7 +13,7 @@ import type { IGAccount, AIProvider, IGBotSettings, IGForm, IGFormField } from "
 type Tab = "accounts" | "ai" | "bot" | "forms";
 
 const TABS: { key: Tab; label: string; icon: any }[] = [
-  { key: "accounts", label: "Accounts", icon: Camera },
+  { key: "accounts", label: "Accounts", icon: InstagramIcon },
   { key: "ai", label: "AI Providers", icon: Brain },
   { key: "bot", label: "Bot Settings", icon: Bot },
   { key: "forms", label: "Forms", icon: MessageSquare },
@@ -297,7 +298,7 @@ function AccountsTab() {
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-card)] p-10 text-center">
-          <Camera size={40} className="mx-auto text-blue-400 mb-3 opacity-30" />
+          <BrandIcon brand="instagram" size={40} className="mx-auto mb-3 opacity-60" style={{ display: "block" }} />
           <p className="text-sm font-semibold text-white">No Accounts Connected</p>
           <p className="text-xs text-[var(--text-muted)] mt-1">Connect an Instagram Business account to start</p>
         </div>

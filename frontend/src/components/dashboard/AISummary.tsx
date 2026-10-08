@@ -160,7 +160,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
               <XAxis dataKey={def.xKey} tick={tickFill} />
               <YAxis tick={tickFill} tickFormatter={fmt} width={70} />
               <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: any) => fmt(v)} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               {def.series.map((s) => (
                 <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2.5} dot={{ r: 2.5, fill: s.color }} activeDot={{ r: 5 }} />
               ))}
@@ -177,7 +177,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
               <XAxis dataKey={def.xKey} tick={tickFill} />
               <YAxis tick={tickFill} tickFormatter={fmt} width={70} />
               <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: any) => fmt(v)} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               {def.series.map((s) => (
                 <Bar key={s.key} dataKey={s.key} name={s.name} fill={s.color} radius={[4, 4, 0, 0]} stackId={def.stacked ? "a" : undefined} />
               ))}
@@ -207,7 +207,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
           return (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={filteredData} cx="50%" cy="50%" innerRadius={50} outerRadius={85} dataKey="value" nameKey="name" stroke="#11131e" strokeWidth={2}>
+                <Pie data={filteredData} cx="50%" cy="50%" innerRadius={50} outerRadius={85} dataKey="value" nameKey="name" stroke="var(--bg-card)" strokeWidth={2}>
                   {filteredData.map((entry: any, i: number) => {
                     const color = isRagChart
                       ? (RAG_COLOR_MAP[entry.name] || CHART_COLORS[i % CHART_COLORS.length])
@@ -216,7 +216,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
                   })}
                 </Pie>
                 <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               </PieChart>
             </ResponsiveContainer>
           );
@@ -225,7 +225,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
           <ResponsiveContainer width="100%" height="100%">
             <RadarChart data={filteredData} outerRadius="75%">
               <PolarGrid stroke="rgba(255,255,255,0.1)" />
-              <PolarAngleAxis dataKey={def.xKey} tick={{ fontSize: 10, fill: "#a1a1aa" }} />
+              <PolarAngleAxis dataKey={def.xKey} tick={{ fontSize: 10, fill: "var(--text-secondary)" }} />
               {def.series.map((s) => (
                 <Radar key={s.key} dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.35} />
               ))}
@@ -241,7 +241,7 @@ function SectionChartCard({ def }: { def: ChartDef }) {
               <YAxis yAxisId="main" tick={tickFill} tickFormatter={fmt} width={70} />
               {hasPctAxis && <YAxis yAxisId="pct" orientation="right" tick={tickFill} tickFormatter={(v: any) => `${v}%`} width={40} />}
               <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               {def.series.map((s) =>
                 s.kind === "line" ? (
                   <Line key={s.key} yAxisId={s.yAxisId} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2.5} dot={{ r: 2.5 }} />
@@ -439,7 +439,7 @@ export function AISummary({ section = "overview", title = "AI Executive Summary"
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="rounded-2xl border border-[var(--border-subtle)] bg-gradient-to-r from-[#11131e] via-[#151a2e] to-[#1a1430] p-5 sm:p-6 relative overflow-hidden">
+      <div className="rounded-2xl border border-[var(--border-subtle)] bg-gradient-to-r from-[var(--bg-card)] via-[var(--bg-card)] to-[var(--tone-purple-bg)] p-5 sm:p-6 relative overflow-hidden">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">

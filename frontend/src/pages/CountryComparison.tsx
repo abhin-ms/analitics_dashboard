@@ -118,8 +118,8 @@ export default function CountryComparison() {
             <h3 className="text-sm font-medium text-white mb-4">Sales by Country (USD)</h3>
             <ResponsiveContainer width="100%" height={350}>
               <BarChart data={data} layout="vertical">
-                <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} stroke="#666" />
-                <YAxis type="category" dataKey="country" width={100} stroke="#666" tick={{ fill: "#fff", fontSize: 12 }} />
+                <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} stroke="var(--text-muted)" />
+                <YAxis type="category" dataKey="country" width={100} stroke="var(--text-muted)" tick={{ fill: "#fff", fontSize: 12 }} />
                 <Tooltip
                   formatter={(v) => [`$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, "USD"]}
                   contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 8 }}
@@ -128,7 +128,7 @@ export default function CountryComparison() {
                 />
                 <Bar dataKey="usd_amount" radius={[0, 6, 6, 0]}>
                   {data.map((entry) => (
-                    <Cell key={entry.country} fill={COUNTRY_COLORS[entry.country.toUpperCase()] || "#666"} />
+                    <Cell key={entry.country} fill={COUNTRY_COLORS[entry.country.toUpperCase()] || "#64748b"} />
                   ))}
                 </Bar>
               </BarChart>
@@ -140,7 +140,7 @@ export default function CountryComparison() {
             {data.map((c) => (
               <div key={c.country} className="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-3">
-                  <div className="w-3 h-3 rounded-full" style={{ background: COUNTRY_COLORS[c.country.toUpperCase()] || "#666" }} />
+                  <div className="w-3 h-3 rounded-full" style={{ background: COUNTRY_COLORS[c.country.toUpperCase()] || "var(--text-muted)" }} />
                   <span className="text-sm font-medium text-white">{c.country}</span>
                 </div>
                 <div className="space-y-2">
@@ -163,7 +163,7 @@ export default function CountryComparison() {
                   <div className="w-full bg-white/10 rounded-full h-2 mt-2">
                     <div
                       className="h-2 rounded-full transition-all"
-                      style={{ width: `${c.pct}%`, background: COUNTRY_COLORS[c.country.toUpperCase()] || "#666" }}
+                      style={{ width: `${c.pct}%`, background: COUNTRY_COLORS[c.country.toUpperCase()] || "var(--text-muted)" }}
                     />
                   </div>
                   <p className="text-xs text-[var(--text-muted)] text-right">{c.pct.toFixed(1)}%</p>

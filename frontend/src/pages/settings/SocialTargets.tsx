@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { BrandIcon, InstagramIcon } from "@/components/shared/BrandIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Target, Save, Search, RotateCcw } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
-import { fmtCompact, PLATFORMS, PLATFORM_LABEL, PLATFORM_COLOR, Platform } from "@/features/social/socialData";
+import { fmtCompact, PLATFORMS, PLATFORM_LABEL, Platform } from "@/features/social/socialData";
 
 interface TargetsResponse {
   platforms: Platform[];
@@ -118,7 +119,7 @@ export default function SocialTargets() {
                 {PLATFORMS.map((p) => (
                   <label key={p} className="block rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3">
                     <span className="flex items-center gap-2 text-xs font-semibold text-white mb-2">
-                      <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: PLATFORM_COLOR[p] }} />
+                      <BrandIcon brand={p} size={15} />
                       {PLATFORM_LABEL[p]} views / month
                     </span>
                     <input

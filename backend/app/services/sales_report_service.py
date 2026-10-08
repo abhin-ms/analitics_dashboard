@@ -4,8 +4,51 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from ..models.models import Store, User, McpDailySale, DailySubmission, CountrySalesSnapshot, StoreMcpAlias
+from ..models.models import (
+    Store, User, McpDailySale, DailySubmission, CountrySalesSnapshot, StoreMcpAlias, ExchangeRate,
+)
 from .mcp_sync_service import sync_mcp_sales
+
+
+ALL_COUNTRIES = "All"
+COUNTRY_CURRENCY = {"india": "INR", "uae": "AED", "oman": "OMR", "qatar": "QAR", "pakistan": "PKR",
+                    "malaysia": "MYR", "uk": "GBP", "bahrain": "BHD"}
+# US dollars per unit, used only when neither an admin rate (Settings →
+# Currency) nor MCP's own conversion is available. The Gulf currencies are
+# pegged to the dollar, so theirs are exact; GBP / MYR / PKR are approximate.
+USD_PER_UNIT_REFERENCE = {"INR": 0.0114, "AED": 0.2723, "OMR": 2.6008, "QAR": 0.2747, "BHD": 2.6596,
+                          "GBP": 1.27, "MYR": 0.22, "PKR": 0.0036}
+
+
+def currency_of(country: Optional[str]) -> str:
+    return COUNTRY_CURRENCY.get((country or "").strip().lower(), "INR")
+
+
+async def inr_rates(db: AsyncSession) -> dict[str, dict]:
+    """₹ per one unit of each country's currency, and where it came from:
+    the latest admin-entered rate, else MCP's own conversion at the last
+    sync (its country snapshot holds each total in local currency and USD),
+    else a reference rate."""
+    usd_per: dict[str, float] = {}
+    for snap in (await db.execute(select(CountrySalesSnapshot))).scalars().all():
+        local, usd = float(snap.local_amount or 0), float(snap.usd_amount or 0)
+        if local > 0 and usd > 0:
+            usd_per[COUNTRY_CURRENCY.get(snap.country.strip().lower(), snap.local_currency)] = usd / local
+    inr_usd = usd_per.get("INR") or USD_PER_UNIT_REFERENCE["INR"]
+
+    manual: dict[str, float] = {}
+    for r in (await db.execute(select(ExchangeRate).order_by(ExchangeRate.effective_date))).scalars().all():
+        manual[r.currency_code] = float(r.rate_to_base)  # latest date wins
+
+    out = {"INR": {"rate": 1.0, "source": "base"}}
+    for cur in sorted(set(COUNTRY_CURRENCY.values()) - {"INR"}):
+        if manual.get(cur):
+            out[cur] = {"rate": manual[cur], "source": "settings"}
+        elif cur in usd_per:
+            out[cur] = {"rate": usd_per[cur] / inr_usd, "source": "mcp"}
+        else:
+            out[cur] = {"rate": USD_PER_UNIT_REFERENCE[cur] / inr_usd, "source": "reference"}
+    return out
 
 
 async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
@@ -16,13 +59,26 @@ async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
     — this is meant to be a raw, unfiltered pulse independent of branch
     confirmation state, same as it was when it called MCP live."""
     today = date.today()
+    if country == ALL_COUNTRIES:
+        # every country, each converted to ₹ before adding up
+        rates = await inr_rates(db)
+        rows = (await db.execute(
+            select(Store.country, func.coalesce(func.sum(McpDailySale.revenue), 0))
+            .select_from(McpDailySale)
+            .join(Store, Store.id == McpDailySale.store_id)
+            .where(McpDailySale.date == today)
+            .group_by(Store.country)
+        )).all()
+        total = sum(float(v or 0) * rates[currency_of(c)]["rate"] for c, v in rows)
+        return {"country": country, "date": today.isoformat(), "revenue": total, "currency": "INR"}
     total = (await db.execute(
         select(func.coalesce(func.sum(McpDailySale.revenue), 0))
         .select_from(McpDailySale)
         .join(Store, Store.id == McpDailySale.store_id)
         .where(Store.country == country, McpDailySale.date == today)
     )).scalar()
-    return {"country": country, "date": today.isoformat(), "revenue": float(total or 0)}
+    return {"country": country, "date": today.isoformat(), "revenue": float(total or 0),
+            "currency": currency_of(country)}
 
 
 async def get_country_comparison_snapshot(db: AsyncSession) -> list[dict]:
@@ -107,7 +163,12 @@ async def get_sales_report(
     region: Optional[str] = None,
     group_by: str = "none",
     store_ids: Optional[list[int]] = None,
+    convert_to_inr: bool = False,
 ) -> dict:
+    """…When `convert_to_inr`, every store's revenue and target is turned
+    into ₹ (see inr_rates) before anything is added up, so stores from
+    different countries can be totalled; the response then carries
+    currency "INR" and the rates it used."""
     if granularity not in ("day", "week", "month"):
         granularity = "month"
     if start and end:
@@ -127,7 +188,7 @@ async def get_sales_report(
         store_q = store_q.where(Store.id == store_id)
     if store_ids is not None:
         store_q = store_q.where(Store.id.in_(store_ids or [-1]))
-    if country:
+    if country and country != ALL_COUNTRIES:
         store_q = store_q.where(Store.country == country)
     if region:
         store_q = store_q.where(Store.region == region)
@@ -194,20 +255,24 @@ async def get_sales_report(
     # Per-store aggregates: revenue sums across days in the selected range;
     # target comes straight from the Store record (scaled per above), but
     # only when MCP actively maintains it (see note above).
+    rates = await inr_rates(db) if convert_to_inr else None
+    to_inr = {sid: (rates[currency_of(stores_by_id[sid][0].country)]["rate"] if rates else 1.0) for sid in store_ids}
     per_store: dict[int, dict] = {}
     for sid in store_ids:
         store_target = float(stores_by_id[sid][0].monthly_target or 0) if sid in aliased_store_ids else 0.0
-        per_store[sid] = {"revenue": 0.0, "target": store_target * month_multiplier, "walkins": 0, "conversions": 0, "units_sold": 0}
+        per_store[sid] = {"revenue": 0.0, "target": store_target * month_multiplier * to_inr[sid],
+                          "walkins": 0, "conversions": 0, "units_sold": 0}
 
     trend_map: dict[str, dict] = {}
     for row in sales_rows:
         agg = per_store[row.store_id]
-        agg["revenue"] += float(row.revenue or 0)
+        revenue = float(row.revenue or 0) * to_inr[row.store_id]
+        agg["revenue"] += revenue
         agg["units_sold"] += row.units_sold or 0
 
         key = _bucket_key(row.date, granularity)
         bucket = trend_map.setdefault(key, {"period": key, "revenue": 0.0})
-        bucket["revenue"] += float(row.revenue or 0)
+        bucket["revenue"] += revenue
 
     for row in funnel_rows:
         agg = per_store[row.store_id]
@@ -293,4 +358,6 @@ async def get_sales_report(
         "total_units_sold": total_units_sold,
         "trend": trend, "breakdown": breakdown, "needs_review": needs_review,
         "top_branch": top_branch,
+        "currency": "INR" if rates else (currency_of(country) if country and country != ALL_COUNTRIES else None),
+        "rates": ({cur: r for cur, r in rates.items() if cur != "INR"} if rates else None),
     }

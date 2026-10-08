@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } fro
 import { useSearchParams, Link } from "react-router-dom";
 import { api } from "@/lib/apiClient";
 import { localDateStr } from "@/lib/utils";
-import { formatByCountry as fmtByCountry } from "@/lib/formatMoney";
+import { formatByCountry as fmtByCountry, formatMoney } from "@/lib/formatMoney";
 import { StatCard } from "@/components/shared/StatCard";
 import { StatCardSkeleton } from "@/components/shared/Skeleton";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -36,7 +36,13 @@ const COLORS = ["#3b82f6", "#10b981", "#a855f7", "#f97316", "#ec4899", "#06b6d4"
 const COUNTRY_IDS: Record<string, number> = {
   India: 1, Oman: 2, Pakistan: 3, UAE: 4, Malaysia: 5, UK: 6, Bahrain: 7, Qatar: 8,
 };
-const COUNTRY_OPTIONS = Object.keys(COUNTRY_IDS);
+/** "All" = every country together, converted to ₹ by the backend. */
+const ALL_COUNTRIES = "All";
+const COUNTRY_OPTIONS = [ALL_COUNTRIES, ...Object.keys(COUNTRY_IDS)];
+const COUNTRY_CURRENCY: Record<string, string> = {
+  India: "INR", UAE: "AED", Oman: "OMR", Qatar: "QAR", Pakistan: "PKR", Malaysia: "MYR", UK: "GBP", Bahrain: "BHD",
+};
+const RATE_SOURCE: Record<string, string> = { settings: "Settings", mcp: "MCP", reference: "approx." };
 
 function shortStore(name: string) {
   return name.replace("Kerala ", "").replace("Chennai ", "").replace("Bangalore ", "")
@@ -51,11 +57,6 @@ function startOfLocalMonth() {
 
 function ragColor(p: number) { return p >= 65 ? "#10b981" : p >= 35 ? "#f59e0b" : "#ef4444"; }
 function ragLabel(p: number) { return p >= 100 ? "Achieved" : p >= 65 ? "On Track" : p >= 35 ? "Below Target" : "Critical"; }
-function fmtINR(n: number) {
-  if (n >= 100000) return `\u20b9${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `\u20b9${(n / 1000).toFixed(1)}K`;
-  return `\u20b9${n.toLocaleString("en-IN")}`;
-}
 // Same idea, keyed by ISO-ish currency code instead of country name — the
 // MCP country-comparison data reports each country's own local_currency
 // code directly (INR, AED, OMR, QAR...) rather than a country string.
@@ -112,6 +113,11 @@ export default function Dashboard() {
   const [syncError, setSyncError] = useState("");
   const [period, setPeriod] = useState<"1day" | "yesterday" | "7day" | "month" | "6month" | "1year" | "custom">("month");
   const [selectedCountry, setSelectedCountry] = useState<string>("India");
+  const isAllCountries = selectedCountry === ALL_COUNTRIES;
+  const countryLabel = isAllCountries ? "All countries" : selectedCountry;
+  // Money in the selected country's own currency; "All countries" is in ₹.
+  const selCurrency = isAllCountries ? "INR" : COUNTRY_CURRENCY[selectedCountry] || "INR";
+  const fmtSel = useCallback((n: number) => formatMoney(n, selCurrency), [selCurrency]);
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
   const [showRangeFilter, setShowRangeFilter] = useState(false);
   const [draftRange, setDraftRange] = useState({ from: "", to: "" });
@@ -482,8 +488,8 @@ export default function Dashboard() {
 
   const kpiCards = kpiData
     ? [
-        { title: "Total Revenue", value: kpiData.totalRevenue, type: "money" as const, icon: <DollarSign size={20} />, color: "#3b82f6", badge: !mcpLiveLoading && todayLiveRevenue > 0 ? `LIVE Today: ₹${fmtINR(todayLiveRevenue).replace("₹", "")}` : null },
-        { title: "Total Target", value: kpiData.totalTarget, type: "money" as const, icon: <Target size={20} />, color: "#10b981" },
+        { title: "Total Revenue", value: kpiData.totalRevenue, type: "money" as const, icon: <DollarSign size={20} />, color: "#3b82f6", currency: selCurrency, badge: !mcpLiveLoading && todayLiveRevenue > 0 ? `LIVE Today: ${fmtSel(todayLiveRevenue)}` : null },
+        { title: "Total Target", value: kpiData.totalTarget, type: "money" as const, currency: selCurrency, icon: <Target size={20} />, color: "#10b981" },
         { title: "Achievement %", value: kpiData.achievementPct, type: "percent" as const, icon: <TrendingUp size={20} />, color: "#a855f7" },
         { title: "Total Investment", value: 0, type: "money" as const, icon: <Briefcase size={20} />, color: "#f97316" },
         { title: "Active Team Leaders", value: ops?.tlList.length || 0, type: "number" as const, icon: <Users size={20} />, color: "#ec4899" },
@@ -526,6 +532,14 @@ export default function Dashboard() {
                   ? `Sales data last synced from MCP: ${new Date(lastSyncedAt).toLocaleString()}`
                   : "Sales data has not been synced from MCP yet"}
                 {syncError && <span className="ml-2 text-rose-400">{syncError}</span>}
+                {isAllCountries && mcpTlReport?.rates && (
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                    All countries shown in ₹ ·{" "}
+                    {Object.entries(mcpTlReport.rates as Record<string, { rate: number; source: string }>)
+                      .map(([cur, r]) => `1 ${cur} = ₹${r.rate.toLocaleString("en-IN", { maximumFractionDigits: r.rate < 1 ? 3 : 2 })} (${RATE_SOURCE[r.source] || r.source})`)
+                      .join(" · ")}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative">
@@ -536,7 +550,7 @@ export default function Dashboard() {
                     title="Country — filters Revenue, Achievement, Store/TL charts and Live Today below to this country"
                   >
                     {COUNTRY_OPTIONS.map((c) => (
-                      <option key={c} value={c} className="bg-[var(--bg-card)] text-[var(--text-primary)]">{c}</option>
+                      <option key={c} value={c} className="bg-[var(--bg-card)] text-[var(--text-primary)]">{c === ALL_COUNTRIES ? "All Countries" : c}</option>
                     ))}
                   </select>
                   <Globe size={12} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -579,7 +593,7 @@ export default function Dashboard() {
                     Custom
                   </button>
                   {showRangeFilter && (
-                    <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#11131e] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
+                    <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
                       <p className="font-semibold text-white">Custom date range</p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -688,14 +702,14 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={applyCardFilter(revenueTrend, trendFilter)} margin={{ top: 12, right: 15, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#a1a1aa" }} tickFormatter={(v) => String(v).slice(5)} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} tickFormatter={(v) => String(v).slice(5)} />
                     <YAxis
                       yAxisId="amount" domain={trendScale ? [0, trendScale.amountMax] : ["auto", "auto"]} width={48}
-                      tick={{ fontSize: 11, fill: "#93c5fd" }} tickFormatter={(v) => fmtINR(v)}
+                      tick={{ fontSize: 11, fill: "var(--tone-blue-fg)" }} tickFormatter={(v) => fmtSel(v)}
                     />
                     <YAxis
                       yAxisId="pct" orientation="right" domain={trendScale ? [0, trendScale.pctMax] : [0, "auto"]} width={42}
-                      tick={{ fontSize: 11, fill: "#fbbf24" }} tickFormatter={(v) => `${v}%`}
+                      tick={{ fontSize: 11, fill: "var(--tone-amber-fg)" }} tickFormatter={(v) => `${v}%`}
                     />
                     <Tooltip
                       contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px", color: "var(--text-primary)" }}
@@ -703,9 +717,9 @@ export default function Dashboard() {
                       itemStyle={{ fontWeight: 600, color: "var(--text-primary)" }}
                       formatter={(value: any, name?: any) =>
                         value == null ? ["Not synced yet", name]
-                          : name === "Achieved % to date" ? [`${value}%`, name] : [fmtINR(Number(value)), name]}
+                          : name === "Achieved % to date" ? [`${value}%`, name] : [fmtSel(Number(value)), name]}
                     />
-                    <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600, color: "#e5e7eb", paddingTop: 8 }} iconType="line" />
+                    <Legend wrapperStyle={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", paddingTop: 8 }} iconType="line" />
                     <Line
                       yAxisId="amount" type="monotone" dataKey="revenue" name="Revenue"
                       stroke="#3b82f6" strokeWidth={3.5}
@@ -764,7 +778,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-sm">
             <span className="flex items-center gap-2">
               <AlertTriangle size={16} />
-              {ops.needsReview.length} branch{ops.needsReview.length > 1 ? "es" : ""} synced from MCP need a team leader assignment (excluded from {selectedCountry} Revenue/TL Achievement below).
+              {ops.needsReview.length} branch{ops.needsReview.length > 1 ? "es" : ""} synced from MCP need a team leader assignment (excluded from {countryLabel} Revenue/TL Achievement below).
             </span>
             <Link
               to="/settings/branch-assignment"
@@ -779,8 +793,8 @@ export default function Dashboard() {
             {/* CEO KPI Row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 min-w-0">
               {[
-                { label: `${selectedCountry} Revenue`, value: fmtINR(ops.totalRevenue), sub: `vs ${fmtINR(ops.totalTarget)} target`, color: "#3b82f6" },
-                { label: `${selectedCountry} Achievement`, value: `${ops.overallAch}%`, sub: `${ops.tlList.length} TLs \u00b7 ${ops.storeAchievements.length} stores`, color: ops.overallAch >= 50 ? "#10b981" : "#f59e0b" },
+                { label: `${countryLabel} Revenue`, value: fmtSel(ops.totalRevenue), sub: `vs ${fmtSel(ops.totalTarget)} target`, color: "#3b82f6" },
+                { label: `${countryLabel} Achievement`, value: `${ops.overallAch}%`, sub: `${ops.tlList.length} TLs \u00b7 ${ops.storeAchievements.length} stores`, color: ops.overallAch >= 50 ? "#10b981" : "#f59e0b" },
                 { label: "Walk-ins", value: ops.totalWalkins.toLocaleString(), sub: `${ops.totalConversions} conversions \u00b7 ${ops.overallConv}%`, color: "#10b981" },
                 { label: "Critical Stores", value: String(ops.rag.red), sub: `${ops.rag.red} below 35% target`, color: "#ef4444" },
               ].map((k, i) => (
@@ -798,8 +812,8 @@ export default function Dashboard() {
               <div className="lg:col-span-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 sm:p-6 min-w-0">
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
                   <div>
-                    <h3 className="text-sm font-bold text-white tracking-tight mb-1">{selectedCountry} Store MTD Achievement %</h3>
-                    <p className="text-xs text-[var(--text-muted)]">All {ops.storeAchievements.length} {selectedCountry} stores ranked by performance</p>
+                    <h3 className="text-sm font-bold text-white tracking-tight mb-1">{countryLabel} Store MTD Achievement %</h3>
+                    <p className="text-xs text-[var(--text-muted)]">All {ops.storeAchievements.length} {isAllCountries ? "" : `${selectedCountry} `}stores ranked by performance</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--text-secondary)] shrink-0">
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: "#10b981" }} />On Track (65%+)</span>
@@ -811,8 +825,8 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={ops.storeAchievements} layout="vertical" margin={{ left: 5, right: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis type="number" domain={[0, 120]} tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v) => `${v}%`} />
-                      <YAxis type="category" dataKey="store" tick={{ fontSize: 9, fill: "#a1a1aa" }} width={120} tickFormatter={shortStore} />
+                      <XAxis type="number" domain={[0, 120]} tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v) => `${v}%`} />
+                      <YAxis type="category" dataKey="store" tick={{ fontSize: 9, fill: "var(--text-secondary)" }} width={120} tickFormatter={shortStore} />
                       <Tooltip
                         formatter={(v: any) => [`${v}% — ${ragLabel(Number(v))}`, "Achievement"]}
                         contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }}
@@ -834,8 +848,8 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={ops.tlList.map((t: any) => ({ name: t.name, achPct: t.achPct, color: t.color }))}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v) => `${v}%`} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v) => `${v}%`} />
                       <Tooltip formatter={(v: any) => [`${v}% — ${ragLabel(Number(v))}`, "Achievement"]} contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
                       <Bar dataKey="achPct" radius={[6, 6, 0, 0]}>
                         {ops.tlList.map((t: any, i: number) => <Cell key={i} fill={ragColor(t.achPct)} />)}
@@ -854,7 +868,7 @@ export default function Dashboard() {
                 <div className="h-56 w-full min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={[{ name: "Green \u226565%", value: ops.rag.green }, { name: "Amber 35\u201364%", value: ops.rag.amber }, { name: "Red <35%", value: ops.rag.red }]} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="#11131e" strokeWidth={2}>
+                      <Pie data={[{ name: "Green \u226565%", value: ops.rag.green }, { name: "Amber 35\u201364%", value: ops.rag.amber }, { name: "Red <35%", value: ops.rag.red }]} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="var(--bg-card)" strokeWidth={2}>
                         <Cell fill="#10b981" /><Cell fill="#f59e0b" /><Cell fill="#ef4444" />
                       </Pie>
                       <Tooltip contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
@@ -863,7 +877,7 @@ export default function Dashboard() {
                           payload guarantees the right color swatch next to the
                           right label, with the actual store count included. */}
                       <Legend
-                        wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }}
+                        wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }}
                         {...({
                           payload: [
                             { value: `Green ≥65% (${ops.rag.green} stores)`, type: "square", color: "#10b981" },
@@ -884,11 +898,11 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={ops.tlList.map((t: any) => ({ name: t.name, target: +(t.target / 100000).toFixed(1), achieved: +(t.achieved / 100000).toFixed(1) }))}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-                      <YAxis tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v) => `\u20b9${v}L`} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v) => `\u20b9${v}L`} />
                       <Tooltip contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} formatter={(v: any) => `\u20b9${v}L`} />
-                      <Legend wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }} />
-                      <Bar dataKey="target" fill="#374151" radius={[4, 4, 0, 0]} />
+                      <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
+                      <Bar dataKey="target" fill="var(--track)" radius={[4, 4, 0, 0]} />
                       <Bar dataKey="achieved" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -902,8 +916,8 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={[...ops.storeAchievements].filter((s: any) => s.walkins > 0).sort((a: any, b: any) => b.walkins - a.walkins).slice(0, 12).map((s: any) => ({ name: shortStore(s.store), walkins: s.walkins }))} layout="vertical" margin={{ left: 5, right: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis type="number" tick={{ fontSize: 10, fill: "#a1a1aa" }} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "#a1a1aa" }} width={90} />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: "var(--text-secondary)" }} width={90} />
                       <Tooltip contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: "12px", fontSize: "12px" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
                       <Bar dataKey="walkins" fill="#25d366" radius={[0, 4, 4, 0]} />
                     </BarChart>
@@ -922,8 +936,8 @@ export default function Dashboard() {
                     <span className="text-xl font-extrabold" style={{ color: tl.color }}>{tl.achPct}%</span>
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-muted)] mb-3">
-                    <span>{"\ud83c\udfaf"} {fmtINR(tl.target)}</span>
-                    <span>{"\u2705"} {fmtINR(tl.achieved)}</span>
+                    <span>{"\ud83c\udfaf"} {fmtSel(tl.target)}</span>
+                    <span>{"\u2705"} {fmtSel(tl.achieved)}</span>
                     <span>{"\ud83d\udc63"} {tl.walkins} walkins</span>
                     <span>{"\ud83e\udd1d"} {tl.conv} conv ({tl.convPct}%)</span>
                   </div>
@@ -956,8 +970,8 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={countryData} layout="vertical" margin={{ left: 10, right: 30 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
-                    <YAxis type="category" dataKey="country" width={90} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+                    <YAxis type="category" dataKey="country" width={90} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} />
                     <Tooltip
                       formatter={(v: any, _name: any, item: any) => [
                         `${fmtByCurrency(item?.payload?.local_amount || 0, item?.payload?.local_currency || "")} (≈ $${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 })})`,
@@ -977,7 +991,7 @@ export default function Dashboard() {
                           entry.country?.toUpperCase() === "PAKISTAN" ? "#ef4444" :
                           entry.country?.toUpperCase() === "MALAYSIA" ? "#06b6d4" :
                           entry.country?.toUpperCase() === "UK" ? "#ec4899" :
-                          entry.country?.toUpperCase() === "BAHRAIN" ? "#f97316" : "#6b7280"
+                          entry.country?.toUpperCase() === "BAHRAIN" ? "#f97316" : "var(--text-muted)"
                         } />
                       ))}
                     </Bar>
@@ -998,7 +1012,7 @@ export default function Dashboard() {
                         c.country?.toUpperCase() === "PAKISTAN" ? "#ef4444" :
                         c.country?.toUpperCase() === "MALAYSIA" ? "#06b6d4" :
                         c.country?.toUpperCase() === "UK" ? "#ec4899" :
-                        c.country?.toUpperCase() === "BAHRAIN" ? "#f97316" : "#6b7280"
+                        c.country?.toUpperCase() === "BAHRAIN" ? "#f97316" : "var(--text-muted)"
                     }} />
                     <span className="text-xs font-semibold text-white">{c.country}</span>
                   </div>
@@ -1155,7 +1169,7 @@ export default function Dashboard() {
                       country === "Pakistan" ? "#ef4444" :
                       country === "Malaysia" ? "#06b6d4" :
                       country === "UK" ? "#ec4899" :
-                      country === "Bahrain" ? "#f97316" : "#6b7280"
+                      country === "Bahrain" ? "#f97316" : "var(--text-muted)"
                   }} />
                   {country}: {count}
                 </span>
@@ -1198,7 +1212,7 @@ export default function Dashboard() {
                             country === "Pakistan" ? "#ef4444" :
                             country === "Malaysia" ? "#06b6d4" :
                             country === "UK" ? "#ec4899" :
-                            country === "Bahrain" ? "#f97316" : "#6b7280"
+                            country === "Bahrain" ? "#f97316" : "var(--text-muted)"
                         }} />
                         <span className="text-sm font-semibold text-white">{country}</span>
                         <span className="text-xs text-[var(--text-muted)]">({shops.length} branches)</span>

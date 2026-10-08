@@ -184,7 +184,7 @@ export default function TeamLeaders() {
                 Custom
               </button>
               {showRangeFilter && (
-                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#11131e] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
+                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
                   <p className="font-semibold text-white">Custom date range</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>

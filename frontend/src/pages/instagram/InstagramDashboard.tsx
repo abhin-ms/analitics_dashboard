@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { BrandIcon, InstagramIcon } from "@/components/shared/BrandIcon";
 import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { useState } from "react";
 import {
   BarChart3, MessageSquare, Users, Bot, ArrowUpRight,
-  Coins, TrendingUp, Phone, Camera,
+  Coins, TrendingUp, Phone,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -63,7 +64,7 @@ export default function InstagramDashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-              <Camera className="text-pink-400" size={22} />
+              <BrandIcon brand="instagram" size={22} />
               Instagram Bot Dashboard
             </h2>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
@@ -104,8 +105,8 @@ export default function InstagramDashboard() {
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={creditsData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                  <XAxis dataKey="name" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "#a1a1aa", fontSize: 11 }} />
+                  <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
                   <Tooltip
                     contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 8, fontSize: 12 }}
                     labelStyle={{ color: "var(--text-primary)" }}
@@ -207,7 +208,7 @@ export default function InstagramDashboard() {
             <h3 className="text-sm font-bold text-white mb-3">Connected Account</h3>
             <div className="flex items-center gap-4 p-3 rounded-xl bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-                <Camera size={18} className="text-white" />
+                <BrandIcon brand="instagram" size={18} color="#ffffff" />
               </div>
               <div>
                 <p className="text-sm font-semibold text-white">{primaryAccount.page_name || primaryAccount.ig_user_id}</p>
@@ -226,7 +227,7 @@ export default function InstagramDashboard() {
 
         {!accounts || accounts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--border-subtle)] bg-[var(--bg-card)] p-10 text-center">
-            <Camera size={40} className="mx-auto text-pink-400 mb-3 opacity-50" />
+            <BrandIcon brand="instagram" size={40} className="mx-auto mb-3 opacity-60" style={{ display: "block" }} />
             <p className="text-sm font-semibold text-white">No Instagram Account Connected</p>
             <p className="text-xs text-[var(--text-muted)] mt-1">Connect an Instagram Business account to start the AI bot</p>
           </div>

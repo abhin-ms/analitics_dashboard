@@ -231,7 +231,7 @@ export default function SalesOverview() {
                 Custom
               </button>
               {showRangeFilter && (
-                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#11131e] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
+                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-2xl p-4 z-50 text-xs space-y-3">
                   <p className="font-semibold text-white">Custom date range</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -313,7 +313,7 @@ export default function SalesOverview() {
                     : "bg-white/5 border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-white/8"
                 }`}
               >
-                <span className="w-2 h-2 rounded-full" style={{ background: COUNTRY_COLORS[country] || "#6b7280" }} />
+                <span className="w-2 h-2 rounded-full" style={{ background: COUNTRY_COLORS[country] || "var(--text-muted)" }} />
                 {country} ({count}) — {fmtCurrency(rev, country)}
               </button>
             );
@@ -360,7 +360,7 @@ export default function SalesOverview() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {stores.map((s: any) => {
-              const color = COUNTRY_COLORS[s.country] || "#6b7280";
+              const color = COUNTRY_COLORS[s.country] || "var(--text-muted)";
               const ach = s.achievement_pct || 0;
               return (
                 <button

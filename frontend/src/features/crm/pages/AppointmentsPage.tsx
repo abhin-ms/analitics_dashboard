@@ -106,7 +106,7 @@ export default function AppointmentsPage({ embedded = false }: { embedded?: bool
                         style={{ borderLeftColor: att.color }}>
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-white">{it.has_time ? fmtTime(it.scheduled_at) : "Time not set"}</span>
-                          {it.source === "sheet" && <Pill label="From sheet" color="#94a3b8" />}
+                          {it.source === "sheet" && <Pill label="From sheet" color="#64748b" />}
                         </div>
                         {it.sale_match_status && (
                           <div>
@@ -115,7 +115,7 @@ export default function AppointmentsPage({ embedded = false }: { embedded?: bool
                             )}
                             {it.sale_match_status === "no_sale" && <Pill label="No sale found in 2 days" color="#ef4444" />}
                             {it.sale_match_status === "pending" && <Pill label="Waiting for sale (2-day window)" color="#f59e0b" />}
-                            {it.sale_match_status === "no_phone" && <Pill label="No valid phone to match" color="#94a3b8" />}
+                            {it.sale_match_status === "no_phone" && <Pill label="No valid phone to match" color="#64748b" />}
                           </div>
                         )}
                         <button onClick={() => openLead(it.lead_id)} className="block text-sm font-medium text-blue-400 hover:underline cursor-pointer text-left">{it.lead_name}</button>

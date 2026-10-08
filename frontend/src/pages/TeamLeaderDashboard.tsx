@@ -108,8 +108,8 @@ export default function TeamLeaderDashboard() {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={stores} layout="vertical" margin={{ left: 10, right: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
-                <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => fmtINR(v)} />
-                <YAxis dataKey="name" type="category" width={100} tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <XAxis type="number" tick={{ fill: "var(--text-secondary)", fontSize: 11 }} tickFormatter={(v) => fmtINR(v)} />
+                <YAxis dataKey="name" type="category" width={100} tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
                 <Tooltip
                   contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 12 }}
                   labelStyle={{ color: "var(--text-primary)" }}
@@ -255,10 +255,10 @@ export default function TeamLeaderDashboard() {
               <LineChart data={revenue_trend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
                 <XAxis
-                  dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }}
+                  dataKey="date" tick={{ fill: "var(--text-secondary)", fontSize: 10 }}
                   tickFormatter={(d) => { const dt = new Date(d); return `${dt.getDate()}/${dt.getMonth()+1}`; }}
                 />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} tickFormatter={(v) => fmtINR(v)} />
+                <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 10 }} tickFormatter={(v) => fmtINR(v)} />
                 <Tooltip
                   contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 12 }}
                   labelStyle={{ color: "var(--text-primary)" }}

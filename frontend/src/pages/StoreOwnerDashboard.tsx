@@ -177,8 +177,8 @@ function SalesTab({ data, money }: { data: any; money: (n: number) => string }) 
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
-                <XAxis dataKey="period" tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v: string) => (v.length === 10 ? v.slice(8) : v)} />
-                <YAxis tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v: number) => money(v)} width={64} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v: string) => (v.length === 10 ? v.slice(8) : v)} />
+                <YAxis tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v: number) => money(v)} width={64} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: 12, fontSize: 12 }}
                   labelStyle={{ color: "var(--text-primary)" }}

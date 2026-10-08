@@ -52,7 +52,7 @@ export default function CEODashboard() {
 
   if (!hasPermission("dashboard", "view")) {
     return (
-      <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>
+      <div style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
         <p style={{ fontSize: 18 }}>You don't have permission to view the CEO Dashboard.</p>
       </div>
     );
@@ -61,7 +61,7 @@ export default function CEODashboard() {
   const renderTab = () => {
     if (loading) {
       return (
-        <div style={{ padding: 60, textAlign: "center", color: "#94a3b8" }}>
+        <div style={{ padding: 60, textAlign: "center", color: "var(--text-secondary)" }}>
           <div style={{ fontSize: 14, marginTop: 12 }}>Loading data from Google Sheets...</div>
         </div>
       );
@@ -70,7 +70,7 @@ export default function CEODashboard() {
       return (
         <div style={{ padding: 60, textAlign: "center", color: "#ef4444" }}>
           <p style={{ fontSize: 16, fontWeight: 600 }}>Failed to load data</p>
-          <p style={{ fontSize: 13, marginTop: 8, color: "#94a3b8" }}>{error}</p>
+          <p style={{ fontSize: 13, marginTop: 8, color: "var(--text-secondary)" }}>{error}</p>
           <button
             onClick={fetchData}
             style={{
@@ -101,28 +101,28 @@ export default function CEODashboard() {
     <div style={{ minHeight: "100%" }}>
       {/* Header */}
       <div style={{
-        background: "linear-gradient(135deg, #1a1f2e, #16213e, #0f3460)",
+        background: "linear-gradient(135deg, var(--bg-card), var(--bg-card), var(--bg-card))",
         padding: "14px 24px", display: "flex", alignItems: "center",
         justifyContent: "space-between", borderRadius: "12px 12px 0 0",
         borderBottom: "2px solid #2563eb", marginBottom: 0,
       }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#60a5fa", letterSpacing: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "var(--tone-blue-fg)", letterSpacing: 1 }}>
             BP <span style={{ color: "#f59e0b" }}>Analytics</span>
           </div>
-          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
             CEO Decision Dashboard
           </div>
         </div>
-        <div style={{ textAlign: "right", fontSize: 12, color: "#94a3b8" }}>
-          <strong style={{ color: "#e2e8f0", display: "block", fontSize: 14 }}>India · UAE · Oman</strong>
+        <div style={{ textAlign: "right", fontSize: 12, color: "var(--text-secondary)" }}>
+          <strong style={{ color: "var(--text-primary)", display: "block", fontSize: 14 }}>India · UAE · Oman</strong>
           <span>24 India + 19 Intl Stores</span>
         </div>
       </div>
 
       {/* Tabs */}
       <div style={{
-        display: "flex", background: "#1a1f2e", borderBottom: "2px solid #1e2749",
+        display: "flex", background: "var(--bg-card)", borderBottom: "2px solid var(--border-subtle)",
         overflowX: "auto", gap: 0,
       }}>
         {TABS.map((tab) => (
@@ -132,8 +132,8 @@ export default function CEODashboard() {
             style={{
               padding: "11px 14px", cursor: "pointer", fontSize: 12,
               fontWeight: 600, border: "none", whiteSpace: "nowrap",
-              color: activeTab === tab.id ? "#60a5fa" : "#64748b",
-              background: activeTab === tab.id ? "#1e2749" : "transparent",
+              color: activeTab === tab.id ? "var(--tone-blue-fg)" : "var(--text-muted)",
+              background: activeTab === tab.id ? "var(--border-subtle)" : "transparent",
               borderBottom: activeTab === tab.id ? "2px solid #2563eb" : "2px solid transparent",
               marginBottom: -2, transition: "all 0.2s",
             }}

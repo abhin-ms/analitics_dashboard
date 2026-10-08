@@ -127,7 +127,7 @@ function MetaLeadsCard({ meta }: { meta: any }) {
           {meta.recent.map((r: any, i: number) => (
             <div key={i} className="px-5 py-2 text-xs flex flex-wrap items-center gap-2">
               <span className="text-[var(--text-muted)] w-28">{fmtDateTime(r.at)}</span>
-              <Pill label={r.status} color={META_STATUS_COLOR[r.status] || "#94a3b8"} />
+              <Pill label={r.status} color={META_STATUS_COLOR[r.status] || "#64748b"} />
               {r.hot && <Pill label="Hot" color={HOT_COLOR} />}
               {r.lead_id ? <button onClick={() => openLead(r.lead_id)} className="text-blue-400 hover:underline cursor-pointer">{r.name || `Lead #${r.lead_id}`}</button>
                 : <span className="text-white">{r.name || "—"}</span>}
@@ -166,7 +166,7 @@ function IntegrationsTab() {
               {data.website.recent.map((r: any, i: number) => (
                 <div key={i} className="px-5 py-2 text-xs flex flex-wrap items-center gap-2">
                   <span className="text-[var(--text-muted)] w-28">{fmtDateTime(r.at)}</span>
-                  <Pill label={r.status} color={r.status === "created" ? "#10b981" : r.status === "duplicate" ? "#94a3b8" : "#f59e0b"} />
+                  <Pill label={r.status} color={r.status === "created" ? "#10b981" : r.status === "duplicate" ? "#64748b" : "#f59e0b"} />
                   {r.lead_id ? <button onClick={() => openLead(r.lead_id)} className="text-blue-400 hover:underline cursor-pointer">{r.name || `Lead #${r.lead_id}`}</button>
                     : <span className="text-white">{r.name || "—"}</span>}
                   <span className="text-[var(--text-muted)]">{r.store || ""} · {r.message}</span>
@@ -277,7 +277,7 @@ function DataQualityTab() {
       <Card>
         <CardHeader title={`Statuses not in the list · ${data.unknown_statuses.length}`} subtitle="Kept as typed in the sheet. Fix the spelling in the sheet or update the lead." />
         {data.unknown_statuses.length === 0 ? <Empty>All statuses match the list.</Empty> : (
-          <div className="px-5 py-3 flex flex-wrap gap-2">{data.unknown_statuses.map((s: any) => <Pill key={s.status} label={`${s.status} · ${s.count}`} color="#94a3b8" />)}</div>
+          <div className="px-5 py-3 flex flex-wrap gap-2">{data.unknown_statuses.map((s: any) => <Pill key={s.status} label={`${s.status} · ${s.count}`} color="#64748b" />)}</div>
         )}
       </Card>
       <Card>

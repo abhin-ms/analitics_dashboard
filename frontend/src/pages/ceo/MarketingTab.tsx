@@ -133,17 +133,17 @@ export function MarketingTab({ data }: { data: any }) {
 
   return (
     <div>
-      <div style={{ background: "#1a1f0a", border: "1px solid #4d7c0f", borderRadius: 6, padding: "10px 14px", fontSize: 11, color: "#84cc16", marginBottom: 16 }}>
+      <div style={{ background: "var(--tone-lime-bg)", border: "1px solid var(--tone-lime-border)", borderRadius: 6, padding: "10px 14px", fontSize: 11, color: "var(--tone-lime-fg)", marginBottom: 16 }}>
         All data sourced from BP Daily Tracker (xlsx) — synced every 1 min. Includes Instagram, YouTube, TikTok, Snapchat, WhatsApp, and Google Reviews.
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 14, marginBottom: 20 }}>
         {kpis.map((k, i) => (
-          <div key={i} style={{ background: "linear-gradient(135deg, #1e2336, #252d45)", border: "1px solid #2d3748", borderRadius: 10, padding: 16, position: "relative", overflow: "hidden" }}>
+          <div key={i} style={{ background: "linear-gradient(135deg, var(--bg-card), var(--bg-card-hover))", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16, position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: k.color }} />
-            <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{k.label}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: "#e2e8f0" }}>{k.value}</div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{k.sub}</div>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text-primary)" }}>{k.value}</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>{k.sub}</div>
           </div>
         ))}
       </div>
@@ -154,7 +154,7 @@ export function MarketingTab({ data }: { data: any }) {
           <thead>
             <tr>
               {["#", "Store", "Ctry", "MTD Rev", "Target%", "IG Views", "IG Likes", "IG Followers", "YT Views", "TT Views", "WA Chats", "WA Walkins", "Google ★", "Reviews", "Status"].map((h) => (
-                <th key={h} style={{ background: "#1a2235", color: "#94a3b8", padding: "9px 8px", textAlign: "left", borderBottom: "1px solid #2d3748", fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                <th key={h} style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", padding: "9px 8px", textAlign: "left", borderBottom: "1px solid var(--border-subtle)", fontSize: 10, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -166,25 +166,25 @@ export function MarketingTab({ data }: { data: any }) {
                 const dash = dashMap[s.store] || {};
                 const salesStatus = dash.sales_status || "";
                 return (
-                  <tr key={i} style={{ borderBottom: "1px solid #1e2336" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#1e2749")}
+                  <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--border-subtle)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                    <td style={{ padding: "7px 8px", color: "#cbd5e1", textAlign: "center" }}>{i + 1}</td>
-                    <td style={{ padding: "7px 8px", color: "#e2e8f0", fontWeight: 500, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.store}</td>
-                    <td style={{ padding: "7px 8px", color: "#cbd5e1" }}>{s.country}</td>
+                    <td style={{ padding: "7px 8px", color: "var(--text-primary)", textAlign: "center" }}>{i + 1}</td>
+                    <td style={{ padding: "7px 8px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.store}</td>
+                    <td style={{ padding: "7px 8px", color: "var(--text-primary)" }}>{s.country}</td>
                     <td style={{ padding: "7px 8px", color: "#3b82f6", fontWeight: 700, textAlign: "right" }}>₹{fmtNum(s.mtdRevenue)}</td>
                     <td style={{ padding: "7px 8px", color: tgtPct >= 65 ? "#10b981" : tgtPct >= 35 ? "#f59e0b" : "#ef4444", fontWeight: 700, textAlign: "right" }}>{tgtPct}%</td>
                     <td style={{ padding: "7px 8px", color: "#E1306C", textAlign: "right" }}>{fmtNum(s.igViewsAchieved)}</td>
-                    <td style={{ padding: "7px 8px", color: "#cbd5e1", textAlign: "right" }}>{fmtNum(s.igLikes)}</td>
+                    <td style={{ padding: "7px 8px", color: "var(--text-primary)", textAlign: "right" }}>{fmtNum(s.igLikes)}</td>
                     <td style={{ padding: "7px 8px", color: "#ec4899", textAlign: "right" }}>{fmtNum(s.igFollowers)}</td>
                     <td style={{ padding: "7px 8px", color: "#FF0000", textAlign: "right" }}>{fmtNum(s.ytViews)}</td>
                     <td style={{ padding: "7px 8px", color: "#00f2ea", textAlign: "right" }}>{fmtNum(s.ttViews)}</td>
                     <td style={{ padding: "7px 8px", color: "#25d366", textAlign: "right" }}>{s.waChats}</td>
                     <td style={{ padding: "7px 8px", color: "#25d366", fontWeight: 700, textAlign: "right" }}>{s.waWalkins}</td>
-                    <td style={{ padding: "7px 8px", color: s.googleRating ? (s.googleRating >= 4.5 ? "#34d399" : s.googleRating >= 4.0 ? "#fcd34d" : "#f87171") : "#374151", fontWeight: 700, textAlign: "right" }}>
+                    <td style={{ padding: "7px 8px", color: s.googleRating ? (s.googleRating >= 4.5 ? "var(--tone-green-fg)" : s.googleRating >= 4.0 ? "var(--tone-amber-fg)" : "var(--tone-red-fg)") : "var(--track)", fontWeight: 700, textAlign: "right" }}>
                       {s.googleRating ? `${s.googleRating} ★` : "—"}
                     </td>
-                    <td style={{ padding: "7px 8px", color: "#cbd5e1", textAlign: "right" }}>{s.googleReviews || "—"}</td>
+                    <td style={{ padding: "7px 8px", color: "var(--text-primary)", textAlign: "right" }}>{s.googleReviews || "—"}</td>
                     <td style={{ padding: "7px 8px", textAlign: "center" }}>
                       <span style={{ fontSize: 11 }}>{salesStatus}</span>
                     </td>
@@ -197,30 +197,30 @@ export function MarketingTab({ data }: { data: any }) {
 
       {/* Charts */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Instagram Views — Top Stores</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Instagram Views — Top Stores</h3>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart data={igBarData} layout="vertical" margin={{ left: 10, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-              <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} width={100} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
+              <YAxis type="category" dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 9 }} width={100} />
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               <Bar dataKey="views" fill="#E1306C" radius={[0, 4, 4, 0]} />
               <Bar dataKey="likes" fill="#a855f7" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>WhatsApp Funnel — Top Stores</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>WhatsApp Funnel — Top Stores</h3>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart data={waBarData} layout="vertical" margin={{ left: 10, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-              <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} />
-              <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} width={100} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
+              <YAxis type="category" dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 9 }} width={100} />
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#94a3b8" }} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--text-secondary)" }} />
               <Bar dataKey="chats" fill="#25d366" radius={[0, 4, 4, 0]} />
               <Bar dataKey="walkins" fill="#3b82f6" radius={[0, 4, 4, 0]} />
             </BarChart>
@@ -230,13 +230,13 @@ export function MarketingTab({ data }: { data: any }) {
 
       {/* Platform breakdown */}
       {platformData.length > 0 && (
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Platform Reach Breakdown</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Platform Reach Breakdown</h3>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={platformData} margin={{ left: 20, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-              <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {platformData.map((p, i) => <Cell key={i} fill={p.color} />)}

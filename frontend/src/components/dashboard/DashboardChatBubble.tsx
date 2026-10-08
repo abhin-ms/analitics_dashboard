@@ -59,7 +59,7 @@ export function DashboardChatBubble() {
   return (
     <>
       {open && (
-        <div className="fixed bottom-24 right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] h-[480px] max-h-[70vh] rounded-2xl border border-[var(--border-subtle)] bg-[#11131e] shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed bottom-24 right-6 z-50 w-[360px] max-w-[calc(100vw-2rem)] h-[480px] max-h-[70vh] rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-2xl flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)] bg-white/5">
             <div className="flex items-center gap-2">
               <Sparkles size={16} className="text-[var(--accent-blue)]" />

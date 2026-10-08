@@ -285,8 +285,8 @@ export default function SalesReports() {
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={trend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="period" tick={{ fontSize: 10, fill: "#a1a1aa" }} />
-                <YAxis tick={{ fontSize: 10, fill: "#a1a1aa" }} tickFormatter={(v) => formatByCountry(v, displayCountry)} width={70} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} />
+                <YAxis tick={{ fontSize: 10, fill: "var(--text-secondary)" }} tickFormatter={(v) => formatByCountry(v, displayCountry)} width={70} />
                 <Tooltip
                   contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 8 }}
                   labelStyle={{ color: "var(--text-primary)" }}

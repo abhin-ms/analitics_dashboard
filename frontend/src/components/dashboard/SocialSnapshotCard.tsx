@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { BrandIcon, type Brand } from "@/components/shared/BrandIcon";
 import { Link } from "react-router-dom";
 import { ArrowRight, Clock, Share2 } from "lucide-react";
 import {
@@ -35,8 +36,9 @@ export default function SocialSnapshotCard() {
   if (empty || !stores.length) return null;
 
   const single = stores.length === 1 ? stores[0] : null;
-  const stats: { label: string; value: string; sub: string; meter?: number; color: string }[] = [
+  const stats: { label: string; value: string; sub: string; meter?: number; color: string; brand?: Brand }[] = [
     ...platforms.map((p) => ({
+      brand: p as Brand,
       label: `${PLATFORM_LABEL[p]} views`,
       value: fmtCompact(t.platforms[p].views),
       sub: `${Math.round(t.platforms[p].pct)}% of ${fmtCompact(t.platforms[p].target)} target`,
@@ -44,7 +46,7 @@ export default function SocialSnapshotCard() {
       color: PLATFORM_COLOR[p],
     })),
     { label: "New followers", value: `+${fmtCompact(t.newFollowers)}`, sub: `${t.videos} videos posted`, color: "#a855f7" },
-    { label: "Instagram DMs", value: fmtCompact(t.dms), sub: `${fmtCompact(t.walkins)} walk-ins booked`, color: "#06b6d4" },
+    { label: "Instagram DMs", value: fmtCompact(t.dms), sub: `${fmtCompact(t.walkins)} walk-ins booked`, color: "#06b6d4", brand: "instagram" as Brand },
     single
       ? { label: "Google rating", value: single.rating ? `${single.rating.toFixed(1)} ★` : "—", sub: `${single.reviews} reviews · replied: ${single.replied || "—"}`, color: "#f59e0b" }
       : { label: "Google rating", value: t.avgRating ? `${t.avgRating.toFixed(2)} ★` : "—", sub: `${t.ratingGood} of ${t.ratedStores} stores ≥ ${RATING_GOOD}`, color: "#f59e0b" },
@@ -75,7 +77,10 @@ export default function SocialSnapshotCard() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-4 mb-6">
         {stats.map((s) => (
           <div key={s.label} className="min-w-0 border-l-2 pl-3" style={{ borderColor: s.color }}>
-            <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">{s.label}</p>
+            <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+              {s.brand ? <BrandIcon brand={s.brand} size={12} /> : s.label.startsWith("Google") ? <BrandIcon brand="google" size={12} /> : null}
+              {s.label}
+            </p>
             <p className="text-xl font-extrabold text-white leading-tight mt-0.5">{s.value}</p>
             <p className="text-[11px] text-[var(--text-muted)]">{s.sub}</p>
             {s.meter !== undefined && (

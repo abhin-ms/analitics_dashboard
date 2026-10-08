@@ -288,8 +288,8 @@ export default function TeamLeaderDetail() {
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={data.days} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" />
-                <XAxis dataKey="date" tickFormatter={(d) => String(Number(String(d).slice(8)))} tick={{ fontSize: 11, fill: "#94a3b8" }} />
-                <YAxis tickFormatter={(v) => inr(v, true)} width={60} tick={{ fontSize: 11, fill: "#94a3b8" }} />
+                <XAxis dataKey="date" tickFormatter={(d) => String(Number(String(d).slice(8)))} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} />
+                <YAxis tickFormatter={(v) => inr(v, true)} width={60} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} />
                 <Tooltip
                   contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 12, fontSize: 12 }}
                   labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }}

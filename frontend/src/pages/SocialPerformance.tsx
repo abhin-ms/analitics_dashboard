@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
+import { BrandIcon, InstagramIcon } from "@/components/shared/BrandIcon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Eye, RefreshCw, FileSpreadsheet, Video, UserPlus, MessageCircle, Footprints, Star,
+  RefreshCw, FileSpreadsheet, Video, UserPlus, Footprints,
   MessageSquareReply, Search, AlertTriangle, Trophy, Clock, Target,
 } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -258,16 +259,16 @@ function Content({ stores, t, scope }: { stores: SocialStore[]; t: SocialTotals;
       value: fmtCompact(t.platforms[p].views),
       sub: `${Math.round(t.platforms[p].pct)}% of ${fmtCompact(t.platforms[p].target)} target`,
       meter: t.platforms[p].pct / 100,
-      icon: <Eye size={18} />,
+      icon: <BrandIcon brand={p} size={18} />,
       color: PLATFORM_COLOR[p],
     })),
     { label: "Videos posted", value: String(t.videos), sub: multi ? `${t.storesPosted} of ${t.stores} stores posted` : `${single!.posts} posts published`, icon: <Video size={18} />, color: "#a855f7" },
     { label: "New followers", value: `+${fmtCompact(t.newFollowers)}`, sub: `${fmtCompact(t.followers)} total on Instagram`, icon: <UserPlus size={18} />, color: "#8b5cf6" },
-    { label: "Instagram DMs", value: fmtCompact(t.dms), sub: `${fmtCompact(t.manychat)} handled by Manychat`, icon: <MessageCircle size={18} />, color: "#06b6d4" },
+    { label: "Instagram DMs", value: fmtCompact(t.dms), sub: `${fmtCompact(t.manychat)} handled by Manychat`, icon: <BrandIcon brand="instagram" size={18} />, color: "#06b6d4" },
     { label: "Walk-ins booked", value: fmtCompact(t.walkins), sub: "all sources (WhatsApp, phone, in-store)", icon: <Footprints size={18} />, color: "#10b981" },
     multi
-      ? { label: "Avg Google rating", value: t.avgRating ? `${t.avgRating.toFixed(2)} ★` : "—", sub: `${t.ratingGood} stores ≥ ${RATING_GOOD} · ${t.ratingCrit} below ${RATING_WARN}`, icon: <Star size={18} />, color: "#f59e0b" }
-      : { label: "Google rating", value: single!.rating ? `${single!.rating.toFixed(1)} ★` : "—", sub: `target ≥ ${RATING_GOOD} ★`, icon: <Star size={18} />, color: "#f59e0b" },
+      ? { label: "Avg Google rating", value: t.avgRating ? `${t.avgRating.toFixed(2)} ★` : "—", sub: `${t.ratingGood} stores ≥ ${RATING_GOOD} · ${t.ratingCrit} below ${RATING_WARN}`, icon: <BrandIcon brand="google" size={18} />, color: "#f59e0b" }
+      : { label: "Google rating", value: single!.rating ? `${single!.rating.toFixed(1)} ★` : "—", sub: `target ≥ ${RATING_GOOD} ★`, icon: <BrandIcon brand="google" size={18} />, color: "#f59e0b" },
     multi
       ? { label: "Reviews replied", value: `${t.repliedAll}/${t.ratedStores}`, sub: `stores replied to all · ${fmtCompact(t.reviews)} reviews`, meter: t.ratedStores ? t.repliedAll / t.ratedStores : undefined, icon: <MessageSquareReply size={18} />, color: "#f97316" }
       : { label: "Google reviews", value: String(single!.reviews), sub: `replied to all: ${single!.replied || "not filled"}`, icon: <MessageSquareReply size={18} />, color: "#f97316" },
@@ -340,7 +341,7 @@ function TargetsCard({ t, scope, stores }: { t: SocialTotals; scope: SocialScope
             <div key={p}>
               <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs mb-1.5">
                 <span className="font-semibold text-white flex items-center gap-2">
-                  <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: PLATFORM_COLOR[p] }} />
+                  <BrandIcon brand={p} size={15} />
                   {PLATFORM_LABEL[p]}
                   {stores.length > 1 && <span className="font-normal text-[var(--text-muted)]">· {pt.storesReporting} of {stores.length} stores reporting</span>}
                 </span>
@@ -477,7 +478,7 @@ function ViewsCard({ stores, platforms }: { stores: SocialStore[]; platforms: Pl
 
 function FunnelCard({ t }: { t: SocialTotals }) {
   const stages = [
-    { label: "Instagram views", value: t.platforms.instagram.views, color: "#93c5fd" },
+    { label: "Instagram views", value: t.platforms.instagram.views, color: "#60a5fa" },
     { label: "Engagements", value: t.engagement, color: "#60a5fa" },
     { label: "Instagram DMs", value: t.dms, color: "#3b82f6" },
     { label: "Manychat handled", value: t.manychat, color: "#1d4ed8" },

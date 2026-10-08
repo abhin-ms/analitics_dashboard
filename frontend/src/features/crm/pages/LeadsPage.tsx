@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { SourceIcon } from "@/components/shared/BrandIcon";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Search, Columns3, Bookmark, Download, UserCog, ChevronLeft, ChevronRight, Trash2, Flame } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -131,7 +132,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
           {l.is_urgent && <Flame size={12} className="inline ml-1 text-rose-400" />}
           <div className="flex flex-wrap gap-1 mt-0.5">
             {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
-            <Pill label={l.source_label} color={sourceColor(l)} />
+            <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
           </div>
           <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.lead_source || "—"}</p>
           {l.phone_model
@@ -185,7 +186,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             <button onClick={() => openLead(l.id)} className="font-semibold truncate cursor-pointer text-left text-blue-400" style={rowAccent(l) ? { color: rowAccent(l)! } : undefined}>{l.full_name}</button>
             <div className="flex flex-wrap gap-1">
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
-              <Pill label={l.source_label} color={sourceColor(l)} />
+              <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
             </div>
             <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
@@ -193,7 +194,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <StageBadge stage={l.stage} />
-          <Pill label={l.status_label} color="#94a3b8" />
+          <Pill label={l.status_label} color="#64748b" />
           {l.first_call_pending && <Pill label="Call within 5 min" color="#3b82f6" />}
         </div>
         <div className="flex items-center justify-between">

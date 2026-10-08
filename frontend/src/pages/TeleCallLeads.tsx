@@ -444,7 +444,7 @@ export default function TeleCallLeads() {
                               className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
                               style={{
                                 backgroundColor: `${STATUS_COLORS[status] || "#64748b"}18`,
-                                color: STATUS_COLORS[status] || "#64748b",
+                                color: STATUS_COLORS[status] || "var(--text-muted)",
                               }}
                             >
                               {STATUS_ICONS[status]}
@@ -484,7 +484,7 @@ export default function TeleCallLeads() {
                                   className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full"
                                   style={{
                                     backgroundColor: `${STATUS_COLORS[lead.status] || "#64748b"}18`,
-                                    color: STATUS_COLORS[lead.status] || "#64748b",
+                                    color: STATUS_COLORS[lead.status] || "var(--text-muted)",
                                   }}
                                 >
                                   {STATUS_ICONS[lead.status]}
@@ -602,7 +602,7 @@ export default function TeleCallLeads() {
                                         className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
                                         style={{
                                           backgroundColor: `${STATUS_COLORS[lead.status] || "#64748b"}18`,
-                                          color: STATUS_COLORS[lead.status] || "#64748b",
+                                          color: STATUS_COLORS[lead.status] || "var(--text-muted)",
                                         }}
                                       >
                                         {STATUS_ICONS[lead.status]}
@@ -744,8 +744,8 @@ export default function TeleCallLeads() {
             className="md:hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end justify-center"
             onClick={(e) => { if (e.target === e.currentTarget) handleEditCancel(); }}
           >
-            <div className="w-full max-h-[92vh] overflow-y-auto bg-[#11131e] border-t border-[var(--border-subtle)] rounded-t-2xl">
-              <div className="sticky top-0 bg-[#11131e] flex items-center justify-between px-4 py-3.5 border-b border-[var(--border-subtle)]">
+            <div className="w-full max-h-[92vh] overflow-y-auto bg-[var(--bg-card)] border-t border-[var(--border-subtle)] rounded-t-2xl">
+              <div className="sticky top-0 bg-[var(--bg-card)] flex items-center justify-between px-4 py-3.5 border-b border-[var(--border-subtle)]">
                 <div className="min-w-0">
                   <h3 className="text-sm font-bold text-white truncate">{editingLeadObj.full_name}</h3>
                   <PhoneActions phone={editingLeadObj.phone} className="mt-0.5" />
@@ -867,7 +867,7 @@ export default function TeleCallLeads() {
                 </div>
               </div>
 
-              <div className="sticky bottom-0 bg-[#11131e] border-t border-[var(--border-subtle)] p-4 flex gap-2">
+              <div className="sticky bottom-0 bg-[var(--bg-card)] border-t border-[var(--border-subtle)] p-4 flex gap-2">
                 <button
                   onClick={handleEditCancel}
                   className="flex-1 py-3 rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] font-semibold"
@@ -892,7 +892,7 @@ export default function TeleCallLeads() {
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
             onClick={(e) => { if (e.target === e.currentTarget) setShowAddTelecaller(false); }}
           >
-            <div className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[#11131e] p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-md rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-6" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
                   <UserPlus size={18} className="text-[var(--accent-blue)]" />

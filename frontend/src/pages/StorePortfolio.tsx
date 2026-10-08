@@ -5,10 +5,11 @@ import {
   Bar, CartesianGrid, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, BarChart3, Bookmark, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Eye,
-  Film, Megaphone, MessageSquare, Repeat2, Share2, Star, Target, TrendingUp, UserCheck, Users,
+  AlertTriangle, ArrowLeft, BarChart3, Bookmark, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList,
+  Film, Footprints, Globe, Megaphone, PhoneIncoming, PhoneOutgoing, MessageSquare, Repeat2, Share2, Star, Target, TrendingUp, UserCheck, Users,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { BrandIcon } from "@/components/shared/BrandIcon";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { PLATFORM_LABEL, Platform, STATUS_COLOR, Status } from "@/features/social/socialData";
@@ -102,14 +103,46 @@ const PACE_STATUS: Record<PaceStatus, { label: string; tone: Status }> = {
 const PRIORITY_TONE: Record<string, Status> = {
   High: "crit", Medium: "warn", Low: "good", "On track": "good", Done: "good", "Set target": "none", "No data": "none",
 };
-const AREA: Record<string, { label: string; icon: typeof Megaphone }> = {
-  social: { label: "Social Media", icon: Megaphone },
-  leads: { label: "Leads & Conversion", icon: Users },
-  sales: { label: "Sales", icon: BarChart3 },
-  reviews: { label: "Google Reviews", icon: Star },
+const AREA: Record<string, { label: string; icon: typeof Megaphone; color: string }> = {
+  social: { label: "Social Media", icon: Megaphone, color: "#db2777" },
+  leads: { label: "Leads & Conversion", icon: Users, color: "#7c3aed" },
+  sales: { label: "Sales", icon: BarChart3, color: "#16a34a" },
+  reviews: { label: "Google Reviews", icon: Star, color: "#f59e0b" },
 };
-const CHART_BLUE = "#3b82f6";
-const AXIS_TICK = { fontSize: 10, fill: "#a1a1aa" };
+/** Filled, tinted badge per status tone (design: High red, Medium amber, On track green). */
+const TONE_BADGE: Record<Status, string> = {
+  crit: "bg-[var(--tone-red-bg)] text-[var(--tone-red-fg)]",
+  warn: "bg-[var(--tone-amber-bg)] text-[var(--tone-amber-fg)]",
+  good: "bg-[var(--tone-green-bg)] text-[var(--tone-green-fg)]",
+  none: "bg-[var(--bg-subtle)] text-[var(--text-secondary)]",
+};
+const CHART_BLUE = "#2f6fed";
+const TARGET_LINE = "#f59e0b";
+/** Icon-tile hues from the design: each metric keeps its own colour. */
+const TONE = {
+  green: "#16a34a", blue: "#2f6fed", indigo: "#4f46e5", purple: "#7c3aed", red: "#e5484d",
+  amber: "#f59e0b", orange: "#f97316", pink: "#db2777", navy: "#1e3a8a", slate: "#64748b",
+} as const;
+type Tone = keyof typeof TONE;
+
+type IconComp = (p: { size?: number; style?: React.CSSProperties }) => React.ReactNode;
+/** Each platform's own logo, usable wherever a lucide icon goes. */
+const PLATFORM_ICON: Record<Platform, IconComp> = {
+  instagram: ({ size }) => <BrandIcon brand="instagram" size={size} />,
+  facebook: ({ size }) => <BrandIcon brand="facebook" size={size} />,
+  youtube: ({ size }) => <BrandIcon brand="youtube" size={size} />,
+};
+/** Lead-source icons: brand logos where there is a brand. */
+const SOURCE_ICON: Record<string, IconComp> = {
+  performance_marketing: ({ size }) => <BrandIcon brand="meta" size={size} />,
+  growth_marketing: ({ size, style }) => <TrendingUp size={size} style={{ ...style, color: "#16a34a" }} />,
+  whatsapp: ({ size }) => <BrandIcon brand="whatsapp" size={size} />,
+  website: ({ size, style }) => <Globe size={size} style={{ ...style, color: "#2f6fed" }} />,
+  inbound_calls: ({ size, style }) => <PhoneIncoming size={size} style={{ ...style, color: "#7c3aed" }} />,
+  outbound_calls: ({ size, style }) => <PhoneOutgoing size={size} style={{ ...style, color: "#f97316" }} />,
+  walk_ins: ({ size, style }) => <Footprints size={size} style={{ ...style, color: "#0d9488" }} />,
+};
+const AXIS_TICK = { fontSize: 10, fill: "var(--chart-axis)" };
 const TOOLTIP_STYLE = { backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: 12, fontSize: 12 };
 
 // ── small building blocks ──────────────────────────────────────────
@@ -117,14 +150,14 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   return <div className={`rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] ${className}`}>{children}</div>;
 }
 
-function Section({ n, title, icon: Icon, children, right }: {
-  n: number; title: string; icon: typeof Megaphone; children: React.ReactNode; right?: React.ReactNode;
+function Section({ n, title, icon: Icon, tone = "blue", children, right }: {
+  n: number; title: string; icon: typeof Megaphone; tone?: Tone; children: React.ReactNode; right?: React.ReactNode;
 }) {
   return (
     <Card className="p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2.5 text-base sm:text-lg font-bold text-white tracking-tight">
-          <Icon size={20} className="text-[var(--accent-blue)]" />
+          <Icon size={22} style={{ color: TONE[tone] }} />
           {n}. {title}
         </h2>
         {right}
@@ -134,20 +167,20 @@ function Section({ n, title, icon: Icon, children, right }: {
   );
 }
 
-function Stat({ label, value, sub, icon: Icon, subTone }: {
-  label: string; value: React.ReactNode; sub?: React.ReactNode; icon: typeof Megaphone; subTone?: Status;
+function Stat({ label, value, sub, icon: Icon, subTone, tone = "blue" }: {
+  label: string; value: React.ReactNode; sub?: React.ReactNode; icon: typeof Megaphone | IconComp; subTone?: Status; tone?: Tone;
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3 min-w-0">
-      <div className="h-9 w-9 shrink-0 rounded-lg bg-blue-500/10 flex items-center justify-center">
-        <Icon size={17} className="text-[var(--accent-blue)]" />
+    <div className="flex items-start gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 min-w-0">
+      <div className="h-10 w-10 shrink-0 rounded-xl flex items-center justify-center" style={{ background: `${TONE[tone]}1a` }}>
+        <Icon size={19} style={{ color: TONE[tone] }} />
       </div>
       <div className="min-w-0">
         <p className="text-[11px] text-[var(--text-muted)] truncate">{label}</p>
         <p className="text-lg font-extrabold text-white leading-tight tabular-nums truncate">{value}</p>
         {sub !== undefined && (
-          <p className="text-[11px] text-[var(--text-secondary)] truncate flex items-center gap-1">
-            {subTone && <i className="inline-block h-1.5 w-1.5 rounded-full shrink-0" style={{ background: STATUS_COLOR[subTone] }} />}
+          <p className="text-[11px] leading-snug text-[var(--text-secondary)] line-clamp-2">
+            {subTone && <i className="inline-block h-1.5 w-1.5 rounded-full shrink-0 mr-1 align-middle" style={{ background: STATUS_COLOR[subTone] }} />}
             {sub}
           </p>
         )}
@@ -178,7 +211,7 @@ function Progress({ pct, status }: { pct: number | null; status: PaceStatus }) {
 /** Target card: % achieved, progress bar, achieved vs remaining, pace needed. */
 function TargetCard({ title, pace, fmt, unit }: { title: string; pace: Pace; fmt: (n: number) => string; unit: string }) {
   return (
-    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 space-y-3">
+    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-white">{title}</p>
         <StatusPill status={pace.status} />
@@ -393,42 +426,43 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
     <>
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Stat icon={BarChart3} label="Revenue" value={money(salesPace.achieved)} sub={`${num(sales.sales_count)} sales · MCP`} />
-        <Stat icon={Target} label="Sales achievement" value={salesPace.pct === null ? "—" : `${salesPace.pct}%`}
+        <Stat tone="green" icon={BarChart3} label="Revenue" value={money(salesPace.achieved)} sub={`${num(sales.sales_count)} sales · MCP`} />
+        <Stat tone="blue" icon={Target} label="Sales achievement" value={salesPace.pct === null ? "—" : `${salesPace.pct}%`}
           sub={PACE_STATUS[salesPace.status].label} subTone={PACE_STATUS[salesPace.status].tone} />
-        <Stat icon={Eye} label={`${PLATFORM_LABEL.instagram} views`}
+        <Stat tone="pink" icon={PLATFORM_ICON.instagram} label={`${PLATFORM_LABEL.instagram} views`}
           value={social.has_data ? compact(social.platforms.instagram.achieved) : "—"}
           sub={social.has_data ? `${social.platforms.instagram.pct ?? 0}% of target`
             : social.last_report ? `Not reported yet · ${monthLabel(String(social.last_report.month))}: ${compact(Number(social.last_report.instagram))}`
             : "Not reported"}
           subTone={social.has_data ? PACE_STATUS[social.platforms.instagram.status].tone : "none"} />
-        <Stat icon={Users} label="Total leads" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% of target`}
+        <Stat tone="purple" icon={Users} label="Total leads" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% of target`}
           subTone={PACE_STATUS[leads.volume.status].tone} />
-        <Stat icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% rate`} />
-        <Stat icon={Star} label="Google rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} ★`}
+        <Stat tone="red" icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% rate`} />
+        <Stat tone="amber" icon={Star} label="Google rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} ★`}
           sub={reviews.rating_as_of ? `As of ${shortDate(reviews.rating_as_of)}` : undefined} />
       </div>
 
       {analysis.concerns.length > 0 && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
-          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-          <p><span className="font-semibold">Needs attention:</span> {analysis.concerns.join(" · ")}.</p>
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-[var(--tone-amber-bg)] px-4 py-3 text-xs text-[var(--text-primary)]">
+          <AlertTriangle size={15} className="shrink-0 mt-0.5 text-[var(--accent-yellow)]" />
+          <p><span className="font-semibold text-[var(--tone-amber-fg)]">Needs attention:</span> {analysis.concerns.join(" · ")}.</p>
         </div>
       )}
 
       {/* 1. Social */}
-      <Section n={1} title="Social Media Performance" icon={Megaphone} right={
+      <Section n={1} title="Social Media Performance" icon={Megaphone} tone="pink" right={
         <div className="flex items-center rounded-xl border border-[var(--border-subtle)] bg-white/5 p-0.5">
           {shownPlatforms.map((p) => (
             <button key={p} onClick={() => setPlatform(p)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${platform === p ? "bg-[var(--accent-blue)] text-white" : "text-[var(--text-secondary)] hover:text-white"}`}>
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${platform === p ? "bg-[var(--accent-blue)] text-white" : "text-[var(--text-secondary)] hover:text-white"}`}>
+              <BrandIcon brand={p} size={14} color={platform === p && p !== "instagram" ? "#ffffff" : undefined} />
               {PLATFORM_LABEL[p]}
             </button>
           ))}
         </div>
       }>
         {!social.has_data ? (
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 text-sm">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-sm">
             <p className="font-semibold text-white">
               No Daily Tracker row for {shortDate(data.period.start)} – {shortDate(data.period.end)} yet.
             </p>
@@ -452,21 +486,21 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-            <Stat icon={Film} label="Reels published" value={num(social.reels)} />
-            <Stat icon={Eye} label={`${PLATFORM_LABEL[platform]} views`} value={num(sp.achieved)} sub={`of ${num(sp.target)}`} />
-            <Stat icon={MessageSquare} label="Comments" value={num(social.comments)} />
-            <Stat icon={Share2} label="Shares" value={num(social.shares)} />
-            <Stat icon={Bookmark} label="Saves" value={num(social.saves)} />
-            <Stat icon={Repeat2} label="Reposts" value={num(social.reposts)} />
+            <Stat tone="purple" icon={Film} label="Reels published" value={num(social.reels)} />
+            <Stat tone={platform === "instagram" ? "pink" : platform === "youtube" ? "red" : "blue"} icon={PLATFORM_ICON[platform]} label={`${PLATFORM_LABEL[platform]} views`} value={num(sp.achieved)} sub={`of ${num(sp.target)}`} />
+            <Stat tone="green" icon={MessageSquare} label="Comments" value={num(social.comments)} />
+            <Stat tone="purple" icon={Share2} label="Shares" value={num(social.shares)} />
+            <Stat tone="orange" icon={Bookmark} label="Saves" value={num(social.saves)} />
+            <Stat tone="slate" icon={Repeat2} label="Reposts" value={num(social.reposts)} />
           </div>
         )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold text-white">{PLATFORM_LABEL[platform]} views by month vs target</p>
               <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)]">
                 <span className="flex items-center gap-1.5"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: CHART_BLUE }} />Views</span>
-                <span className="flex items-center gap-1.5"><i className="inline-block w-4 border-t-2 border-dashed border-[#a1a1aa]" />Target to date</span>
+                <span className="flex items-center gap-1.5"><i className="inline-block w-4 border-t-2 border-dashed border-[#f59e0b]" />Target to date</span>
               </div>
             </div>
             {social.monthly.length === 0 ? (
@@ -485,8 +519,8 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                       }}
                       formatter={(v, name) => [num(Number(v)), name === platform ? "Views" : "Target to date"]} />
                     <Bar dataKey={platform} fill={CHART_BLUE} radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
-                    <Line dataKey={`${platform}_target`} stroke="#a1a1aa" strokeWidth={2} strokeDasharray="5 4"
-                      dot={{ r: 4, fill: "#a1a1aa", strokeWidth: 0 }} isAnimationActive={false} />
+                    <Line dataKey={`${platform}_target`} stroke={TARGET_LINE} strokeWidth={2} strokeDasharray="5 4"
+                      dot={{ r: 4, fill: TARGET_LINE, strokeWidth: 0 }} isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -501,7 +535,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
               {social.as_of && <p className="text-[11px] text-[var(--text-muted)] text-center">Sheet figures up to {shortDate(social.as_of)}</p>}
             </div>
           ) : (
-            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 text-sm">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-sm">
               <p className="font-semibold text-white">{PLATFORM_LABEL[platform]} views target</p>
               <p className="mt-2 text-3xl font-extrabold text-white tabular-nums">{num(sp.monthly_target)}</p>
               <p className="text-xs text-[var(--text-muted)]">per month · {num(sp.target)} for this period</p>
@@ -511,21 +545,21 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
       </Section>
 
       {/* 2. Leads */}
-      <Section n={2} title="Leads & Conversions" icon={Users}>
+      <Section n={2} title="Leads & Conversions" icon={Users} tone="purple">
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-          <Stat icon={Target} label="Lead target (month)" value={num(leads.targets.leads_monthly)} sub={`${num(leads.volume.target)} for this period`} />
-          <Stat icon={Users} label="Leads received" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% · ${PACE_STATUS[leads.volume.status].label}`}
+          <Stat tone="orange" icon={Target} label="Lead target (month)" value={num(leads.targets.leads_monthly)} sub={`${num(leads.volume.target)} for this period`} />
+          <Stat tone="purple" icon={Users} label="Leads received" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% · ${PACE_STATUS[leads.volume.status].label}`}
             subTone={PACE_STATUS[leads.volume.status].tone} />
-          <Stat icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% · ${money(leads.revenue)}`} />
-          <Stat icon={TrendingUp} label="Conversion target" value={`${leads.conversion_target_pct}%`}
+          <Stat tone="red" icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% · ${money(leads.revenue)}`} />
+          <Stat tone="blue" icon={TrendingUp} label="Conversion target" value={`${leads.conversion_target_pct}%`}
             sub={`${num(leads.conversions.remaining)} more to reach ${num(leads.conversions.target)}`}
             subTone={PACE_STATUS[leads.conversions.status].tone} />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          <div className="lg:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] overflow-x-auto">
+          <div className="lg:col-span-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] overflow-x-auto">
             <table className="w-full min-w-[480px] text-xs">
               <thead>
-                <tr className="border-b border-[var(--border-subtle)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+                <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[10px] uppercase tracking-wider text-[var(--text-secondary)]">
                   <th className="py-2.5 px-3 text-left font-semibold">Source</th>
                   <th className="py-2.5 px-3 text-right font-semibold">Leads</th>
                   <th className="py-2.5 px-3 text-right font-semibold">Converted</th>
@@ -537,7 +571,10 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                 {leads.sources.map((s) => (
                   <tr key={s.key} className={s.leads ? "" : "text-[var(--text-muted)]"}>
                     <td className="py-2 px-3 font-medium text-white">
-                      {s.label}
+                      <span className="inline-flex items-center gap-2">
+                        {SOURCE_ICON[s.key]?.({ size: 15 })}
+                        {s.label}
+                      </span>
                       {s.tracker && (
                         <span className="block text-[10px] font-normal text-[var(--text-muted)]">{s.tracker.label}: {num(s.tracker.value)}</span>
                       )}
@@ -558,7 +595,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
               </tbody>
             </table>
           </div>
-          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 space-y-2.5">
+          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-2.5">
             <p className="text-sm font-semibold text-white">Current lead status</p>
             {statusRows.length === 0 ? (
               <p className="text-xs text-[var(--text-muted)]">No leads in this period.</p>
@@ -585,7 +622,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 text-xs space-y-1.5">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-xs space-y-1.5">
             <p className="text-sm font-semibold text-white">How these leads were linked to this store</p>
             {Object.keys(leads.matched_by).length === 0 ? (
               <p className="text-[var(--text-muted)]">No leads are linked to this store in this period.</p>
@@ -601,7 +638,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
               City sheets only say the area. A lead counts here when it has this store, an appointment here, is the only shop in its area, or its remarks name this shop.
             </p>
           </div>
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4 text-xs">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-xs">
             <p className="text-sm font-semibold text-white">{leads.area_label ? `${leads.area_label} area leads — shop not known` : "Area leads"}</p>
             {!leads.area ? (
               <p className="mt-1.5 text-[var(--text-muted)]">
@@ -626,23 +663,23 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
       </Section>
 
       {/* 3. Sales */}
-      <Section n={3} title="Sales Performance" icon={BarChart3}>
+      <Section n={3} title="Sales Performance" icon={BarChart3} tone="green">
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-          <Stat icon={Target} label="Monthly target" value={money(sales.monthly_target)} sub={salesPace.days_total !== 0 ? `${money(salesPace.target)} for this period` : undefined} />
-          <Stat icon={BarChart3} label="Achieved" value={money(salesPace.achieved)} sub="From MCP" />
-          <Stat icon={CheckCircle2} label="Achievement" value={salesPace.pct === null ? "—" : `${salesPace.pct}%`}
+          <Stat tone="green" icon={Target} label="Monthly target" value={money(sales.monthly_target)} sub={salesPace.days_total !== 0 ? `${money(salesPace.target)} for this period` : undefined} />
+          <Stat tone="orange" icon={BarChart3} label="Achieved" value={money(salesPace.achieved)} sub="From MCP" />
+          <Stat tone="green" icon={CheckCircle2} label="Achievement" value={salesPace.pct === null ? "—" : `${salesPace.pct}%`}
             sub={PACE_STATUS[salesPace.status].label} subTone={PACE_STATUS[salesPace.status].tone} />
-          <Stat icon={AlertTriangle} label="Remaining" value={money(salesPace.remaining)} sub={`${salesPace.days_remaining} days left`} />
-          <Stat icon={TrendingUp} label="Required daily" value={salesPace.required_daily === null ? "—" : money(salesPace.required_daily)}
+          <Stat tone="red" icon={AlertTriangle} label="Remaining" value={money(salesPace.remaining)} sub={`${salesPace.days_remaining} days left`} />
+          <Stat tone="navy" icon={TrendingUp} label="Required daily" value={salesPace.required_daily === null ? "—" : money(salesPace.required_daily)}
             sub={`Current ${money(salesPace.current_daily)}/day`} />
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+          <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold text-white">Cumulative revenue vs target pace</p>
               <div className="flex items-center gap-3 text-[11px] text-[var(--text-secondary)]">
                 <span className="flex items-center gap-1.5"><i className="inline-block h-0.5 w-4" style={{ background: CHART_BLUE }} />Actual revenue</span>
-                <span className="flex items-center gap-1.5"><i className="inline-block w-4 border-t-2 border-dashed border-[#a1a1aa]" />Target pace</span>
+                <span className="flex items-center gap-1.5"><i className="inline-block w-4 border-t-2 border-dashed border-[#f59e0b]" />Target pace</span>
               </div>
             </div>
             <div className="h-60 mt-2">
@@ -653,7 +690,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                   <YAxis tick={AXIS_TICK} tickFormatter={compact} width={52} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={(l) => shortDate(String(l))}
                     formatter={(v, name) => [money(Number(v)), name === "cumulative" ? "Actual" : "Target pace"]} />
-                  <Line type="monotone" dataKey="target_pace" stroke="#a1a1aa" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="target_pace" stroke={TARGET_LINE} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
                   <Line type="monotone" dataKey="cumulative" stroke={CHART_BLUE} strokeWidth={2} dot={false} connectNulls={false}
                     activeDot={{ r: 5 }} isAnimationActive={false} />
                 </LineChart>
@@ -668,11 +705,11 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           <div className="space-y-3">
             <TargetCard title="Sales target" pace={salesPace} fmt={(n) => money(n)} unit="" />
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3">
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3">
                 <p className="text-[var(--text-muted)]">Average bill</p>
                 <p className="text-base font-bold text-white tabular-nums">{money(sales.avg_bill)}</p>
               </div>
-              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3">
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3">
                 <p className="text-[var(--text-muted)]">Sales needed</p>
                 <p className="text-base font-bold text-white tabular-nums">{salesPace.remaining > 0 ? `≈ ${num(sales.sales_needed)}` : "—"}</p>
               </div>
@@ -682,25 +719,25 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
       </Section>
 
       {/* 4. Reviews */}
-      <Section n={4} title="Google Reviews" icon={Star}>
+      <Section n={4} title="Google Reviews" icon={Star} tone="amber">
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-          <Stat icon={Star} label="Overall rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} / 5`}
+          <Stat tone="green" icon={Star} label="Overall rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} / 5`}
             sub={reviews.rating_as_of
               ? `As of ${shortDate(reviews.rating_as_of)}${reviews.rating_previous !== null && reviews.rating !== null && reviews.rating_previous !== reviews.rating
                 ? ` · ${reviews.rating > reviews.rating_previous ? "up" : "down"} from ${reviews.rating_previous.toFixed(1)}` : ""}`
               : undefined}
             subTone={reviews.rating === null ? undefined : reviews.rating >= 4.8 ? "good" : reviews.rating >= 4.5 ? "warn" : "crit"} />
-          <Stat icon={MessageSquare} label="New reviews" value={num(reviews.new_reviews)} sub="This period" />
-          <Stat icon={ClipboardList} label="Total reviews" value={reviews.total_reviews === null ? "—" : num(reviews.total_reviews)} />
-          <Stat icon={CheckCircle2} label="Positive / negative"
+          <Stat tone="blue" icon={MessageSquare} label="New reviews" value={num(reviews.new_reviews)} sub="This period" />
+          <Stat tone="blue" icon={ClipboardList} label="Total reviews" value={reviews.total_reviews === null ? "—" : num(reviews.total_reviews)} />
+          <Stat tone="red" icon={CheckCircle2} label="Positive / negative"
             value={reviews.positive === null && reviews.negative === null ? "—" : `${num(reviews.positive ?? 0)} / ${num(reviews.negative ?? 0)}`}
             sub={reviews.positive === null && reviews.negative === null ? "Not tracked in the sheet yet" : undefined} />
-          <Stat icon={Repeat2} label="Replying to reviews" value={reviews.response || "—"}
+          <Stat tone="amber" icon={Repeat2} label="Replying to reviews" value={reviews.response || "—"}
             sub={reviews.unanswered !== null ? `${num(reviews.unanswered)} unanswered` : undefined}
             subTone={reviews.response === "Yes" ? "good" : reviews.response === "Partial" ? "warn" : reviews.response === "No" ? "crit" : undefined} />
         </div>
         {Object.keys(reviews.extra_columns).length > 0 && (
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold text-white mb-2">More from the tracker sheet</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               {Object.entries(reviews.extra_columns).map(([label, v]) => (
@@ -712,9 +749,9 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
       </Section>
 
       {/* 5. Analysis */}
-      <Section n={5} title="Overall Analysis & Action Plan" icon={ClipboardList}>
+      <Section n={5} title="Overall Analysis & Action Plan" icon={ClipboardList} tone="purple">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
               <i className="inline-block h-2 w-2 rounded-full" style={{ background: STATUS_COLOR.good }} />Performing well
             </p>
@@ -722,7 +759,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
               <ul className="space-y-1 text-xs text-[var(--text-secondary)] list-disc pl-4">{analysis.strengths.map((s) => <li key={s}>{s}</li>)}</ul>
             ) : <p className="text-xs text-[var(--text-muted)]">Nothing on pace yet this period.</p>}
           </div>
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-4">
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
               <i className="inline-block h-2 w-2 rounded-full" style={{ background: STATUS_COLOR.crit }} />Falling behind
             </p>
@@ -734,7 +771,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
         <div className="rounded-xl border border-[var(--border-subtle)] overflow-x-auto">
           <table className="w-full min-w-[720px] text-xs">
             <thead>
-              <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+              <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-subtle)] text-[10px] uppercase tracking-wider text-[var(--text-secondary)]">
                 <th className="py-2.5 px-3 text-left font-semibold w-44">Area</th>
                 <th className="py-2.5 px-3 text-left font-semibold">Gap & required pace</th>
                 <th className="py-2.5 px-3 text-left font-semibold">Recommended next step</th>
@@ -746,12 +783,11 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                 const A = AREA[r.area];
                 return (
                   <tr key={r.area} className="align-top">
-                    <td className="py-3 px-3 font-semibold text-white"><span className="flex items-center gap-2"><A.icon size={15} className="text-[var(--accent-blue)]" />{A.label}</span></td>
+                    <td className="py-3 px-3 font-semibold text-white"><span className="flex items-center gap-2"><A.icon size={16} style={{ color: A.color }} />{A.label}</span></td>
                     <td className="py-3 px-3 text-[var(--text-secondary)]">{r.gap}</td>
                     <td className="py-3 px-3 text-[var(--text-primary)]">{r.action}</td>
                     <td className="py-3 px-3">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] whitespace-nowrap">
-                        <i className="inline-block h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[PRIORITY_TONE[r.priority] || "none"] }} />
+                      <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${TONE_BADGE[PRIORITY_TONE[r.priority] || "none"]}`}>
                         {r.priority}
                       </span>
                     </td>
