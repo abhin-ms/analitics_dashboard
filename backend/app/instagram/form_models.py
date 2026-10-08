@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime
 from sqlalchemy import (
     Column, String, Integer, Boolean, Text, DateTime,
@@ -54,6 +55,9 @@ class IGFormSubmission(Base):
     status = Column(String(20), default="partial")
     current_field_index = Column(Integer, default=0)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
+    # unguessable id for the public hosted-form link; the sequential id is
+    # never accepted there
+    public_token = Column(String(64), nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -64,3 +68,7 @@ class IGFormSubmission(Base):
     __table_args__ = (
         Index("ix_form_submission_conv", "conversation_id", "status"),
     )
+
+
+def new_public_token() -> str:
+    return secrets.token_urlsafe(24)

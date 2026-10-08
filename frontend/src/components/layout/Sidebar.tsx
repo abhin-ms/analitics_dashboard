@@ -5,7 +5,7 @@ import { useUIStore } from "@/lib/uiStore";
 import {
   LayoutDashboard, ShoppingCart, Users, Phone,
   Megaphone, CheckSquare, BarChart3, FileText, Settings,
-  DollarSign, TrendingUp, X, ChevronLeft, ChevronRight, ShieldCheck,
+  DollarSign, TrendingUp, X, ChevronLeft, ChevronRight,
   Camera, MessageCircle, Shield, Table, Settings2, ChevronDown,
   RefreshCw, Brain, Package, Globe, PhoneCall, MapPin,
   Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset, Share2, Target,
@@ -327,22 +327,13 @@ export function Sidebar() {
         >
           {(!collapsed || mobileOpen) && (
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div
-                style={{
-                  width: "36px",
-                  height: "36px",
-                  borderRadius: "10px",
-                  background: "rgba(59,130,246,0.15)",
-                  border: "1px solid rgba(59,130,246,0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#3b82f6",
-                  flexShrink: 0,
-                }}
-              >
-                <ShieldCheck size={20} />
-              </div>
+              <img
+                src="/logo-mark.png"
+                alt="Break Protection"
+                width={36}
+                height={36}
+                style={{ display: "block", borderRadius: "10px", flexShrink: 0 }}
+              />
               <div>
                 <span
                   style={{
@@ -373,21 +364,13 @@ export function Sidebar() {
           )}
 
           {collapsed && !mobileOpen && (
-            <div
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "10px",
-                background: "rgba(59,130,246,0.15)",
-                border: "1px solid rgba(59,130,246,0.3)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#3b82f6",
-              }}
-            >
-              <ShieldCheck size={22} />
-            </div>
+            <img
+              src="/logo-mark.png"
+              alt="Break Protection"
+              width={40}
+              height={40}
+              style={{ display: "block", borderRadius: "10px", flexShrink: 0 }}
+            />
           )}
 
           {/* Desktop Collapse Button */}

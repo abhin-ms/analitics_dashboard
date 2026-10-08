@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from ...core.deps import get_db, require_permission, get_user_permissions
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import Task, Store, User
 from ...schemas import TaskCreate, TaskUpdate, TaskResponse
 
@@ -16,9 +17,8 @@ async def list_tasks(
     user: User = require_permission("tasks", "view"),
 ):
     query = select(Task)
-    if user.store_access:
-        store_ids = [sa.store_id for sa in user.store_access]
-        query = query.where(Task.store_id.in_(store_ids))
+    # their stores' tasks, plus anything handed to them directly
+    query = query.where(or_(store_filter(Task.store_id, await allowed_store_ids(user, db)), Task.assigned_to == user.id))
     if store_id:
         query = query.where(Task.store_id == store_id)
     if assigned_to:

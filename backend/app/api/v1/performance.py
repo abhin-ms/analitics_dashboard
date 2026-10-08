@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from ...core.deps import get_db, require_permission
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import (
     DailySubmission, Store, KPIWeight, IncentiveBand, GoogleReview, User,
 )
@@ -40,9 +41,7 @@ async def get_scores(
     store_q = select(Store).where(Store.is_active == True)
     if store_id:
         store_q = store_q.where(Store.id == store_id)
-    if user.store_access:
-        sids = [sa.store_id for sa in user.store_access]
-        store_q = store_q.where(Store.id.in_(sids))
+    store_q = store_q.where(store_filter(Store.id, await allowed_store_ids(user, db)))
     stores = (await db.execute(store_q)).scalars().all()
 
     results = []

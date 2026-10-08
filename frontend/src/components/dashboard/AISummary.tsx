@@ -266,6 +266,8 @@ export function AISummary({ section = "overview", title = "AI Executive Summary"
   const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // company-wide summaries are admin-only; other roles just don't get the card
+  const [forbidden, setForbidden] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -290,6 +292,10 @@ export function AISummary({ section = "overview", title = "AI Executive Summary"
     setError(null);
     try {
       const res = await api.fetchRaw(`/ai-analytics/summary?section=${section}`);
+      if (res.status === 403) {
+        setForbidden(true);
+        return;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${res.status}`);
@@ -391,6 +397,8 @@ export function AISummary({ section = "overview", title = "AI Executive Summary"
   const charts = useMemo<ChartDef[]>(() => buildSectionCharts(section, data?.context), [data, section]);
 
   const kpis = useMemo<KpiCard[]>(() => curateKpis(section, data?.context), [data, section]);
+
+  if (forbidden) return null;
 
   if (loading) {
     return (

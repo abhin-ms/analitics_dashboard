@@ -223,6 +223,8 @@ async def get_status_summary(
             return {"summary": {}}
     elif role_name == "Salesperson":
         query = query.where(TeleCallLead.person_calling == user.name)
+    elif role_name not in ADMIN_ROLES:
+        return {"summary": {}}
 
     if owner:
         owner_id = user.id if owner == "me" else (int(owner) if owner.isdigit() else None)

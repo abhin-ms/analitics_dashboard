@@ -175,6 +175,10 @@
 :root[data-theme="light"] .text-purple-300 { color: #7e22ce; }
 :root[data-theme="light"] .text-amber-300 { color: #b45309; }
 :root[data-theme="light"] .text-rose-300 { color: #be123c; }
+/* Paler -200 shades and opacity variants (text-amber-300/80) used on
+   warning banners would be just as unreadable on the light card. */
+:root[data-theme="light"] .text-amber-200 { color: #92400e; }
+:root[data-theme="light"] [class*="text-amber-300/"] { color: #b45309; }
 
 /* Keyframes are not layered (they don't participate in cascade) */
 @keyframes fadeIn {

@@ -25,7 +25,7 @@ interface FormData {
 }
 
 export default function HostedForm() {
-  const { formId, submissionId } = useParams<{ formId: string; submissionId: string }>();
+  const { formId, token } = useParams<{ formId: string; token: string }>();
   const [data, setData] = useState<FormData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -34,7 +34,7 @@ export default function HostedForm() {
   const [phase2Values, setPhase2Values] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetch(`/api/v1/instagram/forms/${formId}/public?submission_id=${submissionId}`)
+    fetch(`/api/v1/instagram/forms/${formId}/public?token=${encodeURIComponent(token ?? "")}`)
       .then((res) => {
         if (!res.ok) throw new Error("Form not found or already completed");
         return res.json();
@@ -48,20 +48,23 @@ export default function HostedForm() {
         setError(e.message);
         setLoading(false);
       });
-  }, [formId, submissionId]);
+  }, [formId, token]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
       const res = await fetch(
-        `/api/v1/instagram/forms/${formId}/submit?submission_id=${submissionId}`,
+        `/api/v1/instagram/forms/${formId}/submit?token=${encodeURIComponent(token ?? "")}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ phase2_data: phase2Values }),
         }
       );
-      if (!res.ok) throw new Error("Submission failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(typeof body?.detail === "string" ? body.detail : "Submission failed");
+      }
       setCompleted(true);
     } catch (e: any) {
       setError(e.message);

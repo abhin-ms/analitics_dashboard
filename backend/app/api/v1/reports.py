@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from ...core.deps import get_db, require_permission
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import DailySubmission, Store, Lead, LostReason, User
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -22,9 +23,7 @@ async def monthly_summary(
         start = end - timedelta(days=30)
 
     store_q = select(Store).where(Store.is_active == True)
-    if user.store_access:
-        sids = [sa.store_id for sa in user.store_access]
-        store_q = store_q.where(Store.id.in_(sids))
+    store_q = store_q.where(store_filter(Store.id, await allowed_store_ids(user, db)))
     stores = (await db.execute(store_q)).scalars().all()
     store_ids = [s.id for s in stores]
 
@@ -35,8 +34,7 @@ async def monthly_summary(
     ).where(
         DailySubmission.date >= start, DailySubmission.date <= end,
     )
-    if store_ids:
-        rev_q = rev_q.where(DailySubmission.store_id.in_(store_ids))
+    rev_q = rev_q.where(DailySubmission.store_id.in_(store_ids))
     rev_q = rev_q.group_by(DailySubmission.store_id)
     revs = (await db.execute(rev_q)).all()
 
@@ -68,12 +66,12 @@ async def leaderboard(
     if not start:
         start = end - timedelta(days=30)
 
-    tl_q = select(User).join(Store, Store.team_leader_id == User.id).distinct()
+    allowed = await allowed_store_ids(user, db)
+    tl_q = select(User).join(Store, Store.team_leader_id == User.id).where(store_filter(Store.id, allowed)).distinct()
     tls = (await db.execute(tl_q)).scalars().all()
 
-    store_q = select(Store).where(Store.is_active == True)
+    store_q = select(Store).where(Store.is_active == True, store_filter(Store.id, allowed))
     stores = (await db.execute(store_q)).scalars().all()
-    store_ids = [s.id for s in stores]
 
     results = []
     for tl in tls:
@@ -111,7 +109,8 @@ async def lost_reason_analysis(
     query = select(
         LostReason.reason,
         func.sum(LostReason.count).label("total"),
-    ).where(LostReason.date >= start, LostReason.date <= end)
+    ).where(LostReason.date >= start, LostReason.date <= end,
+            store_filter(LostReason.store_id, await allowed_store_ids(user, db)))
     if store_id:
         query = query.where(LostReason.store_id == store_id)
     query = query.group_by(LostReason.reason)
@@ -136,9 +135,7 @@ async def export_csv(
         start = end - timedelta(days=30)
 
     store_q = select(Store).where(Store.is_active == True)
-    if user.store_access:
-        sids = [sa.store_id for sa in user.store_access]
-        store_q = store_q.where(Store.id.in_(sids))
+    store_q = store_q.where(store_filter(Store.id, await allowed_store_ids(user, db)))
     stores = (await db.execute(store_q)).scalars().all()
     store_ids = [s.id for s in stores]
     store_map = {s.id: s for s in stores}
@@ -146,8 +143,7 @@ async def export_csv(
     sub_q = select(DailySubmission).where(
         DailySubmission.date >= start, DailySubmission.date <= end,
     )
-    if store_ids:
-        sub_q = sub_q.where(DailySubmission.store_id.in_(store_ids))
+    sub_q = sub_q.where(DailySubmission.store_id.in_(store_ids))
     subs = (await db.execute(sub_q)).scalars().all()
 
     output = io.StringIO()

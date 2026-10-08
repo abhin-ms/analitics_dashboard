@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -92,4 +92,4 @@ class IGFormSubmissionResponse(BaseModel):
 
 
 class IGFormPhase2Submit(BaseModel):
-    phase2_data: dict
+    phase2_data: dict = Field(default_factory=dict, max_length=50)

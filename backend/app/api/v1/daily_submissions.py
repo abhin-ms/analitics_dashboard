@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...core.config import settings
 from ...core.deps import get_db, require_permission, get_user_permissions
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import DailySubmission, Store, User
 from ...schemas import DailySubmissionCreate, DailySubmissionUpdate, DailySubmissionResponse
 
@@ -28,9 +29,7 @@ async def list_submissions(
     user: User = require_permission("operations", "view"),
 ):
     query = select(DailySubmission)
-    if user.store_access:
-        store_ids = [sa.store_id for sa in user.store_access]
-        query = query.where(DailySubmission.store_id.in_(store_ids))
+    query = query.where(store_filter(DailySubmission.store_id, await allowed_store_ids(user, db)))
     if store_id:
         query = query.where(DailySubmission.store_id == store_id)
     if start_date:

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, and_, true
 from ...core.deps import get_db, require_permission
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import Store, User, DailySubmission, Lead, Campaign, Task, Investment, TeleCallLead, TeleSheetAssignment, Role
 from ...schemas import DashboardResponse, KPICard
 from ...services.crm import metrics as crm_metrics
@@ -15,13 +16,6 @@ from ...services.crm.timeutil import utcnow
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-async def _user_store_ids(user, db):
-    if user.store_access:
-        return [sa.store_id for sa in user.store_access]
-    result = await db.execute(select(Store.id))
-    return [r[0] for r in result.all()]
-
-
 @router.get("", response_model=DashboardResponse)
 async def get_dashboard(
     start: date = None, end: date = None,
@@ -32,13 +26,12 @@ async def get_dashboard(
         end = date.today()
     if not start:
         start = end - timedelta(days=30)
-    store_ids = await _user_store_ids(user, db)
+    store_ids = await allowed_store_ids(user, db)
 
     rev_q = select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
         DailySubmission.date >= start, DailySubmission.date <= end
     )
-    if store_ids:
-        rev_q = rev_q.where(DailySubmission.store_id.in_(store_ids))
+    rev_q = rev_q.where(store_filter(DailySubmission.store_id, store_ids))
     total_revenue = float((await db.execute(rev_q)).scalar() or 0)
 
     prev_start = start - (end - start)
@@ -46,13 +39,11 @@ async def get_dashboard(
     prev_rev_q = select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
         DailySubmission.date >= prev_start, DailySubmission.date <= prev_end
     )
-    if store_ids:
-        prev_rev_q = prev_rev_q.where(DailySubmission.store_id.in_(store_ids))
+    prev_rev_q = prev_rev_q.where(store_filter(DailySubmission.store_id, store_ids))
     prev_revenue = float((await db.execute(prev_rev_q)).scalar() or 0)
 
     store_q = select(Store).where(Store.is_active == True)
-    if store_ids:
-        store_q = store_q.where(Store.id.in_(store_ids))
+    store_q = store_q.where(store_filter(Store.id, store_ids))
     stores = (await db.execute(store_q)).scalars().all()
     days_in_period = (end - start).days + 1
     total_target = sum(float(s.monthly_target) * days_in_period / 30 for s in stores)
@@ -62,16 +53,14 @@ async def get_dashboard(
     inv_q = select(func.coalesce(func.sum(Investment.amount), 0)).where(
         Investment.date >= start, Investment.date <= end
     )
-    if store_ids:
-        inv_q = inv_q.where(Investment.store_id.in_(store_ids))
+    inv_q = inv_q.where(store_filter(Investment.store_id, store_ids))
     total_investment = float((await db.execute(inv_q)).scalar() or 0)
 
     tl_ids = list(set(s.team_leader_id for s in stores))
     active_tls = len(tl_ids)
 
     lead_q = select(func.count(Lead.id)).where(Lead.status.in_(["hot", "warm"]))
-    if store_ids:
-        lead_q = lead_q.where(Lead.store_id.in_(store_ids))
+    lead_q = lead_q.where(store_filter(Lead.store_id, store_ids))
     active_leads = int((await db.execute(lead_q)).scalar() or 0)
 
     trend = []
@@ -80,8 +69,7 @@ async def get_dashboard(
         day_q = select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
             DailySubmission.date == current
         )
-        if store_ids:
-            day_q = day_q.where(DailySubmission.store_id.in_(store_ids))
+        day_q = day_q.where(store_filter(DailySubmission.store_id, store_ids))
         day_rev = float((await db.execute(day_q)).scalar() or 0)
         trend.append({"date": current.isoformat(), "revenue": day_rev})
         current += timedelta(days=1)
@@ -124,15 +112,16 @@ async def get_dashboard(
     lead_dist = []
     for ls in lead_statuses:
         q = select(func.count(Lead.id)).where(Lead.status == ls)
-        if store_ids:
-            q = q.where(Lead.store_id.in_(store_ids))
+        q = q.where(store_filter(Lead.store_id, store_ids))
         count = int((await db.execute(q)).scalar() or 0)
         lead_dist.append({"name": ls.capitalize(), "value": count})
 
     campaign_count = int((await db.execute(select(func.count(Campaign.id)))).scalar() or 0)
-    task_count = int((await db.execute(select(func.count(Task.id)))).scalar() or 0)
+    task_count = int((await db.execute(
+        select(func.count(Task.id)).where(store_filter(Task.store_id, store_ids))
+    )).scalar() or 0)
     pending_tasks = int((await db.execute(
-        select(func.count(Task.id)).where(Task.status == "pending")
+        select(func.count(Task.id)).where(Task.status == "pending", store_filter(Task.store_id, store_ids))
     )).scalar() or 0)
 
     revenue_delta = ((total_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
@@ -308,7 +297,7 @@ async def get_team_leader_dashboard(
         day_rev = float((await db.execute(
             select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
                 DailySubmission.date == current,
-                DailySubmission.store_id.in_(store_ids) if store_ids else True,
+                DailySubmission.store_id.in_(store_ids),
             )
         )).scalar() or 0)
         trend.append({"date": current.isoformat(), "revenue": day_rev})
