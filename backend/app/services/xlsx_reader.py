@@ -145,6 +145,30 @@ _DAILY_INPUT_LEGACY_ORDER = [
 ]
 
 
+# Google / review columns an admin adds to the sheet later (e.g. "Positive
+# reviews", "Negative reviews") have no field of their own; they are kept
+# as-is in the row's "extra" dict so the dashboards can show them without a
+# code change.
+_EXTRA_COLUMN_WORDS = ("google", "review")
+
+
+def _extra_review_columns(section_row, header_row, col_map: dict[str, int]) -> dict[str, int]:
+    """Header label -> column index for unmapped Google/review columns."""
+    taken = set(col_map.values())
+    out: dict[str, int] = {}
+    current = ""
+    for i, h in enumerate(header_row):
+        banner = section_row[i] if i < len(section_row) else None
+        if banner and str(banner).strip():
+            current = str(banner).strip().lower()
+        label = str(h).strip() if h else ""
+        if i in taken or not label:
+            continue
+        if any(w in label.lower() or w in current for w in _EXTRA_COLUMN_WORDS):
+            out.setdefault(label, i)
+    return out
+
+
 def _daily_input_column_map(section_row, header_row) -> dict[str, int]:
     """Map each Daily Input field to its column index from the two header rows."""
     sections: list[str] = []
@@ -224,9 +248,12 @@ def parse_daily_input_buf(buf: io.BytesIO) -> list[dict]:
         return []
 
     col_map = _daily_input_column_map(rows[2], rows[3])
+    extra_cols: dict[str, int] = {}
     if "store" not in col_map or "date" not in col_map:
         logger.warning("Daily Input header row not recognised; falling back to fixed column positions")
         col_map = {f: i for i, f in enumerate(_DAILY_INPUT_LEGACY_ORDER)}
+    else:
+        extra_cols = _extra_review_columns(rows[2], rows[3], col_map)
 
     def cell(row, field):
         i = col_map.get(field)
@@ -251,6 +278,14 @@ def parse_daily_input_buf(buf: io.BytesIO) -> list[dict]:
                 rec[field] = str(v).strip() if v is not None and str(v).strip() else ""
         rec["store"] = str(store_name).strip()
         rec["date"] = normalize_tracker_date(cell(row, "date"))
+        extra = {}
+        for label, i in extra_cols.items():
+            v = row[i] if i < len(row) else None
+            if v is None or str(v).strip() == "":
+                continue
+            extra[label] = v if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v).strip()
+        if extra:
+            rec["extra"] = extra
         data.append(rec)
 
     wb.close()

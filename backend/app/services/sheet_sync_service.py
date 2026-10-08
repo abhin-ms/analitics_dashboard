@@ -544,6 +544,7 @@ class SheetSyncService:
                     "google_rating": r.get("google_rating"),
                     "google_new_reviews": r.get("google_new_reviews") or 0,
                     "google_review_response": r.get("google_review_response", ""),
+                    "extra_fields": r.get("extra") or None,
                 }
 
                 # Fingerprint the row as the sheet has it, so a store's

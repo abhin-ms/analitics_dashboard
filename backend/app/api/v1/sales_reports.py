@@ -19,6 +19,7 @@ async def sales_report(
     country: str = None,
     region: str = None,
     group_by: str = "none",
+    currency: str = None,
     db: AsyncSession = Depends(get_db),
     _user: User = require_admin_tier(),
 ):
@@ -30,6 +31,8 @@ async def sales_report(
         db, granularity=granularity, start=start, end=end,
         team_leader_id=team_leader_id, store_id=store_id,
         country=country, region=region, group_by=group_by,
+        # country=All (every country together) only makes sense in one currency
+        convert_to_inr=(currency or "").upper() == "INR" or country == "All",
     )
 
 

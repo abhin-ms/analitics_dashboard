@@ -13,7 +13,7 @@ function PersonRow({ p, indent, label }: { p: TeamPerson; indent?: boolean; labe
     <tr className="hover:bg-[var(--bg-card-hover)] align-top">
       <td className={`py-2.5 pr-3 ${indent ? "pl-10" : "pl-5"}`}>
         <Link to={leadsOf(p.id)} className="text-white hover:underline">{p.name}</Link>
-        {label && <span className="ml-1.5"><Pill label={label} color="#94a3b8" /></span>}
+        {label && <span className="ml-1.5"><Pill label={label} color="#64748b" /></span>}
         {!p.available && <span className="ml-1.5"><Pill label="Away" color="#f59e0b" /></span>}
         <p className="text-[11px] text-[var(--text-muted)]">{p.sheets.join(", ") || "no city"}</p>
       </td>

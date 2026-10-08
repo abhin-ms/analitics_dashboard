@@ -579,6 +579,9 @@ class DailyStoreTracker(Base):
     google_rating = Column(Float, nullable=True)
     google_new_reviews = Column(Integer, default=0)
     google_review_response = Column(String(20), default="")
+    # Extra Google/review columns added to the sheet later, by header label
+    # (e.g. {"Positive reviews": 12}); see xlsx_reader._extra_review_columns.
+    extra_fields = Column(JSON, nullable=True)
     # Fingerprint of the row as last read from the sheet, and when it last
     # changed — the sheet has no per-row "edited at", so this is how the
     # dashboard knows when each store last updated its figures.

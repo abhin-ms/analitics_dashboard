@@ -7,31 +7,31 @@ import { api } from "@/lib/apiClient";
 
 function ActionTable({ items, color }: { items: any[]; color: string }) {
   if (items.length === 0) return null;
-  const label = color === "#f87171" ? "CRITICAL - Act This Week" : color === "#fcd34d" ? "HIGH PRIORITY - Act This Month" : "STRATEGIC - Complete by Month End";
+  const label = color === "var(--tone-red-fg)" ? "CRITICAL - Act This Week" : color === "var(--tone-amber-fg)" ? "HIGH PRIORITY - Act This Month" : "STRATEGIC - Complete by Month End";
   return (
-    <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16, marginBottom: 20 }}>
+    <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16, marginBottom: 20 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color, marginBottom: 12 }}>{label}</div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr>
               {["Store / Area", "Issue", "Assign To", "Action Required"].map((h) => (
-                <th key={h} style={{ background: "#1a2235", color: "#94a3b8", padding: "9px 10px", textAlign: "left", borderBottom: "1px solid #2d3748", fontSize: 11, textTransform: "uppercase" }}>{h}</th>
+                <th key={h} style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", padding: "9px 10px", textAlign: "left", borderBottom: "1px solid var(--border-subtle)", fontSize: 11, textTransform: "uppercase" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {items.map((r: any, i: number) => (
-              <tr key={i} style={{ borderBottom: "1px solid #1e2336" }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#1e2749")}
+              <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--border-subtle)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                <td style={{ padding: "8px 10px", fontWeight: 600, color: "#e2e8f0" }}>{r.area}</td>
-                <td style={{ padding: "8px 10px", fontSize: 11, color: "#94a3b8" }}>
-                  {r.auto && <span style={{ padding: "1px 6px", borderRadius: 8, fontSize: 9, fontWeight: 700, background: "#134e4a", color: "#5eead4", marginRight: 6 }}>AUTO-DETECTED</span>}
+                <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-primary)" }}>{r.area}</td>
+                <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-secondary)" }}>
+                  {r.auto && <span style={{ padding: "1px 6px", borderRadius: 8, fontSize: 9, fontWeight: 700, background: "var(--tone-teal-bg)", color: "var(--tone-teal-fg)", marginRight: 6 }}>AUTO-DETECTED</span>}
                   {r.issue}
                 </td>
-                <td style={{ padding: "8px 10px" }}><span style={{ padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700, background: "#1e3a5f", color: "#93c5fd" }}>{r.assign}</span></td>
-                <td style={{ padding: "8px 10px", fontSize: 11, color: "#cbd5e1" }}>{r.action}</td>
+                <td style={{ padding: "8px 10px" }}><span style={{ padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 700, background: "var(--tone-blue-bg)", color: "var(--tone-blue-fg)" }}>{r.assign}</span></td>
+                <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-primary)" }}>{r.action}</td>
               </tr>
             ))}
           </tbody>
@@ -176,20 +176,20 @@ export function ActionCenterTab({ data }: { data: any }) {
 
   return (
     <div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#93c5fd", marginBottom: 14, paddingBottom: 6, borderBottom: "1px solid #2d3748" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--tone-blue-fg)", marginBottom: 14, paddingBottom: 6, borderBottom: "1px solid var(--border-subtle)" }}>
         Action Center - Derived from MCP Sales Data + Auto-Detected Insights
       </div>
 
       {insightStats && insightStats.total_raised > 0 && (
         <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
           {[
-            { label: "Auto-Detected This Month", value: insightStats.total_raised, color: "#5eead4" },
+            { label: "Auto-Detected This Month", value: insightStats.total_raised, color: "var(--tone-teal-fg)" },
             { label: "Resolved", value: insightStats.resolved_count, color: "#10b981" },
-            { label: "Still Open", value: insightStats.open_count, color: "#f87171" },
-            { label: "Avg Time to Resolve", value: insightStats.avg_resolution_hours != null ? `${insightStats.avg_resolution_hours}h` : "—", color: "#94a3b8" },
+            { label: "Still Open", value: insightStats.open_count, color: "var(--tone-red-fg)" },
+            { label: "Avg Time to Resolve", value: insightStats.avg_resolution_hours != null ? `${insightStats.avg_resolution_hours}h` : "—", color: "var(--text-secondary)" },
           ].map((k, i) => (
-            <div key={i} style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
-              <div style={{ fontSize: 9, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{k.label}</div>
+            <div key={i} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
+              <div style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{k.label}</div>
               <div style={{ fontSize: 18, fontWeight: 800, color: k.color }}>{k.value}</div>
             </div>
           ))}
@@ -197,40 +197,40 @@ export function ActionCenterTab({ data }: { data: any }) {
       )}
 
       {allItems.length === 0 ? (
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 40, textAlign: "center", color: "#94a3b8" }}>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
           No action items - all stores performing well
         </div>
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
             {[
-              { label: "Critical Items", value: criticalItems.length, color: "#f87171" },
-              { label: "High Priority", value: highItems.length, color: "#fcd34d" },
+              { label: "Critical Items", value: criticalItems.length, color: "var(--tone-red-fg)" },
+              { label: "High Priority", value: highItems.length, color: "var(--tone-amber-fg)" },
               { label: "Strategic", value: strategicItems.length, color: "#60a5fa" },
             ].map((k, i) => (
-              <div key={i} style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16, position: "relative", overflow: "hidden" }}>
+              <div key={i} style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16, position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: k.color }} />
-                <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{k.label}</div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{k.label}</div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: k.color }}>{k.value}</div>
               </div>
             ))}
           </div>
 
-          <ActionTable items={criticalItems} color="#f87171" />
-          <ActionTable items={highItems} color="#fcd34d" />
-          <ActionTable items={strategicItems} color="#60a5fa" />
+          <ActionTable items={criticalItems} color="var(--tone-red-fg)" />
+          <ActionTable items={highItems} color="var(--tone-amber-fg)" />
+          <ActionTable items={strategicItems} color="var(--tone-blue-fg)" />
         </>
       )}
 
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#93c5fd", marginBottom: 14, paddingBottom: 6, borderBottom: "1px solid #2d3748", marginTop: 20 }}>Focus Areas Summary</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--tone-blue-fg)", marginBottom: 14, paddingBottom: 6, borderBottom: "1px solid var(--border-subtle)", marginTop: 20 }}>Focus Areas Summary</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Branch Priority Matrix</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Branch Priority Matrix</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={branchData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-              <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} />
-              <YAxis domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 10 }} tickFormatter={(v) => v + "%"} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 9 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: "var(--text-muted)", fontSize: 10 }} tickFormatter={(v) => v + "%"} />
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} formatter={(v: any) => v + "%"} />
               <Bar dataKey="avgAch" radius={[4, 4, 0, 0]}>
                 {branchData.map((b, i) => <Cell key={i} fill={ragColor(b.avgAch)} />)}
@@ -239,13 +239,13 @@ export function ActionCenterTab({ data }: { data: any }) {
           </ResponsiveContainer>
         </div>
 
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>TL Performance Gap (Rs L)</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>TL Performance Gap (Rs L)</h3>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={tlGapData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-              <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} tickFormatter={(v) => "Rs" + v + "L"} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "var(--text-muted)", fontSize: 10 }} tickFormatter={(v) => "Rs" + v + "L"} />
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} formatter={(v: any) => "Rs" + v + "L"} />
               <Bar dataKey="gap" radius={[4, 4, 0, 0]}>
                 {tlGapData.map((t, i) => <Cell key={i} fill={t.gap > 10 ? "#ef4444" : t.gap > 5 ? "#f59e0b" : "#10b981"} />)}
@@ -254,15 +254,15 @@ export function ActionCenterTab({ data }: { data: any }) {
           </ResponsiveContainer>
         </div>
 
-        <div style={{ background: "#1e2336", border: "1px solid #2d3748", borderRadius: 10, padding: 16 }}>
-          <h3 style={{ fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Store Rating Distribution</h3>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: 16 }}>
+          <h3 style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Store Rating Distribution</h3>
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
-              <Pie data={mktEffData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="#1e2336" strokeWidth={2}>
+              <Pie data={mktEffData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" stroke="var(--bg-card)" strokeWidth={2}>
                 {mktEffData.map((_, i) => <Cell key={i} fill={["#10b981", "#f59e0b", "#ef4444"][i]} />)}
               </Pie>
               <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)" }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
-              <Legend wrapperStyle={{ fontSize: 10, color: "#94a3b8" }} />
+              <Legend wrapperStyle={{ fontSize: 10, color: "var(--text-secondary)" }} />
             </PieChart>
           </ResponsiveContainer>
         </div>

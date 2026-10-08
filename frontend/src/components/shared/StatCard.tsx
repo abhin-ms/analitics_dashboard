@@ -57,15 +57,15 @@ export function StatCard({
     <div
       className={cn(
         "rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5",
-        "hover:border-white/15 hover:shadow-lg transition-all duration-200 flex flex-col justify-between group",
+        "hover:border-[var(--border-strong)] hover:shadow-[var(--card-shadow-hover)] transition-all duration-200 flex flex-col justify-between group",
         className
       )}
     >
       <div>
         <div className="flex items-center justify-between mb-3">
           <div
-            className="flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105 shadow-inner"
-            style={{ backgroundColor: `${color}18`, color }}
+            className="flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105"
+            style={{ backgroundColor: `${color}1f`, color }}
           >
             {icon}
           </div>
@@ -97,10 +97,10 @@ export function StatCard({
           </div>
         </div>
 
-        <p className="text-xs font-medium text-[var(--text-secondary)] tracking-wide uppercase mb-1">
+        <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">
           {title}
         </p>
-        <p className="text-2xl font-bold tracking-tight text-white">
+        <p className="text-2xl font-bold tracking-tight text-[var(--text-primary)] tabular-nums">
           {renderFormattedValue()}
         </p>
         {badge && (

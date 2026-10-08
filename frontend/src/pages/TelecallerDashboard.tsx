@@ -212,8 +212,8 @@ export default function TelecallerDashboard() {
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={daily_calls.slice(0, 14).reverse()}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
-                <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} tickFormatter={(d) => { const dt = new Date(d); return `${dt.getDate()}/${dt.getMonth()+1}`; }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                <XAxis dataKey="date" tick={{ fill: "var(--text-secondary)", fontSize: 10 }} tickFormatter={(d) => { const dt = new Date(d); return `${dt.getDate()}/${dt.getMonth()+1}`; }} />
+                <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 10 }} />
                 <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", borderRadius: 12 }} labelStyle={{ color: "var(--text-primary)" }} itemStyle={{ color: "var(--text-primary)" }} />
                 <Bar dataKey="connected" fill="#10b981" radius={[4, 4, 0, 0]} name="Connected" />
                 <Bar dataKey="not_connected" fill="#ef4444" radius={[4, 4, 0, 0]} name="Not Connected" />
@@ -240,7 +240,7 @@ export default function TelecallerDashboard() {
                       className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold"
                       style={{
                         backgroundColor: `${STATUS_COLORS[l.status] || "#64748b"}15`,
-                        color: STATUS_COLORS[l.status] || "#64748b",
+                        color: STATUS_COLORS[l.status] || "var(--text-muted)",
                         border: `1px solid ${STATUS_COLORS[l.status] || "#64748b"}30`,
                       }}
                     >
@@ -280,7 +280,7 @@ export default function TelecallerDashboard() {
                           className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
                           style={{
                             backgroundColor: `${STATUS_COLORS[l.status] || "#64748b"}15`,
-                            color: STATUS_COLORS[l.status] || "#64748b",
+                            color: STATUS_COLORS[l.status] || "var(--text-muted)",
                             border: `1px solid ${STATUS_COLORS[l.status] || "#64748b"}30`,
                           }}
                         >

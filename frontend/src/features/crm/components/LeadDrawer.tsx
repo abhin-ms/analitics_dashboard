@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SourceIcon } from "@/components/shared/BrandIcon";
 import { create } from "zustand";
 import {
   X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine,
@@ -112,7 +113,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
             <div className="px-5 py-4 space-y-3 border-b border-[var(--border-subtle)]">
               <div className="flex flex-wrap gap-1.5">
                 {lead.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
-                <Pill label={`Source: ${lead.source_label}`} color={sourceColor(lead)} />
+                <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={lead.source} />Source: {lead.source_label}</span>} color={sourceColor(lead)} />
                 <StageBadge stage={lead.stage} />
                 <StatusBadge status={lead.status} />
                 <PriorityBadge priority={lead.priority} />

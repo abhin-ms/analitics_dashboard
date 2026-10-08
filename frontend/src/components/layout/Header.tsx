@@ -48,6 +48,7 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/settings/branch-assignment": { title: "Team Leaders & Branches", subtitle: "Who leads which store" },
   "/settings/sheet-assignments": { title: "Sheet Assignments", subtitle: "City sheets per person" },
   "/settings/social-targets": { title: "Social Targets", subtitle: "Monthly views target per store" },
+  "/settings/lead-targets": { title: "Lead Targets", subtitle: "Monthly leads and conversion target per store" },
 };
 
 export function Header() {
@@ -78,6 +79,7 @@ export function Header() {
 
   const currentRoute = ROUTE_MAP[location.pathname]
     || (location.pathname.startsWith("/team-leaders/") ? { title: "Team Leader", subtitle: "Monthly sales performance" } : undefined)
+    || (location.pathname.startsWith("/sales-overview/") ? { title: "Store Portfolio", subtitle: "Performance, targets and action plan" } : undefined)
     || {
     title: "Analytics Platform",
     subtitle: "BreakProtection Platform",
@@ -102,9 +104,10 @@ export function Header() {
         position: "sticky",
         top: 0,
         zIndex: 30,
-        height: "64px",
+        height: "72px",
         borderBottom: "1px solid var(--border-subtle)",
         backgroundColor: "var(--bg-glass)",
+        boxShadow: "0 1px 0 rgba(16,30,60,0.02)",
         backdropFilter: "blur(12px)",
         display: "flex",
         alignItems: "center",
@@ -252,7 +255,7 @@ export function Header() {
             width: isMd ? "36px" : "32px",
             height: isMd ? "36px" : "32px",
             borderRadius: "50%",
-            background: "linear-gradient(135deg, #3b82f6, #6366f1)",
+            background: "linear-gradient(135deg, var(--accent-blue), #4f46e5)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

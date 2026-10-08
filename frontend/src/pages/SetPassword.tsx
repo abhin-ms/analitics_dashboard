@@ -59,7 +59,7 @@ export default function SetPassword() {
               style={{
                 position: "absolute",
                 inset: "-4px",
-                background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
+                background: "linear-gradient(135deg, #1f6feb, #60a5fa)",
                 borderRadius: "20px",
                 filter: "blur(16px)",
                 opacity: 0.6,
@@ -247,7 +247,7 @@ export default function SetPassword() {
               disabled={mutation.isPending}
               style={{
                 width: "100%",
-                background: "linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%)",
+                background: "linear-gradient(90deg, #1f6feb 0%, #2f6fed 100%)",
                 color: "#fff",
                 fontWeight: 600,
                 fontSize: "16px",
@@ -289,7 +289,7 @@ export default function SetPassword() {
                   transition: "color 0.2s",
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = "var(--auth-text)")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "#64748b")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-muted)")}
               >
                 <ArrowLeft size={15} /> Back to Login
               </Link>
@@ -299,7 +299,7 @@ export default function SetPassword() {
 
         {/* Footer */}
         <div style={{ textAlign: "center", marginTop: "32px" }}>
-          <p style={{ color: "#64748b", fontSize: "13px" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
             &copy; 2026 BreakProtection Security Standard
           </p>
         </div>

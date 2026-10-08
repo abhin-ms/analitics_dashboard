@@ -95,7 +95,7 @@ export function DatePicker({ value, onChange, placeholder = "Select date" }: Dat
       {open && (
         <div
           className="absolute z-50 mt-1 p-3 rounded-xl border border-[var(--border-subtle)] shadow-2xl"
-          style={{ background: "#1a1d2e", minWidth: "260px" }}
+          style={{ background: "var(--bg-card)", minWidth: "260px" }}
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
@@ -133,7 +133,7 @@ export function DatePicker({ value, onChange, placeholder = "Select date" }: Dat
                   className="relative w-full aspect-square flex items-center justify-center rounded-lg text-xs font-medium transition-all cursor-pointer"
                   style={{
                     backgroundColor: isSelected ? "#3b82f6" : isToday ? "rgba(59,130,246,0.15)" : "transparent",
-                    color: isSelected ? "#fff" : isToday ? "#60a5fa" : "#e2e8f0",
+                    color: isSelected ? "#fff" : isToday ? "var(--tone-blue-fg)" : "var(--text-primary)",
                     border: isToday && !isSelected ? "1px solid rgba(59,130,246,0.3)" : "1px solid transparent",
                   }}
                 >

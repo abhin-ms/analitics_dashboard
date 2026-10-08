@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
+import { BrandIcon, InstagramIcon } from "@/components/shared/BrandIcon";
 import { useState } from "react";
 import { useAuthStore } from "@/lib/authStore";
 import { useUIStore } from "@/lib/uiStore";
@@ -6,7 +7,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Phone,
   Megaphone, CheckSquare, BarChart3, FileText, Settings,
   DollarSign, TrendingUp, X, ChevronLeft, ChevronRight,
-  Camera, MessageCircle, Shield, Table, Settings2, ChevronDown,
+  MessageCircle, Shield, Table, Settings2, ChevronDown,
   RefreshCw, Brain, Package, Globe, PhoneCall, MapPin,
   Sun, Columns3, CalendarDays, ListChecks, Bell, Zap, IndianRupee, Headset, Share2, Target,
 } from "lucide-react";
@@ -56,6 +57,7 @@ const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/sheet-assignments", label: "Sheet Assignments", icon: PhoneCall, resource: "leads" },
   { to: "/settings/kpi-weights", label: "KPI Weights", icon: BarChart3, resource: "settings" },
   { to: "/settings/social-targets", label: "Social Targets", icon: Target, resource: "settings" },
+  { to: "/settings/lead-targets", label: "Lead Targets", icon: Target, resource: "settings" },
   { to: "/settings/data-sync", label: "Data Sync", icon: RefreshCw, resource: "settings" },
   { to: "/settings/currency", label: "Currency", icon: DollarSign, resource: "settings" },
   { to: "/settings/instagram-forms", label: "Instagram Forms", icon: FileText, resource: "settings" },
@@ -94,9 +96,10 @@ function NavItemLink({
         borderRadius: "12px",
         fontSize: indent ? "13px" : "14px",
         fontWeight: isActive ? 600 : 500,
-        color: isActive ? "#3b82f6" : "var(--text-secondary)",
-        backgroundColor: isActive ? "rgba(59,130,246,0.12)" : "transparent",
-        border: isActive ? "1px solid rgba(59,130,246,0.25)" : "1px solid transparent",
+        color: isActive ? "#ffffff" : "var(--text-secondary)",
+        backgroundColor: isActive ? "var(--sidebar-active)" : "transparent",
+        border: "1px solid transparent",
+        boxShadow: isActive ? "0 4px 12px rgba(31,111,235,0.35)" : "none",
         textDecoration: "none",
         transition: "all 0.2s",
         position: "relative",
@@ -104,7 +107,7 @@ function NavItemLink({
         overflow: "hidden",
       })}
       onMouseEnter={(e) => {
-        if (!e.currentTarget.style.backgroundColor?.includes("59,130,246")) {
+        if (e.currentTarget.getAttribute("aria-current") !== "page") {
           e.currentTarget.style.backgroundColor = "var(--bg-card-hover)";
           e.currentTarget.style.color = "var(--text-primary)";
         }
@@ -165,15 +168,15 @@ function CollapsibleSection({
           borderRadius: "12px",
           fontSize: "14px",
           fontWeight: isAnyActive ? 600 : 500,
-          color: isAnyActive ? accentColor : "var(--text-secondary)",
-          backgroundColor: isAnyActive ? `${accentColor}18` : "transparent",
-          border: isAnyActive ? `1px solid ${accentColor}40` : "1px solid transparent",
+          color: isAnyActive ? "var(--text-primary)" : "var(--text-secondary)",
+          backgroundColor: isAnyActive ? "var(--sidebar-hover)" : "transparent",
+          border: "1px solid transparent",
           cursor: "pointer",
           transition: "all 0.2s",
           whiteSpace: "nowrap",
           overflow: "hidden",
           textAlign: "left",
-          background: isAnyActive ? `${accentColor}18` : "transparent",
+          background: isAnyActive ? "var(--sidebar-hover)" : "transparent",
         }}
         onMouseEnter={(e) => {
           if (!isAnyActive) {
@@ -212,7 +215,7 @@ function CollapsibleSection({
             gap: "2px",
             marginTop: "2px",
             paddingLeft: "4px",
-            borderLeft: `2px solid ${accentColor}30`,
+            borderLeft: `2px solid ${accentColor}55`,
             marginLeft: "24px",
           }}
         >
@@ -301,17 +304,17 @@ export function Sidebar() {
           top: 0,
           height: "100vh",
           width: mobileOpen ? SIDEBAR_EXPANDED : sidebarWidth,
-          backgroundColor: "var(--bg-card)",
-          borderRight: "1px solid var(--border-subtle)",
+          background: "var(--sidebar-bg)",
+          borderRight: "1px solid var(--sidebar-border)",
           zIndex: 50,
           display: "flex",
           flexDirection: "column",
           transition: "width 0.3s ease, transform 0.3s ease",
           transform: mobileOpen ? "translateX(0)" : undefined,
-          boxShadow: "4px 0 24px rgba(0,0,0,0.3)",
+          boxShadow: "4px 0 24px rgba(8,20,48,0.18)",
           overflow: "hidden",
         }}
-        className={mobileOpen ? "" : "-translate-x-full md:translate-x-0"}
+        className={`app-sidebar ${mobileOpen ? "" : "-translate-x-full md:translate-x-0"}`}
       >
         {/* Brand Header */}
         <div
@@ -319,47 +322,33 @@ export function Sidebar() {
             display: "flex",
             alignItems: "center",
             justifyContent: collapsed && !mobileOpen ? "center" : "space-between",
-            height: "64px",
+            height: "72px",
             padding: "0 16px",
             borderBottom: "1px solid var(--border-subtle)",
             flexShrink: 0,
           }}
         >
           {(!collapsed || mobileOpen) && (
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "3px", minWidth: 0 }}>
               <img
-                src="/logo-mark.png"
+                src="/logo-wordmark-white.png"
                 alt="Break Protection"
-                width={36}
-                height={36}
-                style={{ display: "block", borderRadius: "10px", flexShrink: 0 }}
+                width={136}
+                height={32}
+                style={{ display: "block", width: "136px", height: "auto" }}
               />
-              <div>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: "15px",
-                    fontWeight: 700,
-                    color: "var(--text-primary)",
-                    lineHeight: 1.2,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  BP Analytics
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: "10px",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                    color: "var(--text-muted)",
-                  }}
-                >
-                  Enterprise
-                </span>
-              </div>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.14em",
+                  color: "var(--sidebar-muted)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Analytics
+              </span>
             </div>
           )}
 
@@ -453,7 +442,7 @@ export function Sidebar() {
               )}
               <CollapsibleSection
                 label="Instagram"
-                icon={Camera}
+                icon={InstagramIcon}
                 items={visibleIgItems}
                 collapsed={collapsed}
                 mobileOpen={mobileOpen}
