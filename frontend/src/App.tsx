@@ -9,6 +9,7 @@ import SetPassword from "./pages/SetPassword";
 import Dashboard from "./pages/Dashboard";
 import RoleDashboard from "./components/dashboard/RoleDashboard";
 import SalesOverview from "./pages/SalesOverview";
+import StorePortfolio from "./pages/StorePortfolio";
 import Operations from "./pages/Operations";
 import OperationsSubmit from "./pages/OperationsSubmit";
 import TeamLeaders from "./pages/TeamLeaders";
@@ -34,6 +35,7 @@ import CurrencySettings from "./pages/settings/Currency";
 import InstagramForms from "./pages/settings/InstagramForms";
 import AIProviders from "./pages/settings/AIProviders";
 import SocialTargets from "./pages/settings/SocialTargets";
+import LeadTargets from "./pages/settings/LeadTargets";
 import InstagramDashboard from "./pages/instagram/InstagramDashboard";
 import InstagramSetup from "./pages/instagram/InstagramSetup";
 import Conversations from "./pages/instagram/Conversations";
@@ -86,6 +88,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<RoleDashboard />} />
           <Route path="/sales-overview" element={<SalesOverview />} />
+          <Route path="/sales-overview/:storeId" element={<StorePortfolio />} />
           <Route path="/operations" element={<Operations />} />
           <Route path="/operations/submit" element={<OperationsSubmit />} />
           <Route path="/team-leaders" element={<TeamLeaders />} />
@@ -117,6 +120,7 @@ export default function App() {
           <Route path="/settings/instagram-forms" element={<InstagramForms />} />
           <Route path="/settings/ai-providers" element={<AIProviders />} />
           <Route path="/settings/social-targets" element={<SocialTargets />} />
+          <Route path="/settings/lead-targets" element={<LeadTargets />} />
           {/* Telecalling now lives in the main Dashboard and the tabbed Leads page */}
           <Route path="/crm" element={<Navigate to="/dashboard" replace />} />
           <Route path="/crm/leads" element={<ToLeadsTab view="leads" />} />

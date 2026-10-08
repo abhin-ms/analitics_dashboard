@@ -48,6 +48,7 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/settings/branch-assignment": { title: "Team Leaders & Branches", subtitle: "Who leads which store" },
   "/settings/sheet-assignments": { title: "Sheet Assignments", subtitle: "City sheets per person" },
   "/settings/social-targets": { title: "Social Targets", subtitle: "Monthly views target per store" },
+  "/settings/lead-targets": { title: "Lead Targets", subtitle: "Monthly leads and conversion target per store" },
 };
 
 export function Header() {
@@ -78,6 +79,7 @@ export function Header() {
 
   const currentRoute = ROUTE_MAP[location.pathname]
     || (location.pathname.startsWith("/team-leaders/") ? { title: "Team Leader", subtitle: "Monthly sales performance" } : undefined)
+    || (location.pathname.startsWith("/sales-overview/") ? { title: "Store Portfolio", subtitle: "Performance, targets and action plan" } : undefined)
     || {
     title: "Analytics Platform",
     subtitle: "BreakProtection Platform",

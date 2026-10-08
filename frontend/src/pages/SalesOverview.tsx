@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { AISummary } from "@/components/dashboard/AISummary";
-import { Filter, Store, RefreshCw } from "lucide-react";
-import { TableSkeleton } from "@/components/shared/Skeleton";
+import { Filter, Store, RefreshCw, ChevronRight, Package } from "lucide-react";
+import { StatCardSkeleton } from "@/components/shared/Skeleton";
 
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
 
@@ -48,6 +48,7 @@ function normalizeName(n: string) {
 
 export default function SalesOverview() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const tab = searchParams.get("tab") || "main";
   useSocketRefresh(["sales"]);
 
@@ -142,6 +143,8 @@ export default function SalesOverview() {
     return (report?.breakdown || []).map((r: any) => {
       const stock = stockByName.get(normalizeName(r.key));
       return {
+        store_id: r.store_id,
+        team_leader: r.team_leader || "",
         shop: r.key,
         country: r.country,
         actual: r.revenue,
@@ -347,74 +350,64 @@ export default function SalesOverview() {
           </button>
         </div>
 
-        {/* Table */}
-        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 sm:p-6 overflow-hidden">
-          {loading ? (
-            <TableSkeleton rows={8} cols={6} />
-          ) : stores.length === 0 ? (
-            <div className="text-center py-12 text-[var(--text-muted)]">No branch data available</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left border-collapse">
-                <thead>
-                  <tr className="text-[var(--text-muted)] text-xs uppercase tracking-wider border-b border-[var(--border-subtle)]">
-                    <th className="py-3 px-4 font-semibold">#</th>
-                    <th className="py-3 px-4 font-semibold">Store</th>
-                    <th className="py-3 px-4 font-semibold">Country</th>
-                    <th className="py-3 px-4 font-semibold text-right">Revenue</th>
-                    <th className="py-3 px-4 font-semibold text-right">Target</th>
-                    <th className="py-3 px-4 font-semibold text-right">Achievement</th>
-                    <th className="py-3 px-4 font-semibold text-right">Stock</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {stores.map((s: any, i: number) => (
-                    <tr key={i} className="hover:bg-[var(--bg-card-hover)] transition-colors">
-                      <td className="py-3.5 px-4 text-xs text-[var(--text-muted)]">{i + 1}</td>
-                      <td className="py-3.5 px-4 font-medium text-white flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)] flex items-center justify-center shrink-0">
-                          <Store size={15} style={{ color: COUNTRY_COLORS[s.country] || "#6b7280" }} />
-                        </div>
-                        <span>{s.shop}</span>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border" style={{
-                          borderColor: `${COUNTRY_COLORS[s.country] || "#6b7280"}40`,
-                          backgroundColor: `${COUNTRY_COLORS[s.country] || "#6b7280"}15`,
-                          color: COUNTRY_COLORS[s.country] || "#6b7280",
-                        }}>
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: COUNTRY_COLORS[s.country] || "#6b7280" }} />
-                          {s.country}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-semibold text-white">{fmtCurrency(s.actual || 0, s.country)}</td>
-                      <td className="py-3.5 px-4 text-right text-[var(--text-secondary)]">{fmtCurrency(s.target || 0, s.country)}</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2.5">
-                          <div className="w-24 h-2 bg-[var(--border-subtle)] rounded-full overflow-hidden shrink-0">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{
-                                width: `${Math.min(s.achievement_pct || 0, 100)}%`,
-                                backgroundColor: (s.achievement_pct || 0) >= 65 ? "#10b981" : (s.achievement_pct || 0) >= 35 ? "#f59e0b" : "#ef4444",
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs font-semibold text-[var(--text-primary)] min-w-[42px] text-right">
-                            {(s.achievement_pct || 0).toFixed(1)}%
-                          </span>
-                        </div>
-                      </td>
-                      <td className={`py-3.5 px-4 text-right font-medium ${(s.stock_units || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        {(s.stock_units || 0).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        {/* Store cards — click one for its full performance portfolio */}
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => <StatCardSkeleton key={i} />)}
+          </div>
+        ) : stores.length === 0 ? (
+          <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] text-center py-12 text-[var(--text-muted)]">No branch data available</div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {stores.map((s: any) => {
+              const color = COUNTRY_COLORS[s.country] || "#6b7280";
+              const ach = s.achievement_pct || 0;
+              return (
+                <button
+                  key={s.store_id ?? s.shop}
+                  onClick={() => s.store_id && navigate(`/sales-overview/${s.store_id}`)}
+                  className="group text-left rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 hover:border-[var(--border-glow)] hover:bg-[var(--bg-card-hover)] transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-[var(--bg-primary)] border border-[var(--border-subtle)] flex items-center justify-center shrink-0">
+                      <Store size={17} style={{ color }} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-white truncate">{s.shop}</p>
+                      <p className="text-[11px] text-[var(--text-muted)] truncate flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                        {s.country}{s.team_leader && ` · ${s.team_leader}`}
+                      </p>
+                    </div>
+                    <ChevronRight size={16} className="text-[var(--text-muted)] group-hover:text-white shrink-0 mt-1" />
+                  </div>
+                  <div className="mt-4 flex items-end justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Revenue</p>
+                      <p className="text-lg font-extrabold text-white tabular-nums">{fmtCurrency(s.actual || 0, s.country)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">Target</p>
+                      <p className="text-sm font-semibold text-[var(--text-secondary)] tabular-nums">{fmtCurrency(s.target || 0, s.country)}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2.5">
+                    <div className="h-2 flex-1 bg-[var(--border-subtle)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${Math.min(ach, 100)}%`, backgroundColor: ach >= 65 ? "#10b981" : ach >= 35 ? "#f59e0b" : "#ef4444" }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-[var(--text-primary)] tabular-nums min-w-[42px] text-right">{ach.toFixed(1)}%</span>
+                  </div>
+                  <p className={`mt-3 text-[11px] flex items-center gap-1.5 ${(s.stock_units || 0) < 0 ? "text-red-400" : "text-[var(--text-secondary)]"}`}>
+                    <Package size={12} /> Stock {(s.stock_units || 0).toLocaleString()} units
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       )}

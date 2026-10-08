@@ -56,6 +56,7 @@ const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/sheet-assignments", label: "Sheet Assignments", icon: PhoneCall, resource: "leads" },
   { to: "/settings/kpi-weights", label: "KPI Weights", icon: BarChart3, resource: "settings" },
   { to: "/settings/social-targets", label: "Social Targets", icon: Target, resource: "settings" },
+  { to: "/settings/lead-targets", label: "Lead Targets", icon: Target, resource: "settings" },
   { to: "/settings/data-sync", label: "Data Sync", icon: RefreshCw, resource: "settings" },
   { to: "/settings/currency", label: "Currency", icon: DollarSign, resource: "settings" },
   { to: "/settings/instagram-forms", label: "Instagram Forms", icon: FileText, resource: "settings" },
