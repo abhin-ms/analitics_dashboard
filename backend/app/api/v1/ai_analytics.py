@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from ...core.deps import get_db, get_current_user, get_user_permissions, require_permission
+from ...core.store_scope import ALWAYS_SEE_ALL_ROLES
 from ...models.models import User, Role, AISummaryConfig
 from ...services.ai_summary_service import get_summary, generate_summary, get_or_create_config, DEFAULT_SYSTEM_PROMPT, DEFAULT_MODEL
 from ...services.ai_section_contexts import SECTION_VIEW_RESOURCE, SECTION_DEFAULT_PROMPTS
@@ -34,12 +35,17 @@ async def require_ai_manage(
 async def _check_view(section: str, user: User, db: AsyncSession) -> None:
     if section not in KNOWN_SECTIONS:
         raise HTTPException(status_code=404, detail=f"Unknown section: {section}")
+    # Summaries and chat are built from company-wide figures, so only roles
+    # that see every store may read them — a section's view permission alone
+    # isn't enough (every role holds dashboard:view).
+    role_name = (await db.execute(select(Role.name).where(Role.id == user.role_id))).scalar_one_or_none() or ""
+    if role_name not in ALWAYS_SEE_ALL_ROLES:
+        raise HTTPException(status_code=403, detail="AI analytics covers every store and is limited to company-wide roles")
+    if role_name in MANAGE_ROLES:
+        return
     resource = SECTION_VIEW_RESOURCE.get(section, "dashboard")
     perms = await get_user_permissions(user, db)
     if any(p["resource"] == resource and p["action"] == "view" for p in perms):
-        return
-    role_name = (await db.execute(select(Role.name).where(Role.id == user.role_id))).scalar_one_or_none() or ""
-    if role_name in MANAGE_ROLES:
         return
     raise HTTPException(status_code=403, detail=f"Missing permission: {resource}:view")
 

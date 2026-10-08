@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...core.deps import get_db, require_permission
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import Investment, Store, User
 from ...schemas import InvestmentCreate, InvestmentUpdate, InvestmentResponse
 
@@ -15,9 +16,7 @@ async def list_investments(
     user: User = require_permission("investments", "view"),
 ):
     query = select(Investment)
-    if user.store_access:
-        store_ids = [sa.store_id for sa in user.store_access]
-        query = query.where(Investment.store_id.in_(store_ids))
+    query = query.where(store_filter(Investment.store_id, await allowed_store_ids(user, db)))
     if store_id:
         query = query.where(Investment.store_id == store_id)
     if category:

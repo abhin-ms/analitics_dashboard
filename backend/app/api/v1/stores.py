@@ -2,14 +2,12 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...core.deps import get_db, require_permission
+from ...core.store_scope import ALWAYS_SEE_ALL_ROLES, allowed_store_ids, check_store
 from ...models.models import Store, User, UserStoreAccess, Role
 from ...services.store_merge_service import merge_store_into
 from ...schemas import StoreCreate, StoreUpdate, StoreResponse
 
 router = APIRouter(prefix="/stores", tags=["stores"])
-
-# Sees every store, unconditionally, regardless of any UserStoreAccess row.
-ALWAYS_SEE_ALL_ROLES = {"CEO", "SuperAdmin", "Admin", "COO"}
 
 
 def _to_store_response(store: Store, tl: User | None) -> StoreResponse:
@@ -105,10 +103,7 @@ async def get_store(
     store = result.scalar_one_or_none()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
-    if user.store_access:
-        access_ids = [sa.store_id for sa in user.store_access]
-        if store_id not in access_ids:
-            raise HTTPException(status_code=403, detail="No access to this store")
+    check_store(await allowed_store_ids(user, db), store_id)
     r = await db.execute(select(User).where(User.id == store.team_leader_id))
     tl = r.scalar_one_or_none()
     return _to_store_response(store, tl)

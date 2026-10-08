@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "@/lib/authStore";
-import { ShieldCheck, Mail, Lock, AlertCircle, ArrowRight, Loader2 } from "lucide-react";
+import { Mail, Lock, AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -57,22 +57,13 @@ export default function Login() {
                 opacity: 0.6,
               }}
             />
-            <div
-              style={{
-                position: "relative",
-                background: "var(--auth-logo-bg)",
-                borderRadius: "20px",
-                padding: "16px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "72px",
-                height: "72px",
-                border: "1px solid var(--auth-logo-border)",
-              }}
-            >
-              <ShieldCheck size={36} style={{ color: "var(--auth-link)" }} />
-            </div>
+            <img
+              src="/logo-mark.png"
+              alt="Break Protection"
+              width={72}
+              height={72}
+              style={{ position: "relative", display: "block", borderRadius: "16px" }}
+            />
           </div>
           <h1
             style={{

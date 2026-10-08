@@ -24,6 +24,20 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dis
 limiter = Limiter(key_func=get_remote_address)
 
 
+def spa_file(frontend_dir: Path, full_path: str) -> Path:
+    """The build file a SPA request maps to, or index.html.
+
+    resolve() collapses "..", symlinks and a leading "/" (which would
+    otherwise make the join absolute), so anything that lands outside the
+    build directory gets the SPA shell, never the file.
+    """
+    root = frontend_dir.resolve()
+    file_path = (root / full_path.lstrip("/")).resolve()
+    if file_path.is_relative_to(root) and file_path.is_file():
+        return file_path
+    return root / "index.html"
+
+
 async def seed_default_sources():
     from sqlalchemy import select
     from app.models.models import SheetSource
@@ -138,9 +152,6 @@ if FRONTEND_DIR.exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        file_path = FRONTEND_DIR / full_path
-        if file_path.is_file():
-            return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return FileResponse(spa_file(FRONTEND_DIR, full_path))
 
 socket_app = socketio_lib.ASGIApp(sio, other_asgi_app=app)

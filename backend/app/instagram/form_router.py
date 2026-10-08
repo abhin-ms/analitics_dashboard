@@ -251,38 +251,80 @@ async def list_all_submissions(
     return resp
 
 
-@router.post("/forms/{form_id}/submit")
-async def submit_phase2(
-    form_id: int,
-    submission_id: int = Query(...),
-    body: IGFormPhase2Submit = None,
-    db: AsyncSession = Depends(get_db),
-):
+# ── Public: hosted page (no login; the link token is the credential) ─
+MAX_PHASE2_VALUE_LEN = 500
+
+
+async def _public_submission(db: AsyncSession, form_id: int, token: str) -> IGFormSubmission:
     result = await db.execute(
         select(IGFormSubmission).where(
-            IGFormSubmission.id == submission_id,
+            IGFormSubmission.public_token == token,
             IGFormSubmission.form_id == form_id,
         )
     )
     submission = result.scalar_one_or_none()
     if not submission:
         raise HTTPException(404, "Submission not found")
+    return submission
+
+
+async def _phase2_fields(db: AsyncSession, form_id: int) -> list[IGFormField]:
+    result = await db.execute(
+        select(IGFormField).where(IGFormField.form_id == form_id, IGFormField.phase == 2)
+        .order_by(IGFormField.sort_order)
+    )
+    return list(result.scalars().all())
+
+
+def clean_phase2(fields: list[IGFormField], data: dict) -> dict:
+    """Keep only the form's phase-2 fields, as bounded strings; enforce
+    required fields and select options."""
+    by_key = {f.field_key: f for f in fields}
+    unknown = set(data) - set(by_key)
+    if unknown:
+        raise HTTPException(422, f"Unknown fields: {', '.join(sorted(unknown))}")
+    cleaned = {}
+    for key, field in by_key.items():
+        value = data.get(key)
+        if value is None or value == "":
+            if field.required:
+                raise HTTPException(422, f"{field.label} is required")
+            continue
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            raise HTTPException(422, f"{field.label} must be text")
+        value = str(value).strip()
+        if len(value) > MAX_PHASE2_VALUE_LEN:
+            raise HTTPException(422, f"{field.label} is too long")
+        if field.field_type in ("select", "dropdown") and field.options:
+            allowed = {str(o.get("value")) if isinstance(o, dict) else str(o) for o in field.options}
+            if value not in allowed:
+                raise HTTPException(422, f"{field.label}: invalid option")
+        cleaned[key] = value
+    return cleaned
+
+
+@router.post("/forms/{form_id}/submit")
+async def submit_phase2(
+    form_id: int,
+    body: IGFormPhase2Submit,
+    token: str = Query(..., min_length=16, max_length=64),
+    db: AsyncSession = Depends(get_db),
+):
+    submission = await _public_submission(db, form_id, token)
     if submission.status == "completed":
         return {"detail": "Already completed", "status": "completed"}
 
-    if body and body.phase2_data:
-        submission.phase2_data = body.phase2_data
+    submission.phase2_data = clean_phase2(await _phase2_fields(db, form_id), body.phase2_data)
     submission.status = "completed"
     await db.commit()
 
-    return {"detail": "Booking completed", "status": "completed", "submission_id": submission.id}
+    return {"detail": "Booking completed", "status": "completed"}
 
 
-# ── Public: Get form for hosted page ────────────────────────────
 @router.get("/forms/{form_id}/public")
 async def get_public_form(
     form_id: int,
-    submission_id: int = Query(...),
+    token: str = Query(..., min_length=16, max_length=64),
     db: AsyncSession = Depends(get_db),
 ):
     form_result = await db.execute(select(IGForm).where(IGForm.id == form_id))
@@ -290,16 +332,8 @@ async def get_public_form(
     if not form:
         raise HTTPException(404, "Form not found")
 
-    sub_result = await db.execute(
-        select(IGFormSubmission).where(IGFormSubmission.id == submission_id)
-    )
-    submission = sub_result.scalar_one_or_none()
-    if not submission:
-        raise HTTPException(404, "Submission not found")
+    submission = await _public_submission(db, form_id, token)
 
-    fields_result = await db.execute(
-        select(IGFormField).where(IGFormField.form_id == form_id, IGFormField.phase == 2).order_by(IGFormField.sort_order)
-    )
     phase2_fields = [
         {
             "field_key": f.field_key,
@@ -309,7 +343,7 @@ async def get_public_form(
             "options": f.options or [],
             "placeholder": f.placeholder,
         }
-        for f in fields_result.scalars().all()
+        for f in await _phase2_fields(db, form_id)
     ]
 
     stores_result = await db.execute(select(Store.id, Store.name).where(Store.is_active == True))

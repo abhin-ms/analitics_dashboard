@@ -131,7 +131,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Route>
 
-        <Route path="/ig-form/:formId/:submissionId" element={<HostedForm />} />
+        <Route path="/ig-form/:formId/:token" element={<HostedForm />} />
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

@@ -6,7 +6,7 @@ from .models import (
     IGAccount, IGConversation, IGMessage, IGBotSettings,
     AIProvider, AIUsageLog, IGComment, IGCommentRule, IGFAQ,
 )
-from .form_models import IGForm, IGFormField, IGFormSubmission
+from .form_models import IGForm, IGFormField, IGFormSubmission, new_public_token
 from .graph_client import InstagramGraphClient
 from .ai_service import ai_service, build_system_prompt, AIResponse
 from .utils import decrypt_token
@@ -152,7 +152,7 @@ class BotEngine:
         else:
             if form.form_type == "two_phase":
                 submission.status = "partial"
-                link = f"{settings.FRONTEND_URL}/ig-form/{form.id}/{submission.id}"
+                link = self._hosted_form_link(form, submission)
                 await client.send_button_template(
                     sender_id,
                     f"Thank you! Your details are saved. Please complete your "
@@ -202,6 +202,13 @@ class BotEngine:
         conversation.lead_id = lead.id
         await self.db.flush()
 
+    @staticmethod
+    def _hosted_form_link(form: IGForm, submission: IGFormSubmission) -> str:
+        # submissions started before tokens existed get one on first link
+        if not submission.public_token:
+            submission.public_token = new_public_token()
+        return f"{settings.FRONTEND_URL}/ig-form/{form.id}/{submission.public_token}"
+
     async def _start_form(
         self, form: IGForm, conversation: IGConversation,
         client: InstagramGraphClient, sender_id: str,
@@ -223,6 +230,7 @@ class BotEngine:
             phase1_data=pre_filled or {},
             status="partial",
             current_field_index=0,
+            public_token=new_public_token(),
         )
         self.db.add(submission)
         await self.db.flush()
@@ -236,7 +244,7 @@ class BotEngine:
             else:
                 submission.status = "completed" if form.form_type == "simple" else "partial"
                 if form.form_type == "two_phase":
-                    link = f"{settings.FRONTEND_URL}/ig-form/{form.id}/{submission.id}"
+                    link = self._hosted_form_link(form, submission)
                     await client.send_button_template(
                         sender_id,
                         f"Thank you! Your details are saved. Please complete your "
