@@ -149,7 +149,8 @@ from app.db.base import Base  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.models import (  # noqa: E402
-    DailyStoreTracker, McpDailySale, Role, Store, StoreMcpAlias, TeleAppointment, TeleCallLead, User,
+    DailyStoreTracker, McpDailySale, Role, Store, StoreMcpAlias, TeleAppointment, TeleCallLead, TeleLeadActivity,
+    User,
 )
 from app.services import sales_report_service  # noqa: E402
 
@@ -230,8 +231,15 @@ async def env(monkeypatch):
             TeleCallLead(sheet_tl_name="Bangalore", full_name="F", phone="9876500006", spreadsheet_id="s",
                          lead_source="GM", remarks="will visit indiranagar store", status="", created_at=t, submitted_at=t),
         ]
+        # arrived in August, bought on 3 September: received in Aug, converted in Sept
+        late = TeleCallLead(sheet_tl_name="K", full_name="H", phone="9876500008", store_id=a.id, spreadsheet_id="s",
+                            lead_source="PM", status="Sale Conversion", sale_amount="5,000",
+                            created_at=datetime(2025, 8, 25, 6), submitted_at=datetime(2025, 8, 25, 6))
+        leads.append(late)
         db.add_all(leads)
         await db.flush()
+        db.add(TeleLeadActivity(lead_id=late.id, type="status_change", old_value="No Status",
+                                new_value="Sale Conversion", created_at=datetime(2025, 9, 3, 10)))
         db.add(TeleAppointment(lead_id=leads[2].id, store_id=a.id, scheduled_at=t, attendance="attended"))
         await db.commit()
         ids = {k: v.id for k, v in u.items()}
@@ -283,11 +291,13 @@ async def test_portfolio_end_to_end(env):
     assert [m["month"] for m in social["monthly"]] == ["2025-08", "2025-09"]
 
     leads = body["leads"]
-    assert leads["total"] == 4 and leads["converted"] == 1 and leads["untouched"] == 2
+    # 4 leads arrived in September; 2 sales were made in September (one by H, an August lead)
+    assert leads["total"] == 4 and leads["converted"] == 2 and leads["untouched"] == 2
+    assert leads["revenue"] == 17_000 and leads["conversion_pct"] == 50.0
     assert leads["duplicates_merged"] == 1  # A's website copy
     assert leads["matched_by"] == {"store on the lead": 3, "shop named in remarks": 1}
     src = {s["key"]: s for s in leads["sources"]}
-    assert src["performance_marketing"]["leads"] == 1 and src["performance_marketing"]["revenue"] == 12_000
+    assert src["performance_marketing"]["leads"] == 1 and src["performance_marketing"]["revenue"] == 17_000
     assert src["growth_marketing"]["leads"] == 2  # sheet-tagged GM: B and F
     assert leads["area"]["label"] == "Karnataka" and leads["area"]["total"] == 2 and leads["area"]["shops"] == 2
     assert src["whatsapp"]["leads"] == 1 and src["website"]["leads"] == 0  # store B's lead isn't here
@@ -329,3 +339,10 @@ async def test_year_range_reads_the_whole_year_of_tracker_rows(env):
     assert "2025-03" in [m["month"] for m in social["monthly"]]
     # March + August + September (latest Sept row) + October
     assert social["views"]["achieved"] == 111 + 900_000 + 450_000 + 999_999
+
+
+@pytest.mark.asyncio
+async def test_conversion_counts_in_the_month_of_the_sale(env):
+    aug = (await env("ceo").get(f"/api/v1/store-portfolio/{env.stores['a']}",
+                                params={"start": "2025-08-01", "end": "2025-08-31"})).json()["leads"]
+    assert aug["total"] == 1 and aug["converted"] == 0 and aug["revenue"] == 0  # H arrived, hadn't bought yet
