@@ -5,11 +5,11 @@ import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
-import { useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useMapMetaForm, useMetaBackfill, useMetaForms, useSetAlias, useSetAvailability, useTeam } from "../api";
+import { useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useMapMetaForm, useMetaBackfill, useMetaForms, useStoreRematch, type StoreRematchResult, useSetAlias, useSetAvailability, useTeam } from "../api";
 import { HOT_COLOR } from "../statusConfig";
 import { fmtDateTime, fmtRelative } from "../format";
 import { openLead } from "../components/LeadDrawer";
-import { Button, Card, CardHeader, Empty, InfoNote, PageHeader, Pill, Tabs, inputCls, inlineInputCls } from "../components/ui";
+import { Modal, Button, Card, CardHeader, Empty, InfoNote, PageHeader, Pill, Tabs, inputCls, inlineInputCls } from "../components/ui";
 
 function AccessTab() {
   const { data: team } = useTeam();
@@ -54,6 +54,72 @@ function AccessTab() {
 
 const META_STATUS_COLOR: Record<string, string> = { created: "#10b981", merged: "#3b82f6", error: "#ef4444" };
 
+/** Admin: find a store for Meta forms and website / Meta leads that came in
+ * without one — preview first, then route them to the store's team. */
+function StoreMatchFix() {
+  const toast = useToast();
+  const rematch = useStoreRematch();
+  const [preview, setPreview] = useState<StoreRematchResult | null>(null);
+  const waiting = (preview?.forms.reduce((n, f) => n + f.waiting_leads, 0) ?? 0) + (preview?.leads.length ?? 0);
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <span className="text-[var(--text-secondary)]">Leads or forms without a store?</span>
+      <Button size="sm" loading={rematch.isPending && !preview} onClick={async () => {
+        try { setPreview(await rematch.mutateAsync(false)); }
+        catch (e) { toast.error(e instanceof Error ? e.message : "Check failed"); }
+      }}>Check store matching</Button>
+      <Modal open={!!preview} onClose={() => setPreview(null)} wide
+        title="Store matching — preview (nothing changed yet)"
+        footer={preview && (preview.forms.length + preview.leads.length > 0) ? (
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setPreview(null)}>Cancel</Button>
+            <Button variant="primary" loading={rematch.isPending} onClick={async () => {
+              try {
+                const r = await rematch.mutateAsync(true);
+                toast.success(`${r.forms.length} form${r.forms.length === 1 ? "" : "s"} and ${r.leads.length} lead${r.leads.length === 1 ? "" : "s"} sent to their store teams`);
+                setPreview(null);
+              } catch (e) { toast.error(e instanceof Error ? e.message : "Could not apply"); }
+            }}>Apply — send {waiting} lead{waiting === 1 ? "" : "s"} to their teams</Button>
+          </div>
+        ) : undefined}>
+        {preview && (preview.forms.length + preview.leads.length === 0 ? (
+          <p className="text-sm text-[var(--text-secondary)]">Nothing to fix: every form and recent lead that names a known store already has it.</p>
+        ) : (
+          <div className="space-y-4 text-xs">
+            {preview.forms.length > 0 && (
+              <div>
+                <p className="font-semibold text-white mb-1.5">Lead forms</p>
+                {preview.forms.map((f) => (
+                  <p key={f.form} className="py-1 border-b border-[var(--border-subtle)]">
+                    <span className="text-white">{f.form}</span>
+                    <span className="text-[var(--text-muted)]"> · {f.from ? `${f.from} → ` : "not matched → "}</span>
+                    <b className="text-white">{f.to}</b>
+                    <span className="text-[var(--text-muted)]"> ({f.team_leader || "no team leader"}) · {f.waiting_leads} waiting lead{f.waiting_leads === 1 ? "" : "s"}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+            {preview.leads.length > 0 && (
+              <div>
+                <p className="font-semibold text-white mb-1.5">Leads without a store (last 30 days)</p>
+                {preview.leads.map((l) => (
+                  <p key={l.lead_id} className="py-1 border-b border-[var(--border-subtle)]">
+                    <span className="text-white">{l.name}</span>
+                    <span className="text-[var(--text-muted)]"> · {l.source} · said “{l.said}” → </span>
+                    <b className="text-white">{l.to}</b>
+                    <span className="text-[var(--text-muted)]"> ({l.team_leader})</span>
+                  </p>
+                ))}
+              </div>
+            )}
+            <p className="text-[var(--text-muted)]">Forms you mapped by hand and leads someone already owns are never changed. Anything vague (“Nearest store”, a city with several shops) stays for you to assign.</p>
+          </div>
+        ))}
+      </Modal>
+    </div>
+  );
+}
+
 function MetaLeadsCard({ meta }: { meta: any }) {
   const toast = useToast();
   const { data: forms } = useMetaForms();
@@ -75,6 +141,7 @@ function MetaLeadsCard({ meta }: { meta: any }) {
         <p className="text-[var(--text-secondary)]">Callback URL for Meta → Webhooks → Page → leadgen: <code className="text-white">{window.location.origin}{meta.endpoint}</code></p>
         <p className="text-[var(--text-muted)]">Last 7 days: {Object.entries(meta.last_7_days).map(([k, v]) => `${v} ${k}`).join(" · ") || "no leads yet"}.
           {" "}Answered “yes” to the pre-booking question → <span className="text-rose-400 font-semibold">Hot</span>.</p>
+        {forms?.can_edit && <StoreMatchFix />}
         {forms?.can_edit && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <span className="text-[var(--text-secondary)]">Import missed leads from the last</span>

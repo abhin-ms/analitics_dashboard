@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { SourceIcon } from "@/components/shared/BrandIcon";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Search, Columns3, Bookmark, Download, UserCog, ChevronLeft, ChevronRight, Trash2, Flame } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/apiClient";
+import { Plus, Search, Columns3, Bookmark, Download, UserCog, ChevronLeft, ChevronRight, Trash2, Flame, Store as StoreIcon } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
@@ -27,7 +29,10 @@ const ALL_COLUMNS = [
 ] as const;
 const DEFAULT_COLUMNS = ["owner", "progress", "followup", "priority", "value"];
 const COLS_KEY = "crm.leads.columns";
-const FILTER_KEYS = ["list", "status", "stage", "owner", "sheet", "priority", "source", "q", "group_by", "sort"] as const;
+const FILTER_KEYS = ["list", "status", "stage", "owner", "sheet", "priority", "source", "store", "q", "group_by", "sort"] as const;
+/** Sources that always name a store (Meta forms, website bookings): for
+ * these "no store" means matching failed and someone should look. */
+const STORE_ROUTED = new Set(["website", "facebook", "instagram"]);
 
 function loadColumns(): string[] {
   try {
@@ -59,6 +64,20 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
     status: sp.get("status") || "", stage: sp.get("stage") || "", owner: sp.get("owner") || "",
     sheet: sp.get("sheet") || "", priority: sp.get("priority") || "", q: sp.get("q") || "",
     group_by: sp.get("group_by") || "", sort: sp.get("sort") || "newest", source: sp.get("source") || "",
+    store: sp.get("store") || "",
+  };
+  // Store names for the "which store did this lead go to" line and filter
+  // (the caller's own stores; every store for company roles).
+  const { data: storeList } = useQuery({ queryKey: ["stores"], queryFn: () => api.get<{ id: number; name: string; is_active: boolean }[]>("/stores/") });
+  const storeName = useMemo(() => new Map((storeList || []).map((st) => [st.id, st.name])), [storeList]);
+  const storeLine = (l: CrmLead) => {
+    if (l.store_id && storeName.get(l.store_id)) {
+      return <span className="inline-flex items-center gap-1 font-semibold text-[var(--text-primary)]"><StoreIcon size={11} />{storeName.get(l.store_id)}</span>;
+    }
+    if (STORE_ROUTED.has(l.source)) {
+      return <span className="font-semibold text-amber-500" title={l.preferred_store || ""}>No store matched{l.preferred_store ? ` (“${l.preferred_store}”)` : ""}</span>;
+    }
+    return <>{l.preferred_store || l.city}</>;
   };
   const { data, isLoading, isFetching, error } = useCrmLeads(params);
   const [search, setSearch] = useState(params.q);
@@ -134,7 +153,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
             <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
           </div>
-          <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.lead_source || "—"}</p>
+          <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.lead_source || "—"}</p>
           {l.phone_model
             ? <p className="text-xs text-blue-300">{l.phone_model}</p>
             : <button onClick={() => openLead(l.id)} className="text-xs text-blue-400 hover:underline cursor-pointer">+ Add phone model</button>}
@@ -188,7 +207,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
               <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
             </div>
-            <p className="text-[11px] text-[var(--text-muted)]">{l.preferred_store || l.city} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
+            <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
           <PriorityBadge priority={l.priority} />
         </div>
@@ -248,6 +267,14 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
               <option value="">All sources</option>
               {SOURCE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
+            {(storeList?.length ?? 0) > 1 && (
+              <select className={`${inlineInputCls}`} value={params.store} onChange={(e) => update({ store: e.target.value })}
+                aria-label="Store">
+                <option value="">All stores</option>
+                <option value="none">No store matched</option>
+                {(storeList || []).filter((st) => st.is_active).map((st) => <option key={st.id} value={String(st.id)}>{st.name}</option>)}
+              </select>
+            )}
             <select className={`${inlineInputCls}`} value={params.priority} onChange={(e) => update({ priority: e.target.value })}>
               <option value="">Any priority</option>
               {PRIORITIES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}

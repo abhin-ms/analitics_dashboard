@@ -86,3 +86,15 @@ async def test_all_countries_report_is_in_rupees(db):
 async def test_single_country_stays_in_its_own_currency(db):
     r = await svc.get_sales_report(db, granularity="day", start="2025-09-10", end="2025-09-10", country="UAE")
     assert r["total_revenue"] == 1_000 and r["currency"] == "AED" and r["rates"] is None
+
+
+@pytest.mark.asyncio
+async def test_live_today_all_countries_is_in_rupees(db, monkeypatch):
+    class _Today(date):
+        @classmethod
+        def today(cls):
+            return DAY
+    monkeypatch.setattr(svc, "date", _Today)
+    r = await svc.get_live_today_revenue(db, "All")
+    assert r["currency"] == "INR" and r["revenue"] == pytest.approx(10_000 + 1_000 * 27)
+    assert (await svc.get_live_today_revenue(db, "UAE"))["revenue"] == 1_000

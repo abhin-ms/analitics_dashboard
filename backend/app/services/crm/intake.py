@@ -78,6 +78,12 @@ def _norm(text: str | None) -> str:
 
 
 async def match_store(db: AsyncSession, store_text: str, store_id: str) -> Store | None:
+    """The store for a preferred-store text / id, swapped for the record of
+    the same shop that has a team leader when needed."""
+    return await canonical_store(db, await _match_store(db, store_text, store_id))
+
+
+async def _match_store(db: AsyncSession, store_text: str, store_id: str) -> Store | None:
     """Our store for the form's preferred store: by id, exact name, MCP
     alias, then a unique partial name match."""
     if store_id.isdigit():
@@ -96,7 +102,41 @@ async def match_store(db: AsyncSession, store_text: str, store_id: str) -> Store
     if alias:
         return next((st for st in stores if st.id == alias), None)
     partial = [st for st in stores if len(key) >= 4 and (key in _norm(st.name) or (_norm(st.name) and _norm(st.name) in key))]
-    return partial[0] if len(partial) == 1 else None
+    if len(partial) == 1:
+        return partial[0]
+    # Place names the forms and website use ("Hitech City North",
+    # "Kodambakkam, Chennai", "Kanhagad"): the one shop they name, if any.
+    from ..store_portfolio import shop_of, shops_mentioned
+    shops = shops_mentioned(store_text, None) | ({shop_of(store_text)} - {None})
+    return await store_for_shop(db, shops.pop()) if len(shops) == 1 else None
+
+
+async def store_for_shop(db: AsyncSession, shop: str) -> Store | None:
+    """The store record a shop's leads should go to. A shop can have several
+    records (e.g. "TVM" and "Kerala Trivandrum"); prefer the one with a real
+    team leader, then the one MCP reports sales for."""
+    from ..store_portfolio import shop_of
+    stores = [st for st in (await db.execute(select(Store).where(Store.is_active == True))).scalars().all()  # noqa: E712
+              if shop_of(st.name) == shop]
+    if not stores:
+        return None
+    aliased = set((await db.execute(select(StoreMcpAlias.store_id).where(
+        StoreMcpAlias.store_id.in_([st.id for st in stores])))).scalars().all())
+    ranked = []
+    for st in stores:
+        ranked.append((await _real_team_leader(db, st) is None, st.id not in aliased, st.id, st))
+    return min(ranked)[-1]
+
+
+async def canonical_store(db: AsyncSession, store: Store | None) -> Store | None:
+    """Same shop, but the record that can actually take leads: a matched
+    duplicate without a team leader is swapped for the one with one."""
+    if store is None or await _real_team_leader(db, store):
+        return store
+    from ..store_portfolio import shop_of
+    shop = shop_of(store.name)
+    better = await store_for_shop(db, shop) if shop else None
+    return better if better and await _real_team_leader(db, better) else store
 
 
 async def _real_team_leader(db: AsyncSession, store: Store | None) -> User | None:
