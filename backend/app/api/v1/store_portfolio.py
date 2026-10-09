@@ -6,7 +6,7 @@ Also the per-store lead / conversion targets the portfolio measures against
 (company default + optional per-store override, kept in Settings)."""
 import json
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,7 +18,7 @@ from ...core.deps import get_current_user, get_db, require_permission
 from ...core.store_scope import allowed_store_ids, check_store
 from ...models.models import (
     DailyStoreTracker, GoogleReview, McpDailySale, Setting, Store, StoreMcpAlias, TeleAppointment,
-    TeleCallLead, User,
+    TeleCallLead, TeleLeadActivity, User,
 )
 from ...services import sales_report_service
 from ...services.crm import metrics as crm_metrics
@@ -334,18 +334,27 @@ async def _reviews(db: AsyncSession, store: Store, history: list[DailyStoreTrack
     }
 
 
-def _lead_figures(groups: list[list], tracker: dict | None = None) -> dict:
-    """Counts for a set of de-duplicated leads (each group is one person)."""
+def _lead_figures(groups: list[list], conv_groups: list[list], tracker: dict | None = None) -> dict:
+    """Counts for de-duplicated leads (each group is one person): `groups`
+    arrived in the period, `conv_groups` bought in the period (whenever they
+    arrived) — so a September lead who buys in October counts in October."""
     reps = [best_of(g) for g in groups]
     sources = {key: {"key": key, "label": label, "leads": 0, "converted": 0, "revenue": 0.0}
                for key, label, _ in LEAD_SOURCES}
-    for g, rep in zip(groups, reps):
+
+    def bucket(g):
         first = g[0]  # where the person first came from
-        b = sources[lead_source_bucket(source_key(first), first.lead_source)]
-        b["leads"] += 1
-        if rep.status == "Sale Conversion":
-            b["converted"] += 1
-            b["revenue"] += parse_amount(rep.sale_amount)
+        return sources[lead_source_bucket(source_key(first), first.lead_source)]
+
+    for g in groups:
+        bucket(g)["leads"] += 1
+    revenue = 0.0
+    for g in conv_groups:
+        amount = parse_amount(best_of(g).sale_amount)
+        b = bucket(g)
+        b["converted"] += 1
+        b["revenue"] += amount
+        revenue += amount
     for b in sources.values():
         b["rate"] = round(b["converted"] / b["leads"] * 100, 1) if b["leads"] else 0.0
         b["revenue"] = round(b["revenue"], 2)
@@ -356,19 +365,39 @@ def _lead_figures(groups: list[list], tracker: dict | None = None) -> dict:
         sources["whatsapp"]["tracker"] = {"label": "WA chats (Daily Tracker)", "value": tracker["wa_chats"]}
         sources["walk_ins"]["tracker"] = {"label": "Walk-ins booked (Daily Tracker)", "value": tracker["walkins"]}
     kpis = crm_metrics.lead_kpis(reps)
+    kpis["converted"] = len(conv_groups)
+    kpis["conversion_pct"] = round(len(conv_groups) / len(groups) * 100, 1) if groups else 0.0
+    kpis["total_sale_amount"] = revenue
     return {"kpis": kpis, "status_counts": crm_metrics.status_counts(reps), "sources": list(sources.values()),
             "merged": sum(len(g) - 1 for g in groups)}
+
+
+CONVERSION_LOOKBACK_DAYS = 400  # a sale this period may come from a lead up to ~a year old
+
+
+async def _conversion_times(db: AsyncSession, lead_ids: list[int]) -> dict[int, datetime]:
+    """When each lead first became "Sale Conversion" (app, sheet or the MCP
+    sale match all log it); leads converted before logging began have none."""
+    if not lead_ids:
+        return {}
+    return dict((await db.execute(
+        select(TeleLeadActivity.lead_id, func.min(TeleLeadActivity.created_at))
+        .where(TeleLeadActivity.lead_id.in_(lead_ids), TeleLeadActivity.new_value == "Sale Conversion")
+        .group_by(TeleLeadActivity.lead_id)
+    )).all())
 
 
 async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: date,
                  tracker_rows: list[DailyStoreTracker]) -> dict:
     """The store's leads, worked out at read time (see store_portfolio
     attribute_lead): its own shop's leads, plus its area's leads whose shop
-    isn't known, shown separately. Duplicates count once."""
+    isn't known, shown separately. Duplicates count once. Leads received
+    count by arrival date, conversions by the date of the sale."""
     all_stores = (await db.execute(select(Store.id, Store.name, Store.region, Store.is_active))).all()
     store_shop = {s.id: shop_of(s.name) for s in all_stores}
     target_shop = store_shop.get(store.id) or f"store:{store.id}"
     target_area = area_of_store(store.name, store.region or "")
+
     def shop_key(sid):
         """A store's shop; a placeholder record ("Kerala Store") counts as no
         store at all unless it's the store being viewed, so its leads fall
@@ -385,36 +414,50 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     appt_lead_ids = select(TeleAppointment.lead_id).where(TeleAppointment.store_id.in_(same_shop_ids))
     candidates = or_(TeleCallLead.store_id.in_(same_shop_ids), TeleCallLead.id.in_(appt_lead_ids),
                      func.lower(TeleCallLead.sheet_tl_name).in_(area_sheets or ["-"]))
-    leads = await crm_metrics.leads_in_period(db, candidates, p_start, p_end)
-    appt_store = dict((await db.execute(
-        select(TeleAppointment.lead_id, TeleAppointment.store_id)
-        .where(TeleAppointment.lead_id.in_([l.id for l in leads] or [-1]), TeleAppointment.store_id.isnot(None))
-        .order_by(TeleAppointment.scheduled_at)
-    )).all())  # latest appointment wins
-
-    groups = group_duplicates(leads, lambda l: l.submitted_at or l.created_at)
-    mine, pool = [], []
+    arrived_at = lambda l: l.submitted_at or l.created_at  # noqa: E731
     how: dict[str, int] = defaultdict(int)
-    for g in groups:
-        # one person: use whatever any copy knows about the store
-        sid = next((l.store_id for l in g if l.store_id), None)
-        aid = next((appt_store[l.id] for l in reversed(g) if l.id in appt_store), None)
-        remarks = set().union(*(shops_mentioned(" ".join(filter(None, (l.remarks, l.preferred_store_text))),
-                                                area_of_sheet(l.sheet_tl_name)) for l in g))
-        where, reason = attribute_lead(
-            store_shop=shop_key(sid) if sid else None, appointment_shop=shop_key(aid) if aid else None,
-            remarks_shops=remarks, lead_area=next((area_of_sheet(l.sheet_tl_name) for l in g), None),
-            target_shop=target_shop, target_area=target_area, area_shop_count=len(area_shops),
-        )
-        if where == "store":
-            mine.append(g)
-            how[reason] += 1
-        elif where == "area":
-            pool.append(g)
+
+    async def split(leads: list, count_how: bool) -> tuple[list[list], list[list]]:
+        """Group duplicates, then sort each person into this shop / the area pool."""
+        appt_store = dict((await db.execute(
+            select(TeleAppointment.lead_id, TeleAppointment.store_id)
+            .where(TeleAppointment.lead_id.in_([l.id for l in leads] or [-1]), TeleAppointment.store_id.isnot(None))
+            .order_by(TeleAppointment.scheduled_at)
+        )).all())  # latest appointment wins
+        mine, pool = [], []
+        for g in group_duplicates(leads, arrived_at):
+            # one person: use whatever any copy knows about the store
+            sid = next((l.store_id for l in g if l.store_id), None)
+            aid = next((appt_store[l.id] for l in reversed(g) if l.id in appt_store), None)
+            remarks = set().union(*(shops_mentioned(" ".join(filter(None, (l.remarks, l.preferred_store_text))),
+                                                    area_of_sheet(l.sheet_tl_name)) for l in g))
+            where, reason = attribute_lead(
+                store_shop=shop_key(sid) if sid else None, appointment_shop=shop_key(aid) if aid else None,
+                remarks_shops=remarks, lead_area=next((area_of_sheet(l.sheet_tl_name) for l in g), None),
+                target_shop=target_shop, target_area=target_area, area_shop_count=len(area_shops),
+            )
+            if where == "store":
+                mine.append(g)
+                if count_how:
+                    how[reason] += 1
+            elif where == "area":
+                pool.append(g)
+        return mine, pool
+
+    # leads that arrived in the period
+    mine, pool = await split(await crm_metrics.leads_in_period(db, candidates, p_start, p_end), True)
+
+    # sales made in the period, by leads that may have arrived earlier
+    sold = await crm_metrics.leads_in_period(
+        db, candidates, p_start - timedelta(days=CONVERSION_LOOKBACK_DAYS), p_end,
+        extra=TeleCallLead.status == "Sale Conversion")
+    sold_at = await _conversion_times(db, [l.id for l in sold])
+    sold = [l for l in sold if p_start <= (sold_at.get(l.id) or arrived_at(l)) < p_end]
+    mine_sold, pool_sold = await split(sold, False)
 
     tracker = {"wa_chats": sum(r.wa_chats_received or 0 for r in tracker_rows),
                "walkins": sum(r.wa_walkins_booked or 0 for r in tracker_rows)} if tracker_rows else None
-    own = _lead_figures(mine, tracker)
+    own = _lead_figures(mine, mine_sold, tracker)
     kpis, by_status = own["kpis"], own["status_counts"]
 
     visits = dict((await db.execute(
@@ -433,7 +476,7 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     area_label = AREA_LABELS.get(target_area or "", "")
     area = None
     if pool:
-        a = _lead_figures(pool)
+        a = _lead_figures(pool, pool_sold)
         area = {"label": area_label, "shops": len(area_shops), "total": a["kpis"]["total_leads"],
                 "converted": a["kpis"]["converted"], "status_counts": a["status_counts"], "sources": a["sources"]}
     return {

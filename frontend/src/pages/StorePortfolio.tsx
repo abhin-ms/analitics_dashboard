@@ -437,7 +437,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           subTone={social.has_data ? PACE_STATUS[social.platforms.instagram.status].tone : "none"} />
         <Stat tone="purple" icon={Users} label="Total leads" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% of target`}
           subTone={PACE_STATUS[leads.volume.status].tone} />
-        <Stat tone="red" icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% rate`} />
+        <Stat tone="red" icon={UserCheck} label="Conversions (sales this period)" value={num(leads.converted)} sub={`${leads.conversion_pct}% of leads received`} />
         <Stat tone="amber" icon={Star} label="Google rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} ★`}
           sub={reviews.rating_as_of ? `As of ${shortDate(reviews.rating_as_of)}` : undefined} />
       </div>
@@ -550,7 +550,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           <Stat tone="orange" icon={Target} label="Lead target (month)" value={num(leads.targets.leads_monthly)} sub={`${num(leads.volume.target)} for this period`} />
           <Stat tone="purple" icon={Users} label="Leads received" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% · ${PACE_STATUS[leads.volume.status].label}`}
             subTone={PACE_STATUS[leads.volume.status].tone} />
-          <Stat tone="red" icon={UserCheck} label="Conversions" value={num(leads.converted)} sub={`${leads.conversion_pct}% · ${money(leads.revenue)}`} />
+          <Stat tone="red" icon={UserCheck} label="Conversions (sales this period)" value={num(leads.converted)} sub={`${leads.conversion_pct}% of leads · ${money(leads.revenue)}`} />
           <Stat tone="blue" icon={TrendingUp} label="Conversion target" value={`${leads.conversion_target_pct}%`}
             sub={`${num(leads.conversions.remaining)} more to reach ${num(leads.conversions.target)}`}
             subTone={PACE_STATUS[leads.conversions.status].tone} />
@@ -594,6 +594,10 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                 </tr>
               </tbody>
             </table>
+            <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
+              Leads = leads that arrived in this period. Converted and Revenue = sales made in this period, even when the
+              lead arrived earlier — so a rate can go over 100% when older leads buy. Each person counts once.
+            </p>
           </div>
           <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-2.5">
             <p className="text-sm font-semibold text-white">Current lead status</p>
