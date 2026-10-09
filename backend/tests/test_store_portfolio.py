@@ -179,7 +179,8 @@ async def env(monkeypatch):
         a = Store(name="Indiranagar", team_leader_id=tl.id, country="India", monthly_target=300_000)
         b = Store(name="Other", team_leader_id=tl.id, country="India")
         mysore = Store(name="Mysore", team_leader_id=tl.id, country="India")  # 2nd Karnataka shop
-        db.add_all([a, b, mysore])
+        placeholder = Store(name="Bangalore Store", team_leader_id=tl.id, country="India")  # area, no shop
+        db.add_all([a, b, mysore, placeholder])
         await db.flush()
         u = {"ceo": tl, "caller": User(name="Tia", email="t@x", password_hash="x",
                                        role_id=roles["Telecaller"].id, store_id=b.id)}
@@ -190,6 +191,8 @@ async def env(monkeypatch):
         # Month-to-date rows: the store moved its September row from the 10th
         # to the 20th; the sync keeps both, only the latest is September's.
         db.add_all([
+            DailyStoreTracker(store_id=a.id, date="2025-03-31", store_name="Indiranagar",
+                              ig_views_achieved=111),  # > 6 months before the end of the year
             DailyStoreTracker(store_id=a.id, date="2025-08-31", store_name="Indiranagar",
                               ig_views_achieved=900_000, google_rating=4.3),
             DailyStoreTracker(store_id=a.id, date="2025-09-10", store_name="Indiranagar", ig_videos_posted=10,
@@ -219,6 +222,10 @@ async def env(monkeypatch):
             # Bangalore sheet, no store: Karnataka has two shops, so an area lead
             TeleCallLead(sheet_tl_name="Bangalore", full_name="E", phone="9876500005", spreadsheet_id="s",
                          lead_source="PM", status="", created_at=t, submitted_at=t),
+            # a Meta lead whose ad set matched the placeholder "Bangalore Store":
+            # not a shop, so it belongs in the Karnataka area pool, not nowhere
+            TeleCallLead(sheet_tl_name="Bangalore", full_name="G", phone="9876500007", source_channel="facebook",
+                         store_id=placeholder.id, status="", created_at=t, submitted_at=t),
             # Bangalore sheet, remarks name the shop
             TeleCallLead(sheet_tl_name="Bangalore", full_name="F", phone="9876500006", spreadsheet_id="s",
                          lead_source="GM", remarks="will visit indiranagar store", status="", created_at=t, submitted_at=t),
@@ -282,7 +289,7 @@ async def test_portfolio_end_to_end(env):
     src = {s["key"]: s for s in leads["sources"]}
     assert src["performance_marketing"]["leads"] == 1 and src["performance_marketing"]["revenue"] == 12_000
     assert src["growth_marketing"]["leads"] == 2  # sheet-tagged GM: B and F
-    assert leads["area"]["label"] == "Karnataka" and leads["area"]["total"] == 1 and leads["area"]["shops"] == 2
+    assert leads["area"]["label"] == "Karnataka" and leads["area"]["total"] == 2 and leads["area"]["shops"] == 2
     assert src["whatsapp"]["leads"] == 1 and src["website"]["leads"] == 0  # store B's lead isn't here
     assert leads["visits"]["attended"] == 1
 
@@ -312,3 +319,13 @@ async def test_portfolio_rejects_bad_ranges(env):
                                  params={"start": "2025-09-30", "end": "2025-09-01"})).status_code == 400
     assert (await env("ceo").get(f"/api/v1/store-portfolio/{sid}",
                                  params={"start": "2020-01-01", "end": "2025-09-01"})).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_year_range_reads_the_whole_year_of_tracker_rows(env):
+    r = await env("ceo").get(f"/api/v1/store-portfolio/{env.stores['a']}",
+                             params={"start": "2025-01-01", "end": "2025-12-31"})
+    social = r.json()["social"]
+    assert "2025-03" in [m["month"] for m in social["monthly"]]
+    # March + August + September (latest Sept row) + October
+    assert social["views"]["achieved"] == 111 + 900_000 + 450_000 + 999_999

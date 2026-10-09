@@ -625,6 +625,35 @@ async def meta_backfill(body: MetaBackfill, db: AsyncSession = Depends(get_db), 
     return {"ok": True, **stats}
 
 
+class StoreRematch(BaseModel):
+    apply: bool = False
+    days: int = 30
+
+
+@router.post("/store-rematch")
+async def store_rematch(body: StoreRematch, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Leads and lead forms that came in without a store, matched again with
+    the current rules. apply=false only previews; apply=true routes them to
+    the store's team (forms an admin set by hand and owned leads untouched)."""
+    from ...services.crm.store_rematch import rematch_stores
+    scope = await _scope(db, user)
+    if not scope.can_edit_settings:
+        raise HTTPException(status_code=403, detail="Only Admin can re-match stores")
+    if not 1 <= body.days <= 90:
+        raise HTTPException(status_code=400, detail="days must be 1–90")
+    result = await rematch_stores(db, user, apply=body.apply, days=body.days)
+    if body.apply:
+        record_audit(db, user.id, "store_rematch", "tele_call_leads", None,
+                     after={"forms": len(result["forms"]), "leads": len(result["leads"])})
+        await db.commit()
+        try:
+            from ...socket import sio
+            await sio.emit("data:refresh", {"section": "tele_call_leads"})
+        except Exception:
+            pass
+    return result
+
+
 # ── Team view (Leads → Team tab) ───────────────────────────────────
 @router.get("/team-overview")
 async def team_overview(start: str = Query(""), end: str = Query(""),

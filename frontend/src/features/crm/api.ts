@@ -35,6 +35,8 @@ export function useCrmMeta() {
 export interface LeadQuery {
   tab?: string;
   source?: string;
+  /** a store id, or "none" for leads no store was found for */
+  store?: string;
   status?: string;
   stage?: string;
   owner?: string;
@@ -475,6 +477,18 @@ export function useMapMetaForm() {
 export function useMetaBackfill() {
   return useCrmMutation((hours: number) =>
     api.post<Record<string, number>>(`/crm/meta/backfill`, { hours }));
+}
+
+export interface StoreRematchResult {
+  applied: boolean;
+  forms: { form: string; from: string | null; to: string; team_leader: string; waiting_leads: number }[];
+  leads: { lead_id: number; name: string; source: string; said: string; to: string; team_leader: string }[];
+}
+
+/** Re-match leads / lead forms that came in without a store. apply=false previews only. */
+export function useStoreRematch() {
+  return useCrmMutation((apply: boolean) =>
+    api.post<StoreRematchResult>(`/crm/store-rematch`, { apply, days: 30 }));
 }
 
 export function useAliases(enabled = true) {

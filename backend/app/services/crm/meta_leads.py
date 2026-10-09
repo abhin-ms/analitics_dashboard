@@ -241,6 +241,9 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
     row.field_data, row.meta_created_at, row.error = data.get("field_data"), created, None
 
     store, form_name = await resolve_store(db, row.form_id or "", page_id, row.adset_name or "")
+    if store is None and ans["city"]:
+        # generic forms ("Instant Forms"): the customer's own city answer
+        store = await match_store(db, ans["city"], "")
     row.form_name = (form_name or row.form_name or "")[:200] or None
     row.store_id = store.id if store else None
     branch_text = (row.adset_name or form_name or "")[:200]

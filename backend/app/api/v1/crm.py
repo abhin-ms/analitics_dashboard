@@ -187,8 +187,12 @@ def source_clause(source: str):
 
 
 def filters_clause(*, status: str, stage: str, owner: str, sheet: str, priority: str, q: str,
-                   user_id: int, start: str = "", end: str = "", source: str = ""):
+                   user_id: int, start: str = "", end: str = "", source: str = "", store: str = ""):
     clauses = []
+    if store == "none":  # leads no store could be found for
+        clauses.append(TeleCallLead.store_id.is_(None))
+    elif store.isdigit():
+        clauses.append(TeleCallLead.store_id == int(store))
     if source_clause(source) is not None:
         clauses.append(source_clause(source))
     if status:
@@ -280,6 +284,7 @@ async def list_leads(
     tab: str = Query("all"), status: str = Query(""), stage: str = Query(""),
     owner: str = Query(""), sheet: str = Query(""), priority: str = Query(""),
     q: str = Query(""), start: str = Query(""), end: str = Query(""), source: str = Query(""),
+    store: str = Query("", description="a store id, or 'none' for leads with no store"),
     sort: str = Query("smart"), group_by: str = Query(""),
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db), user=Depends(get_current_user),
@@ -289,7 +294,7 @@ async def list_leads(
     base = lead_filter(scope)
     tabc = tab_clause(tab, user.id, now)
     other = filters_clause(status="", stage=stage, owner=owner, sheet=sheet, priority=priority, q=q,
-                           user_id=user.id, start=start, end=end, source=source)
+                           user_id=user.id, start=start, end=end, source=source, store=store)
     statusc = filters_clause(status=status, stage="", owner="", sheet="", priority="", q="", user_id=user.id)
 
     def where(*extra):

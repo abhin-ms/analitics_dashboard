@@ -369,7 +369,13 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     store_shop = {s.id: shop_of(s.name) for s in all_stores}
     target_shop = store_shop.get(store.id) or f"store:{store.id}"
     target_area = area_of_store(store.name, store.region or "")
-    shop_key = lambda sid: store_shop.get(sid) or f"store:{sid}"  # noqa: E731
+    def shop_key(sid):
+        """A store's shop; a placeholder record ("Kerala Store") counts as no
+        store at all unless it's the store being viewed, so its leads fall
+        to the area rules instead of vanishing."""
+        if store_shop.get(sid):
+            return store_shop[sid]
+        return f"store:{sid}" if sid == store.id else None
     same_shop_ids = [s.id for s in all_stores if shop_key(s.id) == target_shop]
     area_shops = {store_shop[s.id] for s in all_stores
                   if s.is_active and store_shop[s.id] and area_of_store(s.name, s.region or "") == target_area}
@@ -482,7 +488,8 @@ async def store_portfolio(
 
     # Store.currency_code defaults to INR even abroad, so the country decides.
     currency = COUNTRY_CURRENCY.get(store.country or "") or store.currency_code or "INR"
-    history = await _tracker_months(db, store.id, end)
+    span_months = (end.year - start.year) * 12 + end.month - start.month + 1
+    history = await _tracker_months(db, store.id, end, months=max(6, span_months))
     social = await _social(db, store, history, start, end, today)
     leads = await _leads(db, store, start, end, today, _in_range(history, start, end))
     sales = await _sales(db, store, start, end, today)

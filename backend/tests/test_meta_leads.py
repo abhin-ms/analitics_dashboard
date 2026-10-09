@@ -30,14 +30,14 @@ URL = "/api/v1/public/meta/leads-webhook"
 
 
 def lead(leadgen_id="L1", form_id="F1", adset="Kochi Edappally - 18 September 2026", prebook="yes",
-         platform="ig", phone="+919008777088", created="2026-10-02T00:56:50+0000"):
+         platform="ig", phone="+919008777088", created="2026-10-02T00:56:50+0000", city="Kochi"):
     return {
         "id": leadgen_id, "created_time": created, "form_id": form_id, "platform": platform, "is_organic": False,
         "ad_id": "A1", "ad_name": f"{adset} - English", "adset_id": "S1", "adset_name": adset,
         "campaign_id": "C1", "campaign_name": "New Campaign - All Stores",
         "field_data": [
             {"name": "full_name", "values": ["Anita Das"]}, {"name": "phone_number", "values": [phone]},
-            {"name": "email", "values": ["anita@example.com"]}, {"name": "city", "values": ["Kochi"]},
+            {"name": "email", "values": ["anita@example.com"]}, {"name": "city", "values": [city]},
             {"name": '"which_phone_brand_do_you_use?"', "values": ["apple_(iphone)"]},
             {"name": "this_service_requires_a_pre-booking_fee_of_₹99,_which_will_be_adjusted_against_the_final_"
                      "service_amount._are_you_comfortable_proceeding_with_this_payment?", "values": [prebook]},
@@ -185,9 +185,19 @@ async def test_no_answer_is_warm_and_facebook(env):
 
 
 @pytest.mark.asyncio
+async def test_generic_form_uses_the_city_answer(env):
+    client, Session, ids, store = env
+    store["L9"] = lead("L9", form_id="F2", adset="BNP 1", city="Kochi")
+    raw, headers = signed(event("L9", form_id="F2"))
+    res = (await client.post(URL, content=raw, headers=headers)).json()["results"][0]
+    # "BNP 1" names no store, but the customer said Kochi → Kochi's team
+    assert res["status"] == "created" and res["store"] == "Kochi Edappally" and res["owner_user_id"]
+
+
+@pytest.mark.asyncio
 async def test_unmatched_form_alerts_admins_then_mapping_routes_it(env):
     client, Session, ids, store = env
-    store["L3"] = lead("L3", form_id="F2", adset="BNP 1")
+    store["L3"] = lead("L3", form_id="F2", adset="BNP 1", city="Somewhere")
     raw, headers = signed(event("L3", form_id="F2"))
     res = (await client.post(URL, content=raw, headers=headers)).json()["results"][0]
     assert res["status"] == "created" and res["store"] is None and res["owner_user_id"] is None
@@ -236,7 +246,7 @@ async def test_bell_lists_and_marks_read(env):
     await client.post(URL, content=raw, headers=headers)
     # the signed-in user in this fixture is the admin: assigned lead → nothing for them
     assert (await client.get("/api/v1/crm/notifications")).json()["unread"] == 0
-    store["L10"] = lead("L10", form_id="F2", adset="BNP 1")
+    store["L10"] = lead("L10", form_id="F2", adset="BNP 1", city="Somewhere")
     raw, headers = signed(event("L10", form_id="F2"))
     await client.post(URL, content=raw, headers=headers)
     body = (await client.get("/api/v1/crm/notifications")).json()
