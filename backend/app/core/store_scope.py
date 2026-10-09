@@ -44,3 +44,31 @@ def check_store(store_ids: Optional[list[int]], store_id: Optional[int]) -> None
     """403 unless `store_id` is inside the allowed stores."""
     if store_ids is not None and store_id not in store_ids:
         raise HTTPException(status_code=403, detail="No access to this store")
+
+
+def _norm(name: Optional[str]) -> str:
+    return " ".join((name or "").lower().split())
+
+
+async def allowed_shop_names(db: AsyncSession, store_ids: Optional[list[int]]) -> Optional[set[str]]:
+    """Every name MCP may use for the allowed stores (store name, MCP shop
+    name, MCP aliases), normalised; None = every shop."""
+    if store_ids is None:
+        return None
+    from ..models.models import StoreMcpAlias
+    names: set[str] = set()
+    for name, mcp in (await db.execute(
+        select(Store.name, Store.mcp_shop_name).where(Store.id.in_(store_ids or [-1]))
+    )).all():
+        names.update(n for n in (_norm(name), _norm(mcp)) if n)
+    names.update(_norm(a) for a in (await db.execute(
+        select(StoreMcpAlias.mcp_shop_name).where(StoreMcpAlias.store_id.in_(store_ids or [-1]))
+    )).scalars().all())
+    return names
+
+
+def keep_shops(items: list, shop_names: Optional[set[str]], key=lambda i: i.get("shop") if isinstance(i, dict) else i.shop) -> list:
+    """Only the MCP rows whose shop is one of the allowed stores."""
+    if shop_names is None:
+        return items
+    return [i for i in items if _norm(key(i)) in shop_names]

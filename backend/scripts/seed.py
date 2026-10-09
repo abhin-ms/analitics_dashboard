@@ -25,7 +25,12 @@ RESOURCES = [
     "leads", "campaigns", "tasks", "performance", "reports",
     "users", "roles", "settings", "sheet_sync", "instagram",
     "ai_analytics",
+    # one per menu page that used to borrow another page's permission
+    "store_overview", "social_performance", "stock_position", "country_comparison",
+    "sales_reports", "sheet_assignments",
 ]
+COMPANY_PAGES = {"store_overview": {"view"}, "social_performance": {"view"}, "stock_position": {"view"},
+                 "country_comparison": {"view"}, "sales_reports": {"view"}, "sheet_assignments": {"view"}}
 ACTIONS = ["view", "create", "edit", "delete", "export", "manage"]
 
 ROLE_PERMISSIONS = {
@@ -37,39 +42,39 @@ ROLE_PERMISSIONS = {
         "tasks": {"view"}, "performance": {"view", "edit", "export"},
         "reports": {"view", "export"}, "investments": {"view"},
         "instagram": {"view"}, "ai_analytics": {"view", "manage"},
-        "users": {"view", "create"},
+        "users": {"view", "create"}, **COMPANY_PAGES,
     },
     "COO": {
         "dashboard": {"view"}, "team_leaders": {"view", "edit"},
         "operations": {"view"}, "leads": {"view"}, "campaigns": {"view"},
         "tasks": {"view"}, "performance": {"view", "edit", "export"},
         "reports": {"view", "export"}, "investments": {"view"},
-        "instagram": {"view", "edit"}, "ai_analytics": {"view"},
+        "instagram": {"view", "edit"}, "ai_analytics": {"view"}, **COMPANY_PAGES,
     },
     "Regional Manager": {
         "dashboard": {"view"}, "team_leaders": {"view", "edit"},
         "operations": {"view", "edit"}, "leads": {"view", "edit"},
         "campaigns": {"view"}, "tasks": {"view", "edit"},
         "performance": {"view"}, "reports": {"view"},
-        "instagram": {"view"},
+        "instagram": {"view"}, **COMPANY_PAGES,
     },
+    # Pages each role sees are exactly its View ticks; a team leader's
+    # figures are always limited to the stores they lead.
     "Team Leader": {
-        "dashboard": {"view"}, "team_leaders": {"view"},
-        "operations": {"view", "edit"}, "leads": {"view", "create", "edit"},
+        "dashboard": {"view"},
+        "operations": {"edit"}, "leads": {"view", "create", "edit"},
         "campaigns": {"view"}, "tasks": {"view", "create", "edit"},
-        "performance": {"view"}, "reports": {"view"},
-        "instagram": {"view"},
+        "social_performance": {"view"},
     },
     "Store Staff": {
-        "dashboard": {"view"}, "operations": {"view", "create"},
-        "leads": {"view", "create"}, "tasks": {"view"},
+        "dashboard": {"view"}, "operations": {"create"},
+        "leads": {"view", "create"}, "tasks": {"view"}, "social_performance": {"view"},
     },
     "Store Owner": {
-        "dashboard": {"view"},
+        "dashboard": {"view"}, "social_performance": {"view"},
     },
     "Telecaller": {
         "dashboard": {"view"}, "leads": {"view", "create", "edit"},
-        "operations": {"view"},
     },
     "Salesperson": {
         "dashboard": {"view"}, "leads": {"view", "create", "edit"},
@@ -80,7 +85,7 @@ ROLE_PERMISSIONS = {
         "team_leaders": {"view"}, "leads": {"view"},
         "campaigns": {"view"}, "tasks": {"view"},
         "performance": {"view"}, "reports": {"view"},
-        "instagram": {"view"},
+        "instagram": {"view"}, **COMPANY_PAGES,
     },
 }
 

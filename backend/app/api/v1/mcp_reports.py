@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.deps import get_db, require_admin_tier
+from ...core.deps import get_current_user, get_db, require_admin_tier
+from ...core.store_scope import allowed_shop_names, allowed_store_ids, keep_shops
 from ...models.models import User
 from ...services.mcp_daily_sales import (
     get_daily_sales,
@@ -217,9 +218,19 @@ async def mcp_top_models(
 async def mcp_country_comparison(
     from_date: str = Query(...),
     to_date: str = Query(None),
-    user: User = require_admin_tier(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Cross-country sales comparison normalized to USD from SmartService MCP."""
+    """Cross-country sales comparison normalized to USD from SmartService MCP.
+    People who see only some stores get those stores' synced sales instead."""
+    store_ids = await allowed_store_ids(user, db)
+    if store_ids is not None:
+        from ...services.sales_report_service import get_country_comparison_for_stores
+        try:
+            start, end = date.fromisoformat(from_date), date.fromisoformat(to_date or from_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+        return await get_country_comparison_for_stores(db, store_ids, start, end)
     try:
         return await get_country_comparison(from_date, to_date)
     except Exception as e:
@@ -288,11 +299,14 @@ async def mcp_stock_position(
     country_id: int = Query(None),
     shop_id: int = Query(None),
     low_stock_threshold: int = Query(None),
-    user: User = require_admin_tier(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Current stock position by shop from SmartService MCP."""
+    """Current stock position by shop from SmartService MCP, limited to the
+    caller's stores."""
+    shops = await allowed_shop_names(db, await allowed_store_ids(user, db))
     try:
-        return await get_stock_position(country_id, shop_id, low_stock_threshold)
+        return keep_shops(await get_stock_position(country_id, shop_id, low_stock_threshold), shops)
     except Exception as e:
         logger.error("MCP stock position failed: %s", e)
         raise HTTPException(status_code=502, detail=f"MCP error: {e}")
@@ -301,11 +315,24 @@ async def mcp_stock_position(
 @router.get("/stock/summary", response_model=StockSummaryResponse)
 async def mcp_stock_summary(
     country_id: int = Query(None),
-    user: User = require_admin_tier(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Stock summary with totals and low-stock items from SmartService MCP."""
+    """Stock summary with totals and low-stock items from SmartService MCP;
+    for people who see some stores, totalled over those stores only."""
+    shops = await allowed_shop_names(db, await allowed_store_ids(user, db))
     try:
-        return await get_stock_summary(country_id)
+        summary = await get_stock_summary(country_id)
+        if shops is None:
+            return summary
+        data = summary if isinstance(summary, dict) else summary.model_dump()
+        by_shop = keep_shops(data.get("stock_by_shop") or [], shops)
+        return {
+            "total_units": sum(int(r.get("total_units") or r.get("units") or 0) for r in by_shop),
+            "shop_count": len(by_shop),
+            "stock_by_shop": by_shop,
+            "low_stock_items": keep_shops(data.get("low_stock_items") or [], shops),
+        }
     except Exception as e:
         logger.error("MCP stock summary failed: %s", e)
         raise HTTPException(status_code=502, detail=f"MCP error: {e}")
@@ -316,11 +343,14 @@ async def mcp_pending_items(
     country_id: int = Query(None),
     shop_id: int = Query(None),
     include: str = Query("both", description="payment, installation, or both"),
-    user: User = require_admin_tier(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Payment and installation pending items by shop from SmartService MCP."""
+    """Payment and installation pending items by shop from SmartService MCP,
+    limited to the caller's stores."""
+    shops = await allowed_shop_names(db, await allowed_store_ids(user, db))
     try:
-        return await get_pending_items(country_id, shop_id, include)
+        return keep_shops(await get_pending_items(country_id, shop_id, include), shops)
     except Exception as e:
         logger.error("MCP pending items failed: %s", e)
         raise HTTPException(status_code=502, detail=f"MCP error: {e}")
@@ -392,18 +422,19 @@ async def mcp_branches(
     start: str = None,
     end: str = None,
     db: AsyncSession = Depends(get_db),
-    user: User = require_admin_tier(),
+    user: User = Depends(get_current_user),
 ):
-    """List all branches with country, targets, and stock from MCP + DB.
+    """List the caller's branches with country, targets, and stock from MCP + DB.
     start/end (YYYY-MM-DD) scope revenue and target to that period; without
     them it's the current calendar month to date."""
     try:
         from datetime import date as _date
-        return await get_all_branches(
+        shops = await allowed_shop_names(db, await allowed_store_ids(user, db))
+        return keep_shops(await get_all_branches(
             db,
             _date.fromisoformat(start) if start else None,
             _date.fromisoformat(end) if end else None,
-        )
+        ), shops)
     except Exception as e:
         logger.error("MCP branches failed: %s", e)
         raise HTTPException(status_code=502, detail=f"MCP error: {e}")

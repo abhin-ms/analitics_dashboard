@@ -5,7 +5,8 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from ...core.deps import get_db, require_permission, require_admin_tier
+from ...core.deps import get_current_user, get_db, require_permission, require_admin_tier
+from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import (
     Store, User, DailySubmission, Lead, Campaign, Task, Investment,
     MarketingMetrics, StoreStaff, InternationalStore, StrategicInsight,
@@ -449,46 +450,48 @@ async def ceo_sheets_data(
     start: str = None,
     end: str = None,
     db: AsyncSession = Depends(get_db),
-    user: User = require_admin_tier(),
+    user: User = Depends(get_current_user),
 ):
-    """Fetch data from the database (synced from Google Sheets every 1 min).
+    """Fetch data from the database (synced from Google Sheets every 1 min),
+    limited to the stores the caller is responsible for (company roles: all).
     Scoped to an explicit start/end range if given, else one calendar month
     (month param, or the current month by default) — start/end lets the
     frontend request a day, a quarter, or any custom range with the same
     endpoint."""
+    sids = await allowed_store_ids(user, db)
     try:
         if tab == "ops":
-            return {"ops_data": await _get_ops_data(db, month, start, end)}
+            return {"ops_data": await _get_ops_data(db, month, start, end, sids)}
         elif tab == "config":
-            return {"store_config": await _get_store_config(db), "store_config_v2": await _get_store_config_v2(db)}
+            return {"store_config": await _get_store_config(db, sids), "store_config_v2": await _get_store_config_v2(db, sids)}
         elif tab == "staff":
-            return {"staff": await _get_staff(db)}
+            return {"staff": await _get_staff(db, sids)}
         elif tab == "intl_staff":
-            return {"intl_staff": await _get_intl_staff(db)}
+            return {"intl_staff": await _get_intl_staff(db, sids)}
         elif tab == "reviews":
-            return {"reviews": await _get_reviews(db)}
+            return {"reviews": await _get_reviews(db, sids)}
         elif tab == "gr_plan":
-            return {"gr_action_plan": await _get_gr_action_plan(db)}
+            return {"gr_action_plan": await _get_gr_action_plan(db, sids)}
         elif tab == "tl_report":
             return {"tl_report": []}
         elif tab == "daily_tracker":
-            return {"daily_tracker": await _get_daily_tracker(db, month, start, end)}
+            return {"daily_tracker": await _get_daily_tracker(db, month, start, end, sids)}
         elif tab == "tracker_months":
-            return {"months": await _get_tracker_months(db)}
+            return {"months": await _get_tracker_months(db, sids)}
         elif tab == "store_dashboard_snap":
-            return {"store_dashboard": await _get_store_dashboard_snap(db)}
+            return {"store_dashboard": await _get_store_dashboard_snap(db, sids)}
         else:
             return {
-                "ops_data": await _get_ops_data(db, month, start, end),
-                "store_config": await _get_store_config(db),
-                "store_config_v2": await _get_store_config_v2(db),
-                "staff": await _get_staff(db),
-                "intl_staff": await _get_intl_staff(db),
-                "reviews": await _get_reviews(db),
-                "gr_action_plan": await _get_gr_action_plan(db),
+                "ops_data": await _get_ops_data(db, month, start, end, sids),
+                "store_config": await _get_store_config(db, sids),
+                "store_config_v2": await _get_store_config_v2(db, sids),
+                "staff": await _get_staff(db, sids),
+                "intl_staff": await _get_intl_staff(db, sids),
+                "reviews": await _get_reviews(db, sids),
+                "gr_action_plan": await _get_gr_action_plan(db, sids),
                 "tl_report": [],
-                "daily_tracker": await _get_daily_tracker(db, month, start, end),
-                "store_dashboard": await _get_store_dashboard_snap(db),
+                "daily_tracker": await _get_daily_tracker(db, month, start, end, sids),
+                "store_dashboard": await _get_store_dashboard_snap(db, sids),
             }
     except Exception as e:
         logger.exception("ceo_sheets_data failed")
@@ -504,7 +507,8 @@ def _resolve_range(month: str = None, start: str = None, end: str = None) -> tup
     return _month_range(month)
 
 
-async def _get_ops_data(db: AsyncSession, month: str = None, start: str = None, end: str = None) -> list[dict]:
+async def _get_ops_data(db: AsyncSession, month: str = None, start: str = None, end: str = None,
+                        sids: list[int] | None = None) -> list[dict]:
     start_date, end_date = _resolve_range(month, start, end)
     days_in_range = (end_date - start_date).days + 1
 
@@ -512,7 +516,8 @@ async def _get_ops_data(db: AsyncSession, month: str = None, start: str = None, 
         select(DailySubmission, Store, User.name.label("tl_name"))
         .join(Store, DailySubmission.store_id == Store.id)
         .outerjoin(User, Store.team_leader_id == User.id)
-        .where(DailySubmission.date >= start_date, DailySubmission.date <= end_date)
+        .where(DailySubmission.date >= start_date, DailySubmission.date <= end_date,
+               store_filter(DailySubmission.store_id, sids))
         .order_by(DailySubmission.date.desc())
     )
     rows = result.all()
@@ -546,11 +551,11 @@ async def _get_ops_data(db: AsyncSession, month: str = None, start: str = None, 
     return out
 
 
-async def _get_store_config(db: AsyncSession) -> list[dict]:
+async def _get_store_config(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
     result = await db.execute(
         select(Store, User.name.label("tl_name"))
         .outerjoin(User, Store.team_leader_id == User.id)
-        .where(Store.is_active == True)
+        .where(Store.is_active == True, store_filter(Store.id, sids))
     )
     rows = result.all()
     return [
@@ -569,11 +574,11 @@ async def _get_store_config(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def _get_store_config_v2(db: AsyncSession) -> list[dict]:
+async def _get_store_config_v2(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
     result = await db.execute(
         select(Store, User.name.label("tl_name"))
         .outerjoin(User, Store.team_leader_id == User.id)
-        .where(Store.is_active == True)
+        .where(Store.is_active == True, store_filter(Store.id, sids))
     )
     rows = result.all()
     return [
@@ -587,13 +592,13 @@ async def _get_store_config_v2(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def _get_staff(db: AsyncSession) -> list[dict]:
+async def _get_staff(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
     from datetime import datetime
     current_month = datetime.now().strftime("%Y-%m")
     result = await db.execute(
         select(StoreStaff, Store.name.label("store_name"))
         .join(Store, StoreStaff.store_id == Store.id)
-        .where(StoreStaff.month == current_month)
+        .where(StoreStaff.month == current_month, store_filter(StoreStaff.store_id, sids))
     )
     rows = result.all()
     return [
@@ -611,7 +616,9 @@ async def _get_staff(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def _get_intl_staff(db: AsyncSession) -> list[dict]:
+async def _get_intl_staff(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
+    if sids is not None:
+        return []  # international sheet isn't linked to our stores: company roles only
     from datetime import datetime
     current_month = datetime.now().strftime("%Y-%m")
     result = await db.execute(
@@ -633,12 +640,12 @@ async def _get_intl_staff(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def _get_reviews(db: AsyncSession) -> list[dict]:
+async def _get_reviews(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
     from datetime import date as dt_date
     result = await db.execute(
         select(GoogleReview, Store)
         .join(Store, GoogleReview.store_id == Store.id)
-        .where(GoogleReview.date == dt_date.today())
+        .where(GoogleReview.date == dt_date.today(), store_filter(GoogleReview.store_id, sids))
     )
     rows = result.all()
     return [
@@ -654,7 +661,9 @@ async def _get_reviews(db: AsyncSession) -> list[dict]:
     ]
 
 
-async def _get_gr_action_plan(db: AsyncSession) -> list[dict]:
+async def _get_gr_action_plan(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
+    if sids is not None:
+        return []  # company-wide insights: company roles only
     from datetime import datetime
     current_month = datetime.now().strftime("%Y-%m")
     result = await db.execute(
@@ -843,30 +852,33 @@ async def import_insights(
     return {"imported": count, "month": body.month}
 
 
-async def _get_daily_tracker(db: AsyncSession, month: str = None, start: str = None, end: str = None) -> list[dict]:
+async def _get_daily_tracker(db: AsyncSession, month: str = None, start: str = None, end: str = None,
+                             sids: list[int] | None = None) -> list[dict]:
     start_date, end_date = _resolve_range(month, start, end)
 
     result = await db.execute(
         select(DailyStoreTracker)
-        .where(DailyStoreTracker.date >= start_date, DailyStoreTracker.date <= end_date)
+        .where(DailyStoreTracker.date >= start_date, DailyStoreTracker.date <= end_date,
+               store_filter(DailyStoreTracker.store_id, sids))
         .order_by(DailyStoreTracker.date.desc())
     )
     from .social import tracker_row_dict
     return [tracker_row_dict(r) for r in result.scalars().all()]
 
 
-async def _get_tracker_months(db: AsyncSession) -> list[str]:
+async def _get_tracker_months(db: AsyncSession, sids: list[int] | None = None) -> list[str]:
     """Months ("YYYY-MM") that have Daily Input rows, newest first — lets the
     Social Performance page open on the latest month with data rather than
     the current (often still empty) one."""
-    result = await db.execute(select(DailyStoreTracker.date).distinct())
+    result = await db.execute(select(DailyStoreTracker.date).where(store_filter(DailyStoreTracker.store_id, sids)).distinct())
     months = {d[:7] for (d,) in result.all() if d and re.match(r"^\d{4}-\d{2}-\d{2}$", d)}
     return sorted(months, reverse=True)
 
 
-async def _get_store_dashboard_snap(db: AsyncSession) -> list[dict]:
+async def _get_store_dashboard_snap(db: AsyncSession, sids: list[int] | None = None) -> list[dict]:
     result = await db.execute(
-        select(StoreDashboardSnapshot).order_by(StoreDashboardSnapshot.created_at.desc())
+        select(StoreDashboardSnapshot).where(store_filter(StoreDashboardSnapshot.store_id, sids))
+        .order_by(StoreDashboardSnapshot.created_at.desc())
     )
     rows = result.scalars().all()
     return [
