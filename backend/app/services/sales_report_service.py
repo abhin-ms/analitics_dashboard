@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, true
 
 from ..models.models import (
     Store, User, McpDailySale, DailySubmission, CountrySalesSnapshot, StoreMcpAlias, ExchangeRate,
@@ -24,16 +24,22 @@ def currency_of(country: Optional[str]) -> str:
     return COUNTRY_CURRENCY.get((country or "").strip().lower(), "INR")
 
 
-async def inr_rates(db: AsyncSession) -> dict[str, dict]:
-    """₹ per one unit of each country's currency, and where it came from:
-    the latest admin-entered rate, else MCP's own conversion at the last
-    sync (its country snapshot holds each total in local currency and USD),
-    else a reference rate."""
+async def _mcp_usd_per_unit(db: AsyncSession) -> dict[str, float]:
+    """US dollars per unit as MCP converted at the last sync (its country
+    snapshot holds each total in local currency and in USD)."""
     usd_per: dict[str, float] = {}
     for snap in (await db.execute(select(CountrySalesSnapshot))).scalars().all():
         local, usd = float(snap.local_amount or 0), float(snap.usd_amount or 0)
         if local > 0 and usd > 0:
             usd_per[COUNTRY_CURRENCY.get(snap.country.strip().lower(), snap.local_currency)] = usd / local
+    return usd_per
+
+
+async def inr_rates(db: AsyncSession) -> dict[str, dict]:
+    """₹ per one unit of each country's currency, and where it came from:
+    the latest admin-entered rate, else MCP's own conversion at the last
+    sync, else a reference rate."""
+    usd_per = await _mcp_usd_per_unit(db)
     inr_usd = usd_per.get("INR") or USD_PER_UNIT_REFERENCE["INR"]
 
     manual: dict[str, float] = {}
@@ -51,7 +57,34 @@ async def inr_rates(db: AsyncSession) -> dict[str, dict]:
     return out
 
 
-async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
+async def get_country_comparison_for_stores(db: AsyncSession, store_ids: list[int],
+                                            start_date: date, end_date: date) -> list[dict]:
+    """The country-comparison rows, but only from these stores' synced sales
+    — for people who see some stores, not the company."""
+    rows = (await db.execute(
+        select(Store.country, func.coalesce(func.sum(McpDailySale.revenue), 0),
+               func.coalesce(func.sum(McpDailySale.new_sale_count), 0))
+        .select_from(McpDailySale).join(Store, Store.id == McpDailySale.store_id)
+        .where(McpDailySale.store_id.in_(store_ids or [-1]),
+               McpDailySale.date >= start_date, McpDailySale.date <= end_date)
+        .group_by(Store.country)
+    )).all()
+    usd_per = await _mcp_usd_per_unit(db)
+    out = []
+    for country, local, count in rows:
+        cur = currency_of(country)
+        usd = float(local or 0) * usd_per.get(cur, USD_PER_UNIT_REFERENCE.get(cur, 0))
+        out.append({"country": country or "", "local_amount": float(local or 0), "local_currency": cur,
+                    "sales_count": int(count or 0), "usd_amount": round(usd, 2),
+                    "avg_ticket_usd": round(usd / count, 2) if count else 0.0})
+    total = sum(r["usd_amount"] for r in out)
+    for r in out:
+        r["pct"] = round(r["usd_amount"] / total * 100, 1) if total else 0.0
+    return sorted(out, key=lambda r: -r["usd_amount"])
+
+
+async def get_live_today_revenue(db: AsyncSession, country: str,
+                                 store_ids: Optional[list[int]] = None) -> dict:
     """Today's revenue for a country, read from the stored mcp_daily_sales
     table (kept fresh by the same background sync every report page
     already triggers) instead of calling MCP directly. Deliberately sums
@@ -59,6 +92,7 @@ async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
     — this is meant to be a raw, unfiltered pulse independent of branch
     confirmation state, same as it was when it called MCP live."""
     today = date.today()
+    in_scope = McpDailySale.store_id.in_(store_ids or [-1]) if store_ids is not None else true()
     if country == ALL_COUNTRIES:
         # every country, each converted to ₹ before adding up
         rates = await inr_rates(db)
@@ -66,7 +100,7 @@ async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
             select(Store.country, func.coalesce(func.sum(McpDailySale.revenue), 0))
             .select_from(McpDailySale)
             .join(Store, Store.id == McpDailySale.store_id)
-            .where(McpDailySale.date == today)
+            .where(McpDailySale.date == today, in_scope)
             .group_by(Store.country)
         )).all()
         total = sum(float(v or 0) * rates[currency_of(c)]["rate"] for c, v in rows)
@@ -75,7 +109,7 @@ async def get_live_today_revenue(db: AsyncSession, country: str) -> dict:
         select(func.coalesce(func.sum(McpDailySale.revenue), 0))
         .select_from(McpDailySale)
         .join(Store, Store.id == McpDailySale.store_id)
-        .where(Store.country == country, McpDailySale.date == today)
+        .where(Store.country == country, McpDailySale.date == today, in_scope)
     )).scalar()
     return {"country": country, "date": today.isoformat(), "revenue": float(total or 0),
             "currency": currency_of(country)}

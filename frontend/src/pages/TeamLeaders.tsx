@@ -113,8 +113,13 @@ export default function TeamLeaders() {
       storesByTl.get(s.team_leader_id)!.push(s);
     }
 
-    return users
-      .filter((u: any) => u.role_name === "Team Leader" && u.is_active)
+    // People without access to the user list (e.g. a team leader or regional
+    // manager) get the leaders of the stores they can see instead.
+    const roster = users.length
+      ? users.filter((u: any) => u.role_name === "Team Leader" && u.is_active)
+      : [...storesByTl.entries()].map(([id, ss]) => ({ id, name: ss[0].team_leader_name || "Team leader" }))
+          .filter((u) => u.name && u.name !== "Unassigned");
+    return roster
       .map((u: any) => {
         const perf = perfByName.get(u.name);
         const myStores = storesByTl.get(u.id) || [];

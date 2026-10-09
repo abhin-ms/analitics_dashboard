@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from ...core.deps import get_db, require_permission
-from ...core.store_scope import ALWAYS_SEE_ALL_ROLES, allowed_store_ids, check_store
+from ...core.deps import get_current_user, get_db, require_permission
+from ...core.store_scope import allowed_store_ids, check_store, store_filter
 from ...models.models import Store, User, UserStoreAccess, Role
 from ...services.store_merge_service import merge_store_into
 from ...schemas import StoreCreate, StoreUpdate, StoreResponse
@@ -31,33 +31,13 @@ def _to_store_response(store: Store, tl: User | None) -> StoreResponse:
 @router.get("/", response_model=list[StoreResponse])
 async def list_stores(
     db: AsyncSession = Depends(get_db),
-    user: User = require_permission("team_leaders", "view"),
+    user: User = Depends(get_current_user),
 ):
-    # A Team Leader's scope is their own branches (Store.team_leader_id).
-    # CEO/SuperAdmin/Admin/COO always see every store, unconditionally.
-    # Everyone else (Regional Manager included) sees only what's explicitly
-    # granted via UserStoreAccess — nothing, if that's still empty. This
-    # replaces the old "has the view permission and no UserStoreAccess rows
-    # -> sees everything" fallback, which accidentally gave Regional Manager
-    # (and anyone else who happened to have no grants yet) unrestricted
-    # access instead of the "more than a TL, less than everything" scoping
-    # they're actually meant to have.
-    role_name = (await db.execute(select(Role.name).where(Role.id == user.role_id))).scalar_one_or_none()
-
-    if role_name == "Team Leader":
-        result = await db.execute(
-            select(Store).where(Store.team_leader_id == user.id).order_by(Store.name)
-        )
-    elif role_name in ALWAYS_SEE_ALL_ROLES:
-        result = await db.execute(select(Store).order_by(Store.name))
-    else:
-        store_ids = [sa.store_id for sa in user.store_access]
-        if not store_ids:
-            return []
-        result = await db.execute(
-            select(Store).where(Store.id.in_(store_ids)).order_by(Store.name)
-        )
-
+    # The caller's own stores (company roles: every store). Listing what you
+    # already have access to needs no page permission — role dashboards rely
+    # on it — so this goes by store scope rather than "team_leaders:view".
+    allowed = await allowed_store_ids(user, db)
+    result = await db.execute(select(Store).where(store_filter(Store.id, allowed)).order_by(Store.name))
     stores = result.scalars().all()
     tl_cache = {}
     out = []
@@ -97,7 +77,7 @@ async def create_store(
 async def get_store(
     store_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = require_permission("team_leaders", "view"),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Store).where(Store.id == store_id))
     store = result.scalar_one_or_none()

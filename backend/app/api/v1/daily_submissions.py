@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...core.config import settings
-from ...core.deps import get_db, require_permission, get_user_permissions
+from ...core.deps import get_current_user, get_db, require_permission, get_user_permissions
 from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import DailySubmission, Store, User
 from ...schemas import DailySubmissionCreate, DailySubmissionUpdate, DailySubmissionResponse
@@ -26,8 +26,10 @@ async def list_submissions(
     start_date: date = None,
     end_date: date = None,
     db: AsyncSession = Depends(get_db),
-    user: User = require_permission("operations", "view"),
+    user: User = Depends(get_current_user),
 ):
+    # scoped to the caller's stores; reading your own store's submissions
+    # needs no page permission (store and role dashboards use it)
     query = select(DailySubmission)
     query = query.where(store_filter(DailySubmission.store_id, await allowed_store_ids(user, db)))
     if store_id:

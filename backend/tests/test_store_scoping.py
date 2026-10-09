@@ -23,8 +23,11 @@ from app.db.base import Base  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.models import (  # noqa: E402
-    DailySubmission, Lead, Permission, Role, RolePermission, Store, Task, TeleCallLead, User, UserStoreAccess,
+    DailySubmission, Lead, McpDailySale, Permission, Role, RolePermission, Store, Task, TeleCallLead, User,
+    UserStoreAccess,
 )
+from app.api.v1 import mcp_reports  # noqa: E402
+from app.services import sales_report_service  # noqa: E402
 
 ROLES = ("CEO", "Regional Manager", "Team Leader", "Telecaller", "Store Staff")
 PERMS = [("dashboard", "view"), ("leads", "view"), ("tasks", "view"), ("reports", "view"),
@@ -32,7 +35,14 @@ PERMS = [("dashboard", "view"), ("leads", "view"), ("tasks", "view"), ("reports"
 
 
 @pytest_asyncio.fixture
-async def env():
+async def env(monkeypatch):
+    async def _no_backfill(*_a, **_k):
+        return None
+    monkeypatch.setattr(sales_report_service, "_ensure_mcp_coverage", _no_backfill)
+
+    async def _branches(db, start=None, end=None):  # what MCP would list: every shop
+        return [{"shop": n, "country": "India"} for n in ("A", "B", "C")]
+    monkeypatch.setattr(mcp_reports, "get_all_branches", _branches)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool,
                                  connect_args={"check_same_thread": False})
     async with engine.begin() as conn:
@@ -79,6 +89,8 @@ async def env():
             Task(title="Mine", assigned_to=u["staff"].id),
             TeleCallLead(sheet_tl_name="Kerala", full_name="X", phone="1", status="Appointment",
                          created_at=datetime.utcnow()),
+            McpDailySale(store_id=a.id, date=today, revenue=500),
+            McpDailySale(store_id=c.id, date=today, revenue=77777),
         ])
         await db.commit()
         ids = {k: v.id for k, v in u.items()}
@@ -164,3 +176,40 @@ async def test_status_summary_and_ai_fail_closed(env):
 
     assert (await env("caller").get("/api/v1/ai-analytics/summary")).status_code == 403
     assert (await env("rm").post("/api/v1/ai-analytics/chat", json={"message": "hi"})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_page_data_endpoints_are_scoped(env):
+    day = date.today().isoformat()
+    q = {"group_by": "branch", "granularity": "day", "start": day, "end": day}
+    keys = lambda r: sorted(g["key"] for g in r.json()["breakdown"])  # noqa: E731
+    assert keys(await env("ceo").get("/api/v1/sales-reports", params=q)) == ["A", "B", "C"]
+    assert keys(await env("tl").get("/api/v1/sales-reports", params=q)) == ["A", "B"]
+    assert keys(await env("caller").get("/api/v1/sales-reports", params=q)) == ["A"]
+    assert (await env("staff").get("/api/v1/sales-reports", params=q)).json()["breakdown"] == []
+
+    live = await env("caller").get("/api/v1/sales-reports/live-today", params={"country": "India"})
+    assert live.json()["revenue"] == 500  # store C's 77,777 isn't theirs
+
+    shops = lambda r: sorted(b["shop"] for b in r.json())  # noqa: E731
+    assert shops(await env("ceo").get("/api/v1/mcp/branches")) == ["A", "B", "C"]
+    assert shops(await env("tl").get("/api/v1/mcp/branches")) == ["A", "B"]
+    assert shops(await env("staff").get("/api/v1/mcp/branches")) == []
+
+    ops = await env("caller").get("/api/v1/ceo-dashboard/sheets-data", params={"tab": "ops", "start": day, "end": day})
+    assert {r["store"] for r in ops.json()["ops_data"]} == {"A"}
+    cfg = await env("tl").get("/api/v1/ceo-dashboard/sheets-data", params={"tab": "config"})
+    assert {r["store"] for r in cfg.json()["store_config"]} == {"A", "B"}
+
+    names = lambda r: sorted(x["name"] for x in r.json())  # noqa: E731
+    assert names(await env("caller").get("/api/v1/stores/")) == ["A"]
+    assert names(await env("staff").get("/api/v1/stores/")) == []
+    assert names(await env("ceo").get("/api/v1/stores/")) == ["A", "B", "C"]
+
+
+@pytest.mark.asyncio
+async def test_team_leader_report_needs_all_their_stores(env):
+    other_tl = (await env("ceo").get("/api/v1/stores/")).json()
+    other_id = next(s["team_leader_id"] for s in other_tl if s["name"] == "C")
+    assert (await env("caller").get(f"/api/v1/sales-reports/team-leader/{other_id}/performance")).status_code == 403
+    assert (await env("rm").get(f"/api/v1/sales-reports/team-leader/{other_id}/performance")).status_code != 403  # RM has C
