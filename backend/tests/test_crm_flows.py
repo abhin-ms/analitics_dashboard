@@ -75,7 +75,7 @@ def row(name, phone, created, person="", status="", product=""):
 def sheet(monkeypatch):
     rows: list[dict] = []
     monkeypatch.setattr(tele_call_sync, "TELE_CALL_SHEETS", [SHEET])
-    monkeypatch.setattr(tele_call_sync, "_fetch_sheet_rows", lambda _sid: [dict(r) for r in rows])
+    monkeypatch.setattr(tele_call_sync, "_fetch_sheet_rows", lambda _sid, _tab=None: [dict(r) for r in rows])
     return rows
 
 
@@ -299,8 +299,8 @@ async def test_metrics_attribute_misses_to_owner_at_the_time(db, team):
 
 
 # ── appointment → sale matching (MCP sales report stubbed) ──
-from app.models.models import TeleAppointment  # noqa: E402
-from app.services.crm.sale_match import run_sale_match  # noqa: E402
+from app.models.models import Store, StoreMcpAlias, TeleAppointment  # noqa: E402
+from app.services.crm.sale_match import run_lead_sale_match, run_sale_match  # noqa: E402
 
 
 async def _appointment(db, team, day, phone="+91 98765 00001", name="Priya", hour=11):
@@ -381,3 +381,43 @@ async def test_sheet_appointment_dates_are_checked_and_bad_phones_skipped(db, te
     fetch, _ = _fake_sales({"9876500009": [_sale(3, "2026-09-25", 4990.0)]})
     stats = await run_sale_match(db, today=date(2026, 9, 25), fetch=fetch)
     assert stats["sheet_appointments_added"] == 1 and stats["matched"] == 1 and stats["no_phone"] == 1
+
+
+@pytest.mark.asyncio
+async def test_matched_sale_links_the_store(db, team):
+    store = Store(name="Bangalore Indiranagar", country="India", is_active=True, team_leader_id=team["tl"].id)
+    db.add(store)
+    await db.flush()
+    db.add(StoreMcpAlias(store_id=store.id, mcp_shop_name="GuardX - Indiranagar"))
+    lead, appt = await _appointment(db, team, date(2026, 9, 25))
+    fetch, _ = _fake_sales({"9876500001": [_sale(113010, "2026-09-25")]})
+    await run_sale_match(db, today=date(2026, 9, 25), fetch=fetch)
+    await db.refresh(lead); await db.refresh(appt)
+    assert appt.store_id == store.id and lead.store_id == store.id
+
+
+@pytest.mark.asyncio
+async def test_open_lead_without_appointment_who_bought_is_converted(db, team):
+    store = Store(name="Bangalore Indiranagar", country="India", is_active=True, team_leader_id=team["tl"].id)
+    db.add(store)
+    await db.flush()
+    db.add(StoreMcpAlias(store_id=store.id, mcp_shop_name="GuardX - Indiranagar"))
+    walk_in = TeleCallLead(sheet_tl_name="Bangalore", spreadsheet_id="b", full_name="Walk", phone="9876500021",
+                           status="Will Visit", created_at=ist(2026, 9, 20), submitted_at=ist(2026, 9, 20))
+    early = TeleCallLead(sheet_tl_name="Bangalore", spreadsheet_id="b", full_name="Before", phone="9876500022",
+                         status="", created_at=ist(2026, 9, 20), submitted_at=ist(2026, 9, 20))
+    closed = TeleCallLead(sheet_tl_name="Bangalore", spreadsheet_id="b", full_name="NI", phone="9876500023",
+                          status="Not Interested", created_at=ist(2026, 9, 20), submitted_at=ist(2026, 9, 20))
+    db.add_all([walk_in, early, closed])
+    await db.commit()
+    fetch, calls = _fake_sales({"9876500021": [_sale(5, "2026-09-23")],
+                                "9876500022": [_sale(6, "2026-09-18")],   # bought before the lead arrived
+                                "9876500023": [_sale(7, "2026-09-23")]})
+    stats = await run_lead_sale_match(db, today=date(2026, 9, 26), fetch=fetch)
+    assert stats == {"leads_checked": 2, "leads_matched": 1, "errors": 0}   # "Not Interested" isn't searched
+    await db.refresh(walk_in); await db.refresh(early)
+    assert walk_in.status == "Sale Conversion" and walk_in.store_id == store.id and early.status == ""
+    visit = (await db.execute(select(TeleAppointment).where(TeleAppointment.lead_id == walk_in.id))).scalar_one()
+    assert (visit.source, visit.attendance, visit.store_id, visit.matched_purchase_id) == ("sale_match", "attended", store.id, "5")
+    # a second run finds nothing new (the lead has a visit now)
+    assert (await run_lead_sale_match(db, today=date(2026, 9, 26), fetch=fetch))["leads_matched"] == 0

@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db, require_permission
 from ...core.store_scope import allowed_store_ids, check_store
 from ...models.models import (
-    DailyStoreTracker, GoogleReview, McpDailySale, Setting, Store, StoreMcpAlias, TeleAppointment,
-    TeleCallLead, TeleLeadActivity, User,
+    DailyStoreTracker, DailySubmission, GoogleReview, McpDailySale, Setting, Store,
+    StoreMcpAlias, StoreWalkin, TeleAppointment, TeleCallLead, TeleLeadActivity, User,
 )
 from ...services import sales_report_service
 from ...services.crm import metrics as crm_metrics
@@ -26,7 +26,7 @@ from ...services.crm.engine import parse_amount
 from ...services.crm.status import NO_STATUS
 from ...services.store_portfolio import (
     AREA_LABELS, DEFAULT_LEAD_TARGETS, LEAD_SOURCES, SHEET_AREA, analyse, area_of_sheet, area_of_store,
-    attribute_lead, best_of, days_in_month, group_duplicates, lead_source_bucket, pace, prorated_target,
+    attribute_lead, best_of, shop_of_sheet, days_in_month, group_duplicates, lead_source_bucket, pace, prorated_target,
     shop_of, shops_mentioned,
 )
 from .crm import source_key
@@ -334,7 +334,7 @@ async def _reviews(db: AsyncSession, store: Store, history: list[DailyStoreTrack
     }
 
 
-def _lead_figures(groups: list[list], conv_groups: list[list], tracker: dict | None = None) -> dict:
+def _lead_figures(groups: list[list], conv_groups: list[list]) -> dict:
     """Counts for de-duplicated leads (each group is one person): `groups`
     arrived in the period, `conv_groups` bought in the period (whenever they
     arrived) — so a September lead who buys in October counts in October."""
@@ -358,12 +358,7 @@ def _lead_figures(groups: list[list], conv_groups: list[list], tracker: dict | N
     for b in sources.values():
         b["rate"] = round(b["converted"] / b["leads"] * 100, 1) if b["leads"] else 0.0
         b["revenue"] = round(b["revenue"], 2)
-        b["tracker"] = None
-    # WhatsApp chats and walk-ins aren't CRM leads yet; the Daily Tracker's
-    # monthly totals stand in, shown beside the lead counts.
-    if tracker:
-        sources["whatsapp"]["tracker"] = {"label": "WA chats (Daily Tracker)", "value": tracker["wa_chats"]}
-        sources["walk_ins"]["tracker"] = {"label": "Walk-ins booked (Daily Tracker)", "value": tracker["walkins"]}
+        b["from"] = None
     kpis = crm_metrics.lead_kpis(reps)
     kpis["converted"] = len(conv_groups)
     kpis["conversion_pct"] = round(len(conv_groups) / len(groups) * 100, 1) if groups else 0.0
@@ -387,8 +382,7 @@ async def _conversion_times(db: AsyncSession, lead_ids: list[int]) -> dict[int, 
     )).all())
 
 
-async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: date,
-                 tracker_rows: list[DailyStoreTracker]) -> dict:
+async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: date) -> dict:
     """The store's leads, worked out at read time (see store_portfolio
     attribute_lead): its own shop's leads, plus its area's leads whose shop
     isn't known, shown separately. Duplicates count once. Leads received
@@ -435,6 +429,7 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
                 store_shop=shop_key(sid) if sid else None, appointment_shop=shop_key(aid) if aid else None,
                 remarks_shops=remarks, lead_area=next((area_of_sheet(l.sheet_tl_name) for l in g), None),
                 target_shop=target_shop, target_area=target_area, area_shop_count=len(area_shops),
+                sheet_shop=next((shop_of_sheet(l.sheet_tl_name) for l in g if shop_of_sheet(l.sheet_tl_name)), None),
             )
             if where == "store":
                 mine.append(g)
@@ -455,10 +450,13 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     sold = [l for l in sold if p_start <= (sold_at.get(l.id) or arrived_at(l)) < p_end]
     mine_sold, pool_sold = await split(sold, False)
 
-    tracker = {"wa_chats": sum(r.wa_chats_received or 0 for r in tracker_rows),
-               "walkins": sum(r.wa_walkins_booked or 0 for r in tracker_rows)} if tracker_rows else None
-    own = _lead_figures(mine, mine_sold, tracker)
+    own = _lead_figures(mine, mine_sold)
     kpis, by_status = own["kpis"], own["status_counts"]
+    # Telecallers call every lead, so "outbound" is how many of them were called.
+    called = kpis["total_leads"] - kpis["no_status"]
+    telecalling = {"leads": kpis["total_leads"], "called": called, "not_called": kpis["no_status"],
+                   "connected": kpis["calls_connected"], "not_connected": kpis["calls_not_connected"],
+                   "connected_pct": kpis["connected_pct"]}
 
     visits = dict((await db.execute(
         select(TeleAppointment.attendance, func.count(TeleAppointment.id)).where(
@@ -495,11 +493,112 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
         "warm": sum(by_status.get(s, 0) for s in WARM_STATUSES),
         "visits": {"attended": visits.get("attended", 0), "scheduled": visits.get("scheduled", 0),
                    "no_show": visits.get("no_show", 0), "total": sum(visits.values())},
+        "telecalling": telecalling,
+        "lead_sheets": sorted({s.title() for s in area_sheets}),
         "matched_by": dict(how),
         "duplicates_merged": own["merged"],
         "area": area,
         "area_label": area_label,
     }
+
+
+async def _same_shop_ids(db: AsyncSession, store: Store) -> list[int]:
+    """This store and its duplicate records ("TVM" / "Kerala Trivandrum")."""
+    shop = shop_of(store.name)
+    if not shop:
+        return [store.id]
+    return [sid for sid, name in (await db.execute(select(Store.id, Store.name))).all() if shop_of(name) == shop]
+
+
+async def _activity(db: AsyncSession, store_ids: list[int], start: date, end: date, sales: dict,
+                    leads: dict, tracker_rows: list[DailyStoreTracker]) -> dict:
+    """What happened at and around the store: walk-ins (Walk-ins sheet),
+    store calls and inbound leads (the stores' daily form), bills (MCP),
+    telecalling on its leads (CRM) and WhatsApp (Daily Tracker)."""
+    walk = (await db.execute(select(StoreWalkin).where(
+        StoreWalkin.store_id.in_(store_ids), StoreWalkin.date >= start, StoreWalkin.date <= end,
+    ))).scalars().all()
+    last_walk = (await db.execute(select(func.max(StoreWalkin.date)).where(
+        StoreWalkin.store_id.in_(store_ids), StoreWalkin.date <= date.today()))).scalar()
+    walkins = None
+    if walk:
+        actual = sum(w.actual or 0 for w in walk)
+        dsr = sum(w.dsr or 0 for w in walk)
+        # The visitor count when the store keeps one, else its DSR figure.
+        counted = sum((w.actual if w.actual is not None else w.dsr) or 0 for w in walk)
+        walkins = {"total": counted, "actual": actual, "dsr": dsr, "days_reported": len({w.date for w in walk}),
+                   "has_actual": any(w.actual is not None for w in walk),
+                   "bill_pct": round(sales["sales_count"] / counted * 100, 1) if counted else None}
+    subs = (await db.execute(select(DailySubmission).where(
+        DailySubmission.store_id.in_(store_ids), DailySubmission.date >= start, DailySubmission.date <= end,
+    ))).scalars().all()
+    last_ops = (await db.execute(
+        select(func.max(DailySubmission.date)).where(DailySubmission.store_id.in_(store_ids),
+                                                      DailySubmission.date <= date.today())
+    )).scalar()
+    ops = None
+    if subs:
+        tot = {k: sum(getattr(r, k) or 0 for r in subs)
+               for k in ("walk_ins", "walk_in_conversions", "calls_made", "calls_connected", "new_leads",
+                         "inbound_leads", "outbound_leads", "appointments_set", "home_deliveries")}
+        lost: dict[str, int] = defaultdict(int)
+        for r in subs:
+            for reason, n in (r.lost_reasons or {}).items():
+                lost[reason] += int(n or 0)
+        ops = {**tot, "days_reported": len({r.date for r in subs}), "revenue": float(sum(r.revenue or 0 for r in subs)),
+               "lost_reasons": dict(sorted(lost.items(), key=lambda kv: -kv[1])),
+               "walk_in_conversion_pct": round(tot["walk_in_conversions"] / tot["walk_ins"] * 100, 1) if tot["walk_ins"] else None,
+               "calls_connected_pct": round(tot["calls_connected"] / tot["calls_made"] * 100, 1) if tot["calls_made"] else None}
+    return {
+        "walkins": walkins,
+        "walkins_last_date": last_walk.isoformat() if last_walk else None,
+        "ops": ops,
+        "ops_last_date": last_ops.isoformat() if last_ops else None,
+        "bills": sales["sales_count"],
+        "units": sales["units"],
+        "telecalling": leads["telecalling"],
+        "visits": leads["visits"],
+        "whatsapp": {"chats": sum(r.wa_chats_received or 0 for r in tracker_rows),
+                     "walkins_booked": sum(r.wa_walkins_booked or 0 for r in tracker_rows)} if tracker_rows else None,
+    }
+
+
+def _add_sheet_counts(leads: dict, activity: dict, start: date, end: date, today: date) -> None:
+    """Walk-ins, inbound/outbound enquiries and WhatsApp chats aren't CRM
+    leads: the stores count them in sheets. Their counts fill those rows of
+    the source table (the larger of the CRM and sheet figure, as the CRM
+    ones are a subset), and the totals and lead target follow."""
+    ops, walk, wa = activity["ops"], activity["walkins"], activity["whatsapp"]
+    sheet = {}  # key: (leads, converted or None, caption)
+    if walk:
+        sheet["walk_ins"] = (walk["total"], ops["walk_in_conversions"] if ops else None,
+                             "Walk-ins sheet" + (" · bought: store daily form" if ops else ""))
+    elif ops and ops["walk_ins"]:
+        sheet["walk_ins"] = (ops["walk_ins"], ops["walk_in_conversions"], "Store daily form")
+    if ops:
+        sheet["inbound_calls"] = (ops["inbound_leads"], None, "Store daily form")
+        sheet["outbound_calls"] = (ops["outbound_leads"], None, "Store daily form")
+    if wa and wa["chats"]:
+        sheet["whatsapp"] = (wa["chats"], None, "Daily Tracker (WhatsApp chats)")
+    for b in leads["sources"]:
+        if b["key"] not in sheet:
+            continue
+        n, conv, caption = sheet[b["key"]]
+        if n > b["leads"]:
+            b["leads"], b["from"] = n, caption
+            if conv is not None and conv > b["converted"]:
+                b["converted"] = conv
+            b["converted_unknown"] = conv is None and not b["converted"]
+            b["rate"] = round(b["converted"] / b["leads"] * 100, 1) if b["leads"] else 0.0
+    total = sum(b["leads"] for b in leads["sources"])
+    converted = sum(b["converted"] for b in leads["sources"])
+    t = leads["targets"]
+    leads.update({
+        "total": total, "converted": converted,
+        "conversion_pct": round(converted / total * 100, 1) if total else 0.0,
+        "volume": pace(t["leads_monthly"], total, start, end, today).as_dict(),
+        "conversions": pace(t["leads_monthly"] * t["conversion_pct"] / 100, converted, start, end, today).as_dict(),
+    })
 
 
 @router.get("/{store_id}")
@@ -534,9 +633,12 @@ async def store_portfolio(
     span_months = (end.year - start.year) * 12 + end.month - start.month + 1
     history = await _tracker_months(db, store.id, end, months=max(6, span_months))
     social = await _social(db, store, history, start, end, today)
-    leads = await _leads(db, store, start, end, today, _in_range(history, start, end))
+    leads = await _leads(db, store, start, end, today)
     sales = await _sales(db, store, start, end, today)
     reviews = await _reviews(db, store, history, start, end)
+    store_ids = await _same_shop_ids(db, store)
+    activity = await _activity(db, store_ids, start, end, sales, leads, _in_range(history, start, end))
+    _add_sheet_counts(leads, activity, start, end, today)
     analysis = analyse(social, leads, sales, reviews, _money_formatter(currency))
     sheet_updated = max((r.sheet_updated_at for r in history if r.sheet_updated_at), default=None)
 
@@ -552,6 +654,7 @@ async def store_portfolio(
         "leads": leads,
         "sales": sales,
         "reviews": reviews,
+        "activity": activity,
         "analysis": analysis,
         "sheet_updated_at": sheet_updated.isoformat() + "Z" if sheet_updated else None,
     }

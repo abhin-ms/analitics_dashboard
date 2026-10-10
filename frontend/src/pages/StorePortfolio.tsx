@@ -6,7 +6,8 @@ import {
 } from "recharts";
 import {
   AlertTriangle, ArrowLeft, BarChart3, Bookmark, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList,
-  Film, Footprints, Globe, Megaphone, PhoneIncoming, PhoneOutgoing, MessageSquare, Repeat2, Share2, Star, Target, TrendingUp, UserCheck, Users,
+  Film, Footprints, Globe, Megaphone, PhoneCall, PhoneIncoming, PhoneOutgoing, MessageSquare, Receipt, Repeat2, Share2, Star, Target,
+  TrendingUp, Truck, UserCheck, Users,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { BrandIcon } from "@/components/shared/BrandIcon";
@@ -26,8 +27,10 @@ interface PlatformPace extends Pace { has_data: boolean; monthly_target: number 
 type SocialMonth = { month: string; as_of: string; reels: number } & Record<string, number | string | null>;
 interface LeadSource {
   key: string; label: string; leads: number; converted: number; rate: number; revenue: number;
-  /** WhatsApp / walk-ins: the Daily Tracker's monthly total, until they're CRM leads. */
-  tracker: { label: string; value: number } | null;
+  /** Walk-ins, inbound/outbound, WhatsApp: counted in a store sheet, not the CRM — which one. */
+  from: string | null;
+  /** The sheet has a count but no conversions for this source. */
+  converted_unknown?: boolean;
 }
 interface Portfolio {
   store: { id: number; name: string; country: string; region: string; address: string; team_leader: string; is_active: boolean; currency: string };
@@ -57,6 +60,19 @@ interface Portfolio {
     rating: number | null; rating_as_of: string | null; rating_previous: number | null; new_reviews: number; total_reviews: number | null;
     response: string; positive: number | null; negative: number | null; unanswered: number | null;
     extra_columns: Record<string, number | string>;
+  };
+  activity: {
+    walkins: { total: number; actual: number; dsr: number; days_reported: number; has_actual: boolean; bill_pct: number | null } | null;
+    walkins_last_date: string | null;
+    ops: {
+      walk_ins: number; walk_in_conversions: number; calls_made: number; calls_connected: number; inbound_leads: number;
+      outbound_leads: number; appointments_set: number; home_deliveries: number; days_reported: number; revenue: number;
+      calls_connected_pct: number | null; lost_reasons: Record<string, number>;
+    } | null;
+    ops_last_date: string | null;
+    bills: number; units: number;
+    telecalling: { leads: number; called: number; not_called: number; connected: number; not_connected: number; connected_pct: number };
+    whatsapp: { chats: number; walkins_booked: number } | null;
   };
   analysis: {
     rows: { area: "social" | "leads" | "sales" | "reviews"; status: PaceStatus; gap: string; action: string; priority: string }[];
@@ -196,6 +212,60 @@ function StatusPill({ status }: { status: PaceStatus }) {
       <i className="inline-block h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[s.tone] }} />
       {s.label}
     </span>
+  );
+}
+
+/** Walk-ins, bills, store calls, inbound leads and telecalling — the store's
+ *  footfall and calling, from the Walk-ins sheet, the stores' daily form,
+ *  MCP and the CRM. */
+function ActivityBlock({ activity, period }: { activity: Portfolio["activity"]; period: Portfolio["period"] }) {
+  const { walkins: w, ops, telecalling: t } = activity;
+  const since = (last: string | null) => (last ? `Not filled for this period · last ${shortDate(last)}` : "Not reported yet");
+  const lost = ops ? Object.entries(ops.lost_reasons).filter(([, n]) => n > 0) : [];
+  return (
+    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm font-semibold text-white">Store activity & calling</p>
+        <p className="text-[11px] text-[var(--text-muted)]">{shortDate(period.start)} – {shortDate(period.end)}</p>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        <Stat tone="indigo" icon={Footprints} label="Walk-ins" value={w ? num(w.total) : "—"}
+          sub={w ? (w.has_actual ? `Counted ${num(w.actual)} · in DSR ${num(w.dsr)}` : `From DSR · ${w.days_reported} days`) : since(activity.walkins_last_date)}
+          subTone={w ? undefined : "crit"} />
+        <Stat tone="green" icon={Receipt} label="Bills (MCP)" value={num(activity.bills)}
+          sub={w?.bill_pct != null ? `${w.bill_pct}% of walk-ins bought` : `${num(activity.units)} units`} />
+        <Stat tone="purple" icon={PhoneIncoming} label="Inbound leads" value={ops ? num(ops.inbound_leads) : "—"}
+          sub={ops ? `Outbound ${num(ops.outbound_leads)} · appts ${num(ops.appointments_set)}` : since(activity.ops_last_date)}
+          subTone={ops ? undefined : "crit"} />
+        <Stat tone="orange" icon={PhoneCall} label="Store calls made" value={ops ? num(ops.calls_made) : "—"}
+          sub={ops ? `${num(ops.calls_connected)} connected${ops.calls_connected_pct !== null ? ` (${ops.calls_connected_pct}%)` : ""} · ${ops.days_reported} days` : since(activity.ops_last_date)}
+          subTone={ops ? undefined : "crit"} />
+        <Stat tone="blue" icon={PhoneOutgoing} label="Leads called" value={t.leads ? `${num(t.called)} / ${num(t.leads)}` : "—"}
+          sub={t.leads ? `${t.connected_pct}% connected · ${num(t.not_called)} not called yet` : "No leads linked to this store"}
+          subTone={t.leads && t.not_called ? "warn" : undefined} />
+        {activity.whatsapp ? (
+          <Stat tone="green" icon={MessageSquare} label="WhatsApp chats" value={num(activity.whatsapp.chats)}
+            sub={`${num(activity.whatsapp.walkins_booked)} walk-ins booked (Daily Tracker)`} />
+        ) : (
+          <Stat tone="slate" icon={Truck} label="Home deliveries" value={ops ? num(ops.home_deliveries) : "—"}
+            sub={ops ? "From the store daily form" : since(activity.ops_last_date)} subTone={ops ? undefined : "crit"} />
+        )}
+      </div>
+      {lost.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-[var(--text-muted)]">Walk-ins lost because:</span>
+          {lost.map(([reason, n]) => (
+            <span key={reason} className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[var(--text-secondary)]">
+              {reason}: <b className="text-white">{num(n)}</b>
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-[var(--text-muted)]">
+        Walk-ins: Walk-ins sheet (counted visitors, else the store's DSR figure). Inbound leads and store calls: the stores'
+        daily form. Bills: MCP. Telecalling: this store's CRM leads with a call status.
+      </p>
+    </div>
   );
 }
 
@@ -575,13 +645,13 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                         {SOURCE_ICON[s.key]?.({ size: 15 })}
                         {s.label}
                       </span>
-                      {s.tracker && (
-                        <span className="block text-[10px] font-normal text-[var(--text-muted)]">{s.tracker.label}: {num(s.tracker.value)}</span>
+                      {s.from && (
+                        <span className="block text-[10px] font-normal text-[var(--text-muted)]">From {s.from}</span>
                       )}
                     </td>
                     <td className="py-2 px-3 text-right tabular-nums">{num(s.leads)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{num(s.converted)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{s.leads ? `${s.rate}%` : "—"}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{s.converted_unknown ? "—" : num(s.converted)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{s.leads && !s.converted_unknown ? `${s.rate}%` : "—"}</td>
                     <td className="py-2 px-3 text-right tabular-nums">{money(s.revenue)}</td>
                   </tr>
                 ))}
@@ -596,7 +666,8 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
             </table>
             <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
               Leads = leads that arrived in this period. Converted and Revenue = sales made in this period, even when the
-              lead arrived earlier — so a rate can go over 100% when older leads buy. Each person counts once.
+              lead arrived earlier — so a rate can go over 100% when older leads buy. Each CRM lead counts once. Rows marked
+              "From …" are the counts the store keeps in that sheet; a CRM lead who also walks in counts in both rows.
             </p>
           </div>
           <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-2.5">
@@ -664,6 +735,7 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
             )}
           </div>
         </div>
+        <ActivityBlock activity={data.activity} period={data.period} />
       </Section>
 
       {/* 3. Sales */}

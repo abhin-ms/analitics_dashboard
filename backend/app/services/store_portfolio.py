@@ -47,7 +47,8 @@ def lead_source_bucket(channel: str, typed: str = "") -> str:
 #     an area; placeholders like "Kerala Store" have an area but no shop;
 #   * every lead has an area from its city sheet;
 #   * a lead belongs to a shop when it has a store or an appointment at a
-#     store; else, when its area has only one shop (Guwahati), that shop;
+#     store; else when its sheet is that shop's own sheet (Mysore); else,
+#     when its area has only one shop (Guwahati), that shop;
 #     else when its remarks name exactly one shop of its area (Meta's "city"
 #     answer lands there too); otherwise it stays an area lead.
 AREA_LABELS = {
@@ -55,7 +56,10 @@ AREA_LABELS = {
     "tamil_nadu": "Tamil Nadu", "north": "Delhi, Hyderabad & Mumbai",
 }
 SHEET_AREA = {"kerala": "kerala", "guwahati": "assam", "bangalore": "karnataka",
+              "mysore": "karnataka", "mangalore": "karnataka",
               "chennai": "tamil_nadu", "delhi": "north"}
+# Sheets that hold one shop's leads only, not a whole area's.
+SHEET_SHOP = {"mysore": "mysore", "mangalore": "mangalore"}
 # (shop, area, spellings) — most specific first, so "Delhi Lajpat Nagar"
 # is Lajpat Nagar, not Delhi.
 SHOPS: list[tuple[str, str, tuple[str, ...]]] = [
@@ -66,7 +70,7 @@ SHOPS: list[tuple[str, str, tuple[str, ...]]] = [
     ("kollam", "kerala", ("kollam",)),
     ("kottakkal", "kerala", ("kottakkal", "kottkal", "kottakal")),
     ("palakkad", "kerala", ("palakkad", "palghat")),
-    ("pathanamthitta", "kerala", ("pathanamthitta", "pat")),
+    ("pathanamthitta", "kerala", ("pathanamthitta", "pathanamathitta", "pat")),
     ("thrissur", "kerala", ("thrissur", "trichur")),
     ("trivandrum", "kerala", ("trivandrum", "tvm", "thiruvananthapuram", "kazhakkoottam", "kazhakoottam",
                               "kazhakuttam")),
@@ -80,7 +84,7 @@ SHOPS: list[tuple[str, str, tuple[str, ...]]] = [
     ("kodambakkam", "tamil_nadu", ("kodambakkam", "kodambakam")),
     ("coimbatore", "tamil_nadu", ("coimbatore",)),
     ("lajpat_nagar", "north", ("lajpat nagar",)),
-    ("hitech_city", "north", ("hitech city", "hi tech city", "hitech")),
+    ("hitech_city", "north", ("hitech city", "hi tech city", "hitec city", "hitech", "hitec")),
     ("kukatpally", "north", ("kukatpally",)),
     ("korum", "north", ("korum",)),
     ("bandra", "north", ("bandra",)),
@@ -131,6 +135,10 @@ def area_of_sheet(sheet: str) -> Optional[str]:
     return SHEET_AREA.get((sheet or "").strip().lower())
 
 
+def shop_of_sheet(sheet: str) -> Optional[str]:
+    return SHEET_SHOP.get((sheet or "").strip().lower())
+
+
 def shops_mentioned(text: str, area: Optional[str]) -> set[str]:
     """Shops of `area` named in free text (remarks, Meta's city answer).
     Area-wide words ("bangalore") don't count, and neither does "pat",
@@ -143,9 +151,10 @@ def shops_mentioned(text: str, area: Optional[str]) -> set[str]:
 
 def attribute_lead(*, store_shop: Optional[str], appointment_shop: Optional[str], remarks_shops: set[str],
                    lead_area: Optional[str], target_shop: str, target_area: Optional[str],
-                   area_shop_count: int) -> tuple[Optional[str], str]:
+                   area_shop_count: int, sheet_shop: Optional[str] = None) -> tuple[Optional[str], str]:
     """("store" | "area" | None, reason) for one lead and one target shop."""
-    for shop, reason in ((store_shop, "store on the lead"), (appointment_shop, "appointment at the store")):
+    for shop, reason in ((store_shop, "store on the lead"), (appointment_shop, "appointment at the store"),
+                         (sheet_shop, "the shop's own lead sheet")):
         if shop:
             return ("store" if shop == target_shop else None), reason
     if not lead_area or lead_area != target_area:

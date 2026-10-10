@@ -18,7 +18,7 @@ from typing import Awaitable, Callable
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models.models import TeleAppointment, TeleCallLead
+from ...models.models import Store, StoreMcpAlias, TeleAppointment, TeleCallLead
 from .config import get_automation
 from .engine import (
     add_activity, close_open_followups, create_alert, create_followup, emit_alerts, mark_edited,
@@ -30,6 +30,11 @@ from .timeutil import add_working_minutes, from_ist, ist_today, parse_sheet_date
 logger = logging.getLogger(__name__)
 
 MATCH_WINDOW_DAYS = 2      # appointment day + 2 days
+# Leads with no appointment: a New Sale to their phone at any store from the
+# day they arrived counts, for this many days. Only leads still open are
+# checked (one MCP search each per run).
+LEAD_LOOKBACK_DAYS = 30
+LEAD_OPEN_STATUSES = ("", "Will Visit", "Appointment", "Call back later", "Call Not Connected")
 MCP_INDIA_COUNTRY_ID = 1   # all telecalling city sheets are in India
 
 Fetcher = Callable[[date, date, str], Awaitable[list[dict]]]
@@ -78,9 +83,24 @@ async def _materialise_sheet_appointments(db: AsyncSession, scope_clause, first:
     return created
 
 
+async def store_for_shop(db: AsyncSession, shop: str) -> int | None:
+    """The store an MCP shop name ("FORTISAFE - Kottakkal") belongs to."""
+    shop = (shop or "").strip()
+    if not shop:
+        return None
+    return ((await db.execute(select(StoreMcpAlias.store_id).where(StoreMcpAlias.mcp_shop_name == shop).limit(1))).scalar()
+            or (await db.execute(select(Store.id).where(Store.name == shop).limit(1))).scalar())
+
+
 async def _apply_match(db: AsyncSession, appt: TeleAppointment, lead: TeleCallLead, row: dict,
                        now: datetime, alerts: list) -> None:
     amount = float(row.get("amount") or 0)
+    # The bill says where the customer actually bought: that is the visit's
+    # store, and the lead's too when it had none yet.
+    store_id = await store_for_shop(db, row.get("shop"))
+    if store_id:
+        appt.store_id = store_id
+        lead.store_id = lead.store_id or store_id
     appt.sale_match_status = "matched"
     appt.matched_purchase_id = str(row.get("id"))
     appt.matched_amount = amount
@@ -111,7 +131,7 @@ async def _apply_match(db: AsyncSession, appt: TeleAppointment, lead: TeleCallLe
         recipients.add(lead.owner_user_id)
     for rid in recipients:
         await create_alert(db, recipient_id=rid, kind="sale_matched", level=1, lead=lead,
-                           title="Appointment converted to a sale",
+                           title="Appointment converted to a sale" if appt.source != "sale_match" else "Lead bought in store",
                            body=f"{lead.full_name} bought at {row.get('shop')} for ₹{amount:,.0f} (bill #{row.get('id')}).",
                            dedupe_key=f"salematch:{appt.id}:{rid}", out=alerts)
 
@@ -177,6 +197,60 @@ async def run_sale_match(db: AsyncSession, *, scope_clause=None, today: date | N
         else:
             appt.sale_match_status = "pending"
             stats["pending"] += 1
+    await db.commit()
+    await emit_alerts(alerts)
+    return stats
+
+
+async def run_lead_sale_match(db: AsyncSession, *, scope_clause=None, today: date | None = None,
+                              fetch: Fetcher | None = None) -> dict:
+    """Open leads without an appointment who bought anyway (walked in on
+    their own): a New Sale to their phone since they arrived converts the
+    lead and records the store visit, so the sale counts for that store.
+    Leads with an appointment are left to run_sale_match's 2-day rule."""
+    now = utcnow()
+    today = today or ist_today(now)
+    fetch = fetch or mcp_sales_for_phone
+    scope_clause = scope_clause if scope_clause is not None else TeleCallLead.id.isnot(None)
+    since = from_ist(datetime.combine(today - timedelta(days=LEAD_LOOKBACK_DAYS), time(0, 0)))
+    has_appt = select(TeleAppointment.lead_id)
+    leads = (await db.execute(select(TeleCallLead).where(
+        scope_clause, func.coalesce(TeleCallLead.status, "").in_(LEAD_OPEN_STATUSES),
+        func.coalesce(TeleCallLead.submitted_at, TeleCallLead.created_at) >= since,
+        TeleCallLead.id.notin_(has_appt),
+    ))).scalars().all()
+    used = set((await db.execute(
+        select(TeleAppointment.matched_purchase_id).where(TeleAppointment.matched_purchase_id.isnot(None))
+    )).scalars().all())
+    stats = {"leads_checked": 0, "leads_matched": 0, "errors": 0}
+    alerts: list = []
+    for lead in leads:
+        phone10 = norm_phone(lead.phone)
+        if len(phone10) < 10:
+            continue
+        stats["leads_checked"] += 1
+        arrived = to_ist(lead.submitted_at or lead.created_at).date()
+        try:
+            sales = await fetch(arrived, today, phone10)
+        except Exception as e:  # MCP down: try again on the next run
+            logger.warning("Sale check failed for lead %s: %s", lead.id, e)
+            stats["errors"] += 1
+            continue
+        match = next((r for r in sales if _is_new_sale(r) and str(r.get("id")) not in used), None)
+        if not match:
+            continue
+        used.add(str(match.get("id")))
+        try:
+            day = date.fromisoformat(match.get("date") or "")
+        except ValueError:
+            day = today
+        visit = TeleAppointment(lead_id=lead.id, scheduled_at=from_ist(datetime.combine(day, time(12, 0))),
+                                purpose="Store visit (walk-in purchase)", attendance="attended",
+                                source="sale_match", created_at=now)
+        db.add(visit)
+        await db.flush()
+        await _apply_match(db, visit, lead, match, now, alerts)
+        stats["leads_matched"] += 1
     await db.commit()
     await emit_alerts(alerts)
     return stats

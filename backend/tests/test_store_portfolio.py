@@ -84,6 +84,12 @@ def test_lead_attribution_rules():
     assert attribute_lead(**{**base, "lead_area": "assam"})[0] is None
     one = {**base, "lead_area": "assam", "target_shop": "guwahati", "target_area": "assam", "area_shop_count": 1}
     assert attribute_lead(**one) == ("store", "only shop in the area")
+    ka = {**base, "lead_area": "karnataka", "target_area": "karnataka", "area_shop_count": 4}
+    assert attribute_lead(**{**ka, "target_shop": "mysore", "sheet_shop": "mysore"}) == ("store", "the shop's own lead sheet")
+    assert attribute_lead(**{**ka, "target_shop": "indiranagar", "sheet_shop": "mysore"})[0] is None
+    # a booked visit elsewhere still wins over the sheet
+    assert attribute_lead(**{**ka, "target_shop": "mangalore", "sheet_shop": "mysore",
+                             "appointment_shop": "mangalore"}) == ("store", "appointment at the store")
 
 
 def test_same_person_within_a_week_is_one_lead():
