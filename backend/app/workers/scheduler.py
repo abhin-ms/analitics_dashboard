@@ -91,7 +91,11 @@ async def crm_weekly_notifications():
 
 async def crm_sale_match():
     # Appointment → sale check against the MCP sales report (appointment day
-    # + 2 days) — see app/services/crm/sale_match.py.
+    # + 2 days) — see app/services/crm/sale_match.py. run_lead_sale_match
+    # (open leads who bought without an appointment) is not scheduled yet:
+    # MCP's customer search matches IMEI but not the customer's phone (Oct
+    # 2026: 0 of 552 leads, incl. sales the sheets record), so it would only
+    # add ~550 MCP calls a run. Add it here once MCP returns mobile_number.
     from ..db.session import AsyncSessionLocal
     from ..services.crm.sale_match import run_sale_match
 
@@ -101,6 +105,32 @@ async def crm_sale_match():
             logger.info("CRM sale match: %s", stats)
     except Exception as e:
         logger.error("CRM sale match error: %s", e)
+
+
+async def sync_store_walkins():
+    # Daily walk-ins per store from the "Walk-ins Data" sheet.
+    from ..db.session import AsyncSessionLocal
+    from ..services.walkins_sync import sync_walkins
+
+    try:
+        async with AsyncSessionLocal() as db:
+            stats = await sync_walkins(db)
+            logger.info("Walk-ins sync: %s rows", stats["rows"])
+    except Exception as e:
+        logger.error("Walk-ins sync error: %s", e)
+
+
+async def sync_store_daily_form():
+    # The stores' daily form: Dashboard Sheet → "DAILY SUBMISSION" tab.
+    from ..db.session import AsyncSessionLocal
+    from ..services.daily_submission_sync import sync_daily_submissions
+
+    try:
+        async with AsyncSessionLocal() as db:
+            stats = await sync_daily_submissions(db)
+            logger.info("Daily submission sync: %s rows", stats["rows"])
+    except Exception as e:
+        logger.error("Daily submission sync error: %s", e)
 
 
 async def sync_mcp():
@@ -225,6 +255,26 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        sync_store_walkins,
+        "interval",
+        minutes=15,
+        id="sync_store_walkins",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(),
+    )
+    scheduler.add_job(
+        sync_store_daily_form,
+        "interval",
+        minutes=15,
+        id="sync_store_daily_form",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(),
     )
     # Every day: early morning (covers the previous day's sales) and evening
     # (same-day sales show up before the team leaves).

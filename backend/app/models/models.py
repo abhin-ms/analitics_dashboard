@@ -202,6 +202,12 @@ class DailySubmission(Base):
     app_updated = Column(Boolean, default=False)
     notes = Column(Text, default="")
     google_review_rating = Column(Float, nullable=True)
+    # From the Dashboard Sheet's "DAILY SUBMISSION" tab (walkins... above too).
+    inbound_leads = Column(Integer, nullable=True)
+    outbound_leads = Column(Integer, nullable=True)
+    appointments_set = Column(Integer, nullable=True)
+    home_deliveries = Column(Integer, nullable=True)
+    lost_reasons = Column(JSON, nullable=True)  # {"Price too high": 2, "No show": 1, ...}
     submitted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     submitted_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -612,6 +618,28 @@ class SocialViewTarget(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("store_id", "platform"),)
+
+
+# ── Store walk-ins (synced from the "Walk-ins Data" sheet) ──────────
+# One row per store per day: everyone who came in ("Actual Walkins") and
+# the walk-ins the store wrote in its daily sales report ("Dsr Walkins").
+# Either can be blank in the sheet, so both are nullable.
+class StoreWalkin(Base):
+    __tablename__ = "store_walkins"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
+    date = Column(Date, nullable=False)
+    actual = Column(Integer, nullable=True)
+    dsr = Column(Integer, nullable=True)
+    sheet_store_name = Column(String(100), default="")
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+    store = relationship("Store")
+
+    __table_args__ = (
+        UniqueConstraint("store_id", "date"),
+        Index("ix_store_walkins_store_date", "store_id", "date"),
+    )
 
 
 # ── MCP Daily Sales (synced from SmartService, all countries incl. India) ──

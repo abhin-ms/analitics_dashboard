@@ -1,4 +1,4 @@
-"""Fetch tele call leads from 5 TL Google Sheets and sync to DB."""
+"""Fetch tele call leads from the TL Google Sheets and sync to DB."""
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
@@ -9,16 +9,29 @@ from .google_sheets import _get_service, _read
 
 logger = logging.getLogger(__name__)
 
-# 5 TL lead sheets — all have identical column structure:
+# TL lead sheets — all have identical column structure:
 # Lead Source | Created Time | Full Name | Phone number | Email |
 # Person Calling | Status | Call date | Appointment Date | Remarks | Sale Amount | Product
+# "tab" picks one tab of a spreadsheet that holds several cities; without it
+# the first tab is read.
 TELE_CALL_SHEETS = [
     {"spreadsheet_id": "1TRA3RXhnXwIsvduSVJddsDprKcmmkUh6zuSrPQMsvAo", "tl_name": "Kerala"},
     {"spreadsheet_id": "1Or2WJUUn_rsb3MKfRE83UJZYgQDiMA-CDvMJLtFCN10", "tl_name": "Guwahati"},
     {"spreadsheet_id": "1SE8tGQgtEDz5Wo3jb1U9fsXzujD3GdKwYy01gRV2rQU", "tl_name": "Bangalore"},
     {"spreadsheet_id": "1jR035-uTOEcshHGM4BBOFyMdPWhbGNlq9o19x3PhFlI", "tl_name": "Delhi"},
     {"spreadsheet_id": "1viO0nNPq-SDJXB29xM32AULi4qoK7PFKMQe4pW3HD4A", "tl_name": "Chennai"},
+    # "Dev Leads Tracker": one tab per city ("... Follow up" tabs are formula
+    # views of these and are not synced).
+    {"spreadsheet_id": "16hQmLFME-ZA2OiIzbt8HmV2o8OTB4J3aKrs4U8GpH0s", "tab": "Mysore", "tl_name": "Mysore"},
+    {"spreadsheet_id": "16hQmLFME-ZA2OiIzbt8HmV2o8OTB4J3aKrs4U8GpH0s", "tab": "Mangalore", "tl_name": "Mangalore"},
 ]
+
+
+def sheet_key(cfg: dict) -> str:
+    """Value stored in TeleCallLead.spreadsheet_id for rows of this sheet.
+    Tabs of one spreadsheet get their own key so their leads never match
+    each other during sync."""
+    return f"{cfg['spreadsheet_id']}#{cfg['tab']}" if cfg.get("tab") else cfg["spreadsheet_id"]
 
 COL_MAP = {
     0: "lead_source",
@@ -36,20 +49,23 @@ COL_MAP = {
 }
 
 
-def _fetch_sheet_rows(spreadsheet_id: str) -> list[dict]:
-    """Fetch all rows from a single TL lead sheet."""
+def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]:
+    """Fetch all rows from a single TL lead sheet (or one tab of it)."""
     service = _get_service()
-    try:
-        rows = _read(service, spreadsheet_id, "Sheet1!A1:L5000")
-    except Exception as e:
-        logger.warning(f"Default tab read failed for {spreadsheet_id}, trying first visible tab: {e}")
-        # Some sheets may have different tab names — try first visible tab
-        meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-        sheets = meta.get("sheets", [])
-        if not sheets:
-            return []
-        tab_name = sheets[0]["properties"]["title"]
-        rows = _read(service, spreadsheet_id, f"{tab_name}!A1:L5000")
+    if tab:
+        rows = _read(service, spreadsheet_id, f"'{tab}'!A1:L5000")
+    else:
+        try:
+            rows = _read(service, spreadsheet_id, "Sheet1!A1:L5000")
+        except Exception as e:
+            logger.warning(f"Default tab read failed for {spreadsheet_id}, trying first visible tab: {e}")
+            # Some sheets may have different tab names — try first visible tab
+            meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheets = meta.get("sheets", [])
+            if not sheets:
+                return []
+            tab_name = sheets[0]["properties"]["title"]
+            rows = _read(service, spreadsheet_id, f"{tab_name}!A1:L5000")
 
     if len(rows) < 2:
         return []
@@ -83,7 +99,7 @@ def _norm_phone(text: str) -> str:
 
 
 async def sync_tele_call_leads(db: AsyncSession) -> dict:
-    """Fetch all 5 TL sheets and upsert leads into DB. Returns summary.
+    """Fetch all TL sheets and upsert leads into DB. Returns summary.
 
     Read-only towards Google Sheets. Existing rows are matched on
     spreadsheet + full_name + phone + created_time as before, with a
@@ -120,11 +136,11 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
         return twin
 
     for sheet_cfg in TELE_CALL_SHEETS:
-        spreadsheet_id = sheet_cfg["spreadsheet_id"]
+        spreadsheet_id = sheet_key(sheet_cfg)
         tl_name = sheet_cfg["tl_name"]
 
         try:
-            leads = await asyncio.to_thread(_fetch_sheet_rows, spreadsheet_id)
+            leads = await asyncio.to_thread(_fetch_sheet_rows, sheet_cfg["spreadsheet_id"], sheet_cfg.get("tab"))
         except Exception as e:
             logger.error(f"Failed to fetch tele sheet for {tl_name}: {e}")
             LAST_SYNC[tl_name] = {"at": datetime.now(timezone.utc).isoformat(), "ok": False,
@@ -253,16 +269,16 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
 
 
 async def fetch_tele_leads_direct() -> dict:
-    """Fetch all 5 TL sheets directly (no DB) — for live view."""
+    """Fetch all TL sheets directly (no DB) — for live view."""
     all_leads = []
     for sheet_cfg in TELE_CALL_SHEETS:
         try:
             leads = await asyncio.to_thread(
-                _fetch_sheet_rows, sheet_cfg["spreadsheet_id"]
+                _fetch_sheet_rows, sheet_cfg["spreadsheet_id"], sheet_cfg.get("tab")
             )
             for lead in leads:
                 lead["sheet_tl_name"] = sheet_cfg["tl_name"]
-                lead["spreadsheet_id"] = sheet_cfg["spreadsheet_id"]
+                lead["spreadsheet_id"] = sheet_key(sheet_cfg)
             all_leads.extend(leads)
         except Exception as e:
             logger.error(f"Direct fetch failed for {sheet_cfg['tl_name']}: {e}")

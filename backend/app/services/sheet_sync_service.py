@@ -21,6 +21,19 @@ CURRENT_MONTH = datetime.now().strftime("%Y-%m")
 TODAY = date.today()
 
 
+def parse_ops_date(text: str) -> Optional[date]:
+    """The Operations sheet's "Date" column. It is a Google Form, so dates
+    are US-style M/D/YYYY (7/14/2026); reading them as D/M put 12 July on
+    7 December and dropped every day above 12."""
+    text = (text or "").strip().split(" ")[0]
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 class SheetSyncService:
     async def sync_source(self, db: AsyncSession, source_id: int) -> dict:
         result = await db.execute(select(SheetSource).where(SheetSource.id == source_id))
@@ -429,16 +442,9 @@ class SheetSyncService:
         return store
 
     async def _upsert_submission(self, db: AsyncSession, store_id: int, row: dict) -> None:
-        date_str = row.get("date", "")
-        if not date_str:
+        sub_date = parse_ops_date(row.get("date", ""))
+        if not sub_date:
             return
-        try:
-            sub_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            try:
-                sub_date = datetime.strptime(date_str, "%d/%m/%Y").date()
-            except (ValueError, TypeError):
-                return
 
         result = await db.execute(
             select(DailySubmission).where(
@@ -460,11 +466,11 @@ class SheetSyncService:
         }
 
         if sub:
-            for k, v in data.items():
-                setattr(sub, k, v)
-        else:
-            sub = DailySubmission(store_id=store_id, date=sub_date, **data)
-            db.add(sub)
+            # The Dashboard Sheet's DAILY SUBMISSION tab (daily_submission_sync)
+            # is the store form now; this older log only fills days it lacks.
+            return
+        sub = DailySubmission(store_id=store_id, date=sub_date, **data)
+        db.add(sub)
 
     async def _sync_xlsx(self, db: AsyncSession, source) -> dict:
         from ..services.xlsx_reader import (
