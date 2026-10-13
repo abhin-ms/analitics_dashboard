@@ -17,16 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.deps import get_current_user, get_db, require_permission
 from ...core.store_scope import allowed_store_ids, check_store
 from ...models.models import (
-    DailyStoreTracker, DailySubmission, GoogleReview, McpDailySale, Setting, Store,
+    DailyStoreTracker, DailySubmission, GoogleReview, McpBill, McpDailySale, Setting, Store,
     StoreMcpAlias, StoreWalkin, TeleAppointment, TeleCallLead, TeleLeadActivity, User,
 )
 from ...services import sales_report_service
 from ...services.crm import metrics as crm_metrics
 from ...services.crm.engine import parse_amount
 from ...services.crm.status import NO_STATUS
+from ...services.crm.timeutil import utcnow
 from ...services.store_portfolio import (
     AREA_LABELS, DEFAULT_LEAD_TARGETS, LEAD_SOURCES, SHEET_AREA, analyse, area_of_sheet, area_of_store,
-    attribute_lead, best_of, shop_of_sheet, days_in_month, group_duplicates, lead_source_bucket, pace, prorated_target,
+    attribute_lead, best_of, funnel, shop_of_sheet, status_groups, days_in_month, group_duplicates, lead_source_bucket, pace, prorated_target,
     shop_of, shops_mentioned,
 )
 from .crm import source_key
@@ -452,6 +453,10 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
 
     own = _lead_figures(mine, mine_sold)
     kpis, by_status = own["kpis"], own["status_counts"]
+    # Hot = paid the ₹99 advance on the website, or marked Hot (Meta "YES" to pre-booking, or by hand)
+    website = sum(1 for g in mine if any(l.source_channel == "website" for l in g))
+    hot_total = sum(1 for g in mine if any(l.priority == "hot" or l.source_channel == "website" for l in g))
+    hot = {"total": hot_total, "website": website, "marked": hot_total - website}
     # Telecallers call every lead, so "outbound" is how many of them were called.
     called = kpis["total_leads"] - kpis["no_status"]
     telecalling = {"leads": kpis["total_leads"], "called": called, "not_called": kpis["no_status"],
@@ -469,7 +474,7 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     volume = pace(targets["leads_monthly"], kpis["total_leads"], start, end, today)
     conv_monthly = targets["leads_monthly"] * targets["conversion_pct"] / 100
     conversions = pace(conv_monthly, kpis["converted"], start, end, today)
-    ranked = [b for b in own["sources"] if b["leads"] >= 5]
+    ranked = [b for b in own["sources"] if b["leads"] >= 5 and b["key"] != "unknown"]  # can't steer budget to "unknown"
     best = max(ranked, key=lambda b: b["rate"]) if ranked else None
     area_label = AREA_LABELS.get(target_area or "", "")
     area = None
@@ -494,11 +499,48 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
         "visits": {"attended": visits.get("attended", 0), "scheduled": visits.get("scheduled", 0),
                    "no_show": visits.get("no_show", 0), "total": sum(visits.values())},
         "telecalling": telecalling,
+        # sales this period confirmed by a bill number checked against MCP
+        "bill_verified": sum(1 for g in mine_sold if any(l.bill_status == "verified" for l in g)),
+        "hot": hot,
+        "status_groups": status_groups([best_of(g) for g in mine], arrived_at, utcnow()),
         "lead_sheets": sorted({s.title() for s in area_sheets}),
         "matched_by": dict(how),
         "duplicates_merged": own["merged"],
         "area": area,
         "area_label": area_label,
+    }
+
+
+async def _bill_details(db: AsyncSession, store_ids: list[int], start: date, end: date) -> Optional[dict]:
+    """What the Sales Report API adds per bill, for this store's new sales:
+    plan mix and Care Plus, pending installations, unpaid bills, who sold."""
+    shops = (await db.execute(select(StoreMcpAlias.mcp_shop_name).where(StoreMcpAlias.store_id.in_(store_ids)))).scalars().all()
+    if not shops:
+        return None
+    bills = (await db.execute(select(McpBill).where(
+        McpBill.shop.in_(shops), McpBill.date >= start, McpBill.date <= end, McpBill.payment_status.isnot(None)
+    ))).scalars().all()
+    new = [b for b in bills if "new sale" in (b.category or "").lower()]
+    if not new:
+        return None
+    by_type: dict[str, int] = defaultdict(int)
+    sellers: dict[str, list] = defaultdict(lambda: [0, 0.0])
+    for b in new:
+        by_type[b.purchase_type or "Not set"] += 1
+        if b.salesman:
+            sellers[b.salesman.strip()][0] += 1
+            sellers[b.salesman.strip()][1] += float(b.amount or 0)
+    return {
+        "new_sales": len(new),
+        "care_plus": sum(1 for b in new if b.is_care_plus),
+        "care_plus_pct": round(sum(1 for b in new if b.is_care_plus) / len(new) * 100, 1),
+        "installation_pending": sum(1 for b in new if b.installation_status == "pending"),
+        "payment_pending": sum(1 for b in new if b.payment_status == "pending"),
+        "payment_pending_amount": float(sum(b.amount or 0 for b in new if b.payment_status == "pending")),
+        "with_customer_mobile": sum(1 for b in new if b.mobile10),
+        "plan_types": dict(sorted(by_type.items(), key=lambda kv: -kv[1])),
+        "salesmen": [{"name": n, "sales": v[0], "revenue": round(v[1], 2)}
+                     for n, v in sorted(sellers.items(), key=lambda kv: -kv[1][1])[:5]],
     }
 
 
@@ -526,9 +568,15 @@ async def _activity(db: AsyncSession, store_ids: list[int], start: date, end: da
         dsr = sum(w.dsr or 0 for w in walk)
         # The visitor count when the store keeps one, else its DSR figure.
         counted = sum((w.actual if w.actual is not None else w.dsr) or 0 for w in walk)
-        walkins = {"total": counted, "actual": actual, "dsr": dsr, "days_reported": len({w.date for w in walk}),
+        # Stores fill the Walk-ins sheet a few days behind, while bills arrive daily: compare
+        # only the days that have a walk-in count, or a short sheet reads as "105% bought".
+        days = {w.date for w in walk}
+        bills_same_days = int((await db.execute(select(func.coalesce(func.sum(McpDailySale.new_sale_count), 0)).where(
+            McpDailySale.store_id.in_(store_ids), McpDailySale.date.in_(days)))).scalar() or 0)
+        walkins = {"total": counted, "actual": actual, "dsr": dsr, "days_reported": len(days),
                    "has_actual": any(w.actual is not None for w in walk),
-                   "bill_pct": round(sales["sales_count"] / counted * 100, 1) if counted else None}
+                   "through": max(days).isoformat(), "bills_same_days": bills_same_days,
+                   "bill_pct": round(bills_same_days / counted * 100, 1) if counted else None}
     subs = (await db.execute(select(DailySubmission).where(
         DailySubmission.store_id.in_(store_ids), DailySubmission.date >= start, DailySubmission.date <= end,
     ))).scalars().all()
@@ -568,7 +616,7 @@ def _add_sheet_counts(leads: dict, activity: dict, start: date, end: date, today
     leads: the stores count them in sheets. Their counts fill those rows of
     the source table (the larger of the CRM and sheet figure, as the CRM
     ones are a subset), and the totals and lead target follow."""
-    ops, walk, wa = activity["ops"], activity["walkins"], activity["whatsapp"]
+    ops, walk = activity["ops"], activity["walkins"]
     sheet = {}  # key: (leads, converted or None, caption)
     if walk:
         sheet["walk_ins"] = (walk["total"], ops["walk_in_conversions"] if ops else None,
@@ -578,8 +626,8 @@ def _add_sheet_counts(leads: dict, activity: dict, start: date, end: date, today
     if ops:
         sheet["inbound_calls"] = (ops["inbound_leads"], None, "Store daily form")
         sheet["outbound_calls"] = (ops["outbound_leads"], None, "Store daily form")
-    if wa and wa["chats"]:
-        sheet["whatsapp"] = (wa["chats"], None, "Daily Tracker (WhatsApp chats)")
+    # WhatsApp chats (Daily Tracker) aren't leads: a chat isn't an enquiry about a sale, and some
+    # stores' column holds other figures (Kochi: 3,972 in Sept). They stay in the activity block.
     for b in leads["sources"]:
         if b["key"] not in sheet:
             continue
@@ -637,9 +685,13 @@ async def store_portfolio(
     sales = await _sales(db, store, start, end, today)
     reviews = await _reviews(db, store, history, start, end)
     store_ids = await _same_shop_ids(db, store)
+    sales["bills"] = await _bill_details(db, store_ids, start, end)
     activity = await _activity(db, store_ids, start, end, sales, leads, _in_range(history, start, end))
     _add_sheet_counts(leads, activity, start, end, today)
-    analysis = analyse(social, leads, sales, reviews, _money_formatter(currency))
+    money = _money_formatter(currency)
+    stay = funnel(start=start, end=end, today=today, social=social, leads=leads, sales=sales, reviews=reviews,
+                  walkins=activity["walkins"], team_leader=tl_name or "", money=money)
+    analysis = analyse(social, leads, sales, reviews, money, stay)
     sheet_updated = max((r.sheet_updated_at for r in history if r.sheet_updated_at), default=None)
 
     return {
@@ -655,6 +707,7 @@ async def store_portfolio(
         "sales": sales,
         "reviews": reviews,
         "activity": activity,
+        "funnel": stay,
         "analysis": analysis,
         "sheet_updated_at": sheet_updated.isoformat() + "Z" if sheet_updated else None,
     }

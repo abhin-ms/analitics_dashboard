@@ -132,6 +132,9 @@ def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | 
         "coverage": l.coverage,
         "potential_value": _num(l.potential_value),
         "sale_amount": l.sale_amount,
+        "bill_no": l.bill_no or "",
+        "bill_status": l.bill_status,
+        "bill_note": l.bill_note,
         "sale_amount_value": parse_amount(l.sale_amount) if l.sale_amount else None,
         "product": l.product,
         "remarks": l.remarks,
@@ -491,6 +494,7 @@ class LeadPatch(BaseModel):
     service_type: Optional[str] = None
     coverage: Optional[str] = None
     remarks: Optional[str] = None
+    bill_no: Optional[str] = None            # MCP bill the lead bought with; checked at once ("" removes it)
     next_follow_up_at: Optional[str] = None  # ISO; "" clears nothing — use activities
 
 
@@ -553,6 +557,15 @@ async def patch_lead(lead_id: int, body: LeadPatch, db: AsyncSession = Depends(g
         add_activity(db, lead, "note", user_id=user.id, notes="Device details updated",
                      new_value=f"{lead.phone_model or '—'} · {lead.service_type or '—'} · {lead.coverage or 'Standard'}",
                      at=now)
+    if body.bill_no is not None and body.bill_no.strip() != (lead.bill_no or ""):
+        from ...services.crm.bill_verify import verify_lead_bill
+        changes["bill_no"] = [lead.bill_no or "", body.bill_no.strip()]
+        lead.bill_no = body.bill_no.strip()[:30] or None
+        mark_edited(lead, "bill_no")  # typed here: the sheet's cell no longer overrides it
+        bill_alerts: list = []
+        status = await verify_lead_bill(db, lead, now=now, alerts=bill_alerts)
+        add_activity(db, lead, "note", user_id=user.id, new_value=lead.bill_no or "removed",
+                     notes=f"Bill number {'checked: ' + (lead.bill_note or status or '') if lead.bill_no else 'removed'}", at=now)
     if body.remarks is not None and body.remarks != (lead.remarks or ""):
         lead.remarks = body.remarks
         mark_edited(lead, "remarks")

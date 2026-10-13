@@ -42,6 +42,10 @@ export interface CrmLead {
   potential_value: number | null;
   sale_amount: string | null;
   sale_amount_value: number | null;
+  /** MCP bill the lead bought with, and what checking it found. */
+  bill_no: string;
+  bill_status: "verified" | "not_found" | "duplicate" | "check" | null;
+  bill_note: string | null;
   product: string;
   remarks: string;
   appointment_date: string;

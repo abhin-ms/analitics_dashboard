@@ -74,6 +74,18 @@ async def _fetch_transactions(
     return left + right
 
 
+async def get_transactions(country_id: int, from_date: str, to_date: str) -> list[dict[str, Any]]:
+    """Every transaction (bill) in the range, cached like the daily totals
+    built from it, so the sync can store the bills without a second fetch."""
+    cache_key = _cache_key("transactions", country_id, from_date, to_date)
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+    transactions = await _fetch_transactions(country_id, from_date, to_date)
+    _set_cached(cache_key, transactions)
+    return transactions
+
+
 async def get_daily_sales(
     country_id: int,
     from_date: str,
@@ -93,7 +105,7 @@ async def get_daily_sales(
     if cached is not None:
         return cached
 
-    transactions = await _fetch_transactions(country_id, from_date, to_date)
+    transactions = await get_transactions(country_id, from_date, to_date)
 
     # Targets are a per-month figure that can change (or not exist yet) from
     # one month to the next — fetching only the range's starting month and
