@@ -8,10 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.exc import IntegrityError
 
-from ..models.models import Store, User, McpDailySale, Setting, StoreMcpAlias, CountrySalesSnapshot
+from ..models.models import Store, User, McpBill, McpDailySale, Setting, StoreMcpAlias, CountrySalesSnapshot
 from .common import get_or_create_unassigned_tl
 from .mcp_branches import MCP_COUNTRIES
-from .mcp_daily_sales import get_daily_sales, get_country_comparison, get_current_month_targets
+from .mcp_daily_sales import get_daily_sales, get_country_comparison, get_current_month_targets, get_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,74 @@ async def _set_last_sync_time(db: AsyncSession) -> None:
         db.add(Setting(key=LAST_SYNC_SETTING_KEY, value=now_str))
 
 
+def _report_row(r: dict) -> dict:
+    """A Sales Report API row in the shape store_bills takes."""
+    mobile = (r.get("mobile_number") or "").strip()
+    digits = re.sub(r"\D", "", mobile)
+    return {
+        "id": r.get("purchase_id"), "date": (r.get("created_date") or "")[:10], "shop": r.get("shop_name"),
+        "category": r.get("purchase_category"), "model": r.get("model"), "imei": r.get("imei_number"),
+        "amount": r.get("sale_amount") if r.get("sale_amount") is not None else r.get("amount"),
+        "discount": r.get("discount"), "paid": (r.get("payment_status") or "").lower() == "paid",
+        "customer_name": (r.get("customer_name") or "").strip()[:150] or None,
+        "mobile": mobile[:30] or None, "mobile10": digits[-10:] if len(digits) >= 10 else None,
+        "salesman": (r.get("salesman") or "").strip()[:150] or None, "purchase_type": (r.get("purchase_type") or "")[:80] or None,
+        "is_care_plus": r.get("is_care_plus_covered"), "installation_status": (r.get("installation_status") or "")[:20] or None,
+        "payment_status": (r.get("payment_status") or "")[:20] or None, "mcp_shop_id": r.get("shop_id"),
+    }
+
+
+EXTRA_BILL_FIELDS = ("customer_name", "mobile", "mobile10", "salesman", "purchase_type", "is_care_plus",
+                     "installation_status", "payment_status", "mcp_shop_id")
+
+
+async def store_bills(db: AsyncSession, country_id: int, transactions: list[dict]) -> int:
+    """Upsert one McpBill per bill; returns how many were new. Rows come from
+    the Sales Report API (_report_row) or, as a fallback, the MCP's
+    transaction list, which has no customer / salesman fields."""
+    ids = [t["id"] for t in transactions if t.get("id")]
+    if not ids:
+        return 0
+    existing = {}
+    for i in range(0, len(ids), 1000):
+        existing.update({b.id: b for b in (await db.execute(select(McpBill).where(McpBill.id.in_(ids[i:i + 1000])))).scalars().all()})
+    new = 0
+    now = datetime.utcnow()
+    for t in transactions:
+        if not t.get("id"):
+            continue
+        try:
+            day = date.fromisoformat(t["date"])
+        except (TypeError, ValueError):
+            continue
+        bill = existing.get(t["id"])
+        if bill is None:
+            bill = existing[t["id"]] = McpBill(id=t["id"])
+            db.add(bill)
+            new += 1
+        # same spelling as the store aliases ("X -CLT" → "X - CLT"), so a bill finds its store
+        bill.date, bill.shop, bill.category = day, _normalize_shop_name(t.get("shop") or "")[:150], (t.get("category") or "")[:60]
+        bill.model, bill.imei = (t.get("model") or "")[:150], (t.get("imei") or "")[:40]
+        bill.amount, bill.discount, bill.paid = t.get("amount") or 0, t.get("discount") or 0, bool(t.get("paid"))
+        bill.country_id, bill.synced_at = country_id, now
+        if "mobile10" in t:  # a Sales Report row: the fuller record
+            for f in EXTRA_BILL_FIELDS:
+                setattr(bill, f, t.get(f))
+    await db.flush()
+    return new
+
+
+async def fetch_bills(country_id: int, from_date: str, to_date: str) -> list[dict]:
+    """The range's bills: the Sales Report API's full records, or the MCP's
+    shorter transaction list if that API can't be reached."""
+    from .smart_service_client import smart_service
+    try:
+        return [_report_row(r) for r in await smart_service.sales_report(from_date, to_date, country_id)]
+    except Exception as e:
+        logger.warning("Sales Report API failed for country %s (%s); using the MCP transaction list", country_id, e)
+        return await get_transactions(country_id, from_date, to_date)
+
+
 async def sync_mcp_sales(
     db: AsyncSession, from_date: str = None, to_date: str = None
 ) -> dict:
@@ -208,6 +276,13 @@ async def sync_mcp_sales(
             logger.warning("MCP sync failed for %s: %s", country["name"], e)
             errors.append(f"{country['name']}: {e}")
             continue
+
+        # Keep the bills themselves too (same fetch, cached): a bill number
+        # noted on a lead is checked against these — see crm/bill_verify.py.
+        try:
+            await store_bills(db, country["id"], await fetch_bills(country["id"], from_date, to_date))
+        except Exception as e:
+            logger.warning("Storing MCP bills failed for %s: %s", country["name"], e)
 
         # Keep each already-known store's Store.monthly_target current from
         # MCP's live target sheet, independent of whether that store has

@@ -9,7 +9,8 @@ import pytest
 from types import SimpleNamespace as NS
 
 from app.services.store_portfolio import (
-    analyse, area_of_sheet, area_of_store, attribute_lead, best_of, group_duplicates, lead_source_bucket, pace,
+    analyse, area_of_sheet, area_of_store, attribute_lead, best_of, funnel, group_duplicates, lead_source_bucket, pace,
+    status_groups,
     prorated_target, shop_of, shops_mentioned,
 )
 from app.services.xlsx_reader import _daily_input_column_map, _extra_review_columns
@@ -46,7 +47,8 @@ def test_pace_mid_month():
 
 
 def test_lead_sources_map_to_the_seven_buckets():
-    assert lead_source_bucket("meta_sheet") == "performance_marketing"
+    assert lead_source_bucket("meta_sheet") == "unknown"            # sheet row, Lead Source cell blank
+    assert lead_source_bucket("meta_sheet", "n/a") == "unknown"     # ...or something that isn't PM / GM
     assert lead_source_bucket("instagram") == "performance_marketing"
     assert lead_source_bucket("referral") == "growth_marketing"
     assert lead_source_bucket("phone") == "inbound_calls"
@@ -314,8 +316,19 @@ async def test_portfolio_end_to_end(env):
     assert reviews["new_reviews"] == 8 and reviews["negative"] == 2
     assert reviews["response"] == "Partial"
 
+    stay = body["funnel"]
+    stages = {st["key"]: st for st in stay["stages"]}
+    assert list(stages) == ["visibility", "leads", "hot", "customers"]
+    assert stages["leads"]["value"] == 4 and stages["leads"]["stretch_monthly"] == 5000
+    # A also came in from the website: one hot lead
+    assert stages["hot"]["breakdown"] == {"total": 1, "website": 1, "marked": 0}
+    # customers target = ₹3,00,000 target ÷ ₹1,667 average bill = 180, and all 180 sold
+    assert stages["customers"]["value"] == 180 and stages["customers"]["target_monthly"] == 180
+    assert {r["key"]: r["kind"] for r in stay["slipping"]}["customers"] == "reached"
+    assert {g["key"]: g["count"] for g in leads["status_groups"]}["converted"] == 1
+
     areas = {row["area"]: row for row in body["analysis"]["rows"]}
-    assert set(areas) == {"social", "leads", "sales", "reviews"}
+    assert set(areas) == {"social", "leads", "hot", "customers", "sales", "reviews"}
     assert areas["sales"]["status"] == "achieved"
     assert areas["social"]["status"] == "at_risk"
 
@@ -352,3 +365,53 @@ async def test_conversion_counts_in_the_month_of_the_sale(env):
     aug = (await env("ceo").get(f"/api/v1/store-portfolio/{env.stores['a']}",
                                 params={"start": "2025-08-01", "end": "2025-08-31"})).json()["leads"]
     assert aug["total"] == 1 and aug["converted"] == 0 and aug["revenue"] == 0  # H arrived, hadn't bought yet
+
+
+
+def _funnel_inputs(**over):
+    start, end, today = date(2026, 10, 1), date(2026, 10, 31), date(2026, 10, 11)
+    p = pace(900_000, 431_359, start, end, today).as_dict()
+    base = dict(
+        start=start, end=end, today=today,
+        social={"has_data": False, "views": {"achieved": 0, "monthly_target": 1_000_000}, "as_of": None,
+                "last_report": {"as_of": "2026-09-30", "instagram": 1_490_000}, "reels": 0},
+        leads={"total": 204, "targets": {"leads_monthly": 3000, "conversion_pct": 10.0}, "area": {"total": 16, "label": "Karnataka"},
+               "hot": {"total": 0, "website": 0, "marked": 0}, "warm": 0,
+               "sources": [{"label": "Walk-ins", "leads": 204}]},
+        sales={"pace": p, "sales_count": 103, "avg_bill": 4188.0, "monthly_target": 900_000},
+        reviews={"rating": 4.3}, walkins={"total": 204}, team_leader="HARSH", money=lambda x: f"₹{round(x):,}")
+    base.update(over)
+    return base
+
+
+def test_funnel_stages_bottleneck_and_actions():
+    out = funnel(**_funnel_inputs())
+    st = {s["key"]: s for s in out["stages"]}
+    assert st["visibility"]["pace"] is None and "Not reported" in st["visibility"]["source"]
+    assert st["customers"]["target_monthly"] == 215 and st["hot"]["target_monthly"] == 538
+    assert st["hot"]["stretch_monthly"] == 717
+    assert [b["key"] for b in out["bottleneck"]] == ["hot", "leads"]        # 0 hot leads first, then leads at 7%
+    assert out["not_measured"] == ["Visibility"]
+    assert out["run_rate"]["customers"] == round(103 / 11 * 31)
+    texts = " ".join(a["text"] for a in out["actions"])
+    assert "No hot leads yet" in out["actions"][0]["text"]
+    assert "50.5% of walk-ins bought" in texts and "Daily Tracker" in texts
+    assert len(out["actions"]) <= 5
+
+
+def test_funnel_says_not_recorded_when_no_lead_source_has_data():
+    inputs = _funnel_inputs()
+    inputs["leads"] = {**inputs["leads"], "total": 0, "area": {}, "sources": []}
+    out = funnel(**inputs)
+    leads = out["stages"][1]
+    assert leads["not_recorded"] and leads["value"] is None and leads["pace"] is None
+    assert "103 people bought" in leads["source"]
+    assert out["actions"][0]["text"].startswith("**Record this store's leads.**")
+
+
+def test_status_groups_split_new_from_unattended():
+    now = datetime(2026, 10, 11, 12)
+    leads = [NS(status="", at=now.replace(hour=2)), NS(status="", at=datetime(2026, 10, 8)),
+             NS(status="Call back later", at=now), NS(status="Will Visit", at=now), NS(status="Wrong number", at=now)]
+    got = {g["key"]: g["count"] for g in status_groups(leads, lambda l: l.at, now)}
+    assert got == {"new": 1, "unattended": 1, "follow_up": 1, "visit_planned": 1, "converted": 0, "lost": 1}

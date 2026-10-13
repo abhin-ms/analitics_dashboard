@@ -12,6 +12,7 @@ Runs every day (scheduler) and on demand ("Check sales now").
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from typing import Awaitable, Callable
 
@@ -84,16 +85,22 @@ async def _materialise_sheet_appointments(db: AsyncSession, scope_clause, first:
 
 
 async def store_for_shop(db: AsyncSession, shop: str) -> int | None:
-    """The store an MCP shop name ("FORTISAFE - Kottakkal") belongs to."""
+    """The store an MCP shop name ("FORTISAFE - Kottakkal") belongs to.
+    Aliases are stored with normalised hyphen spacing, so try that too."""
     shop = (shop or "").strip()
     if not shop:
         return None
-    return ((await db.execute(select(StoreMcpAlias.store_id).where(StoreMcpAlias.mcp_shop_name == shop).limit(1))).scalar()
-            or (await db.execute(select(Store.id).where(Store.name == shop).limit(1))).scalar())
+    names = {shop, re.sub(r"\s+", " ", re.sub(r"\s*-\s*", " - ", shop)).strip()}
+    return ((await db.execute(select(StoreMcpAlias.store_id).where(StoreMcpAlias.mcp_shop_name.in_(names)).limit(1))).scalar()
+            or (await db.execute(select(Store.id).where(Store.name.in_(names)).limit(1))).scalar())
 
 
 async def _apply_match(db: AsyncSession, appt: TeleAppointment, lead: TeleCallLead, row: dict,
-                       now: datetime, alerts: list) -> None:
+                       now: datetime, alerts: list, *, sold_at: datetime | None = None,
+                       exact_amount: bool = False) -> None:
+    """`sold_at`: when the sale happened, if known to differ from now (a bill
+    number entered days later still counts in the month of the bill).
+    `exact_amount`: the bill's amount replaces whatever was typed."""
     amount = float(row.get("amount") or 0)
     # The bill says where the customer actually bought: that is the visit's
     # store, and the lead's too when it had none yet.
@@ -113,7 +120,7 @@ async def _apply_match(db: AsyncSession, appt: TeleAppointment, lead: TeleCallLe
     if old != "Sale Conversion":
         lead.status = "Sale Conversion"
         mark_edited(lead, "status")
-    if not parse_amount(lead.sale_amount):
+    if exact_amount or not parse_amount(lead.sale_amount):
         lead.sale_amount = f"{amount:.0f}"
         mark_edited(lead, "sale_amount")
     lead.edited_by_user = True
@@ -125,13 +132,15 @@ async def _apply_match(db: AsyncSession, appt: TeleAppointment, lead: TeleCallLe
     add_activity(db, lead, "system", old_value=old or "No Status", new_value="Sale Conversion",
                  notes=f"Sale matched from the sales report: bill #{row.get('id')} · {row.get('shop')} · "
                        f"₹{amount:,.0f} on {row.get('date')}",
-                 meta={"source": "sale_match", "purchase_id": row.get("id")}, at=now)
+                 meta={"source": "sale_match", "purchase_id": row.get("id")}, at=sold_at or now)
     recipients = set(await team_leader_ids(db, lead.sheet_tl_name, lead.owner_user_id))
     if lead.owner_user_id:
         recipients.add(lead.owner_user_id)
     for rid in recipients:
         await create_alert(db, recipient_id=rid, kind="sale_matched", level=1, lead=lead,
-                           title="Appointment converted to a sale" if appt.source != "sale_match" else "Lead bought in store",
+                           title={"sale_match": "Lead bought in store", "bill": "Sale verified by bill",
+                                  "phone": "Sale matched by customer mobile"}.get(
+                               appt.source, "Appointment converted to a sale"),
                            body=f"{lead.full_name} bought at {row.get('shop')} for ₹{amount:,.0f} (bill #{row.get('id')}).",
                            dedupe_key=f"salematch:{appt.id}:{rid}", out=alerts)
 

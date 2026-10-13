@@ -147,6 +147,11 @@ async def sync_mcp():
     try:
         async with AsyncSessionLocal() as db:
             await sync_mcp_sales(db)
+        # new bills just arrived: match customer mobiles to leads, and check
+        # the leads waiting on a typed bill number
+        from ..services.crm.bill_verify import run_bill_matching
+        async with AsyncSessionLocal() as db:
+            logger.info("Bill matching: %s", await run_bill_matching(db))
     except Exception as e:
         logger.error("MCP sales sync error: %s", e)
 

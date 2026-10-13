@@ -332,6 +332,37 @@ class SmartServiceClient:
     async def cashbook_summary(self, shop_id: int) -> str:
         return await self.call_tool("cashbook_summary", {"shopId": shop_id})
 
+    # ── Sales Report API (REST, same server and login as the MCP) ─────
+
+    async def sales_report(self, from_date: str, to_date: str, country_id: int, page: int = 500) -> list[dict]:
+        """Every bill in the range from GET /api/v1/reports/sales — the full
+        record (customer name and mobile, salesman, plan type, installation
+        and payment status), which the MCP's transaction text leaves out."""
+        client = await self._get_client()
+        base = self.mcp_url.rsplit("/mcp", 1)[0]
+        rows: list[dict] = []
+        while True:
+            token = await self._ensure_token()
+            resp = await client.get(
+                f"{base}/api/v1/reports/sales",
+                params={"from_date": from_date, "to_date": to_date, "country_id": country_id, "limit": page, "offset": len(rows)},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=60.0,
+            )
+            if resp.status_code == 401:  # token revoked: get a new one and retry once
+                self._token = None
+                token = await self._ensure_token()
+                resp = await client.get(
+                    f"{base}/api/v1/reports/sales",
+                    params={"from_date": from_date, "to_date": to_date, "country_id": country_id, "limit": page, "offset": len(rows)},
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=60.0,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            batch = data.get("results") or []
+            rows += batch
+            if not batch or len(rows) >= (data.get("total") or 0):
+                return rows
+
     # ── Health Check ─────────────────────────────────────────────────
 
     async def health_check(self) -> dict:

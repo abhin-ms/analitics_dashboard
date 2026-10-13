@@ -12,27 +12,32 @@ from datetime import date, timedelta
 from typing import Optional
 
 # ── Lead sources ────────────────────────────────────────────────────
-# The portfolio's seven sources, in display order, and which CRM source
-# channels (crm.source_key) feed each. Outbound Calls has no channel yet.
+# The portfolio's sources, in display order, and which CRM source channels
+# (crm.source_key) feed each. Outbound Calls has no channel yet. A city
+# sheet row belongs where its "Lead Source" column says (PM / GM); with
+# that cell blank it is Unknown source until someone fills it in.
 LEAD_SOURCES: list[tuple[str, str, set[str]]] = [
-    ("performance_marketing", "Performance Marketing", {"meta_sheet", "facebook", "instagram"}),
+    ("performance_marketing", "Performance Marketing", {"facebook", "instagram"}),
     ("growth_marketing", "Growth Marketing", {"referral", "app"}),
     ("whatsapp", "WhatsApp", {"whatsapp"}),
     ("website", "Website", {"website"}),
     ("inbound_calls", "Inbound Calls", {"phone"}),
     ("outbound_calls", "Outbound Calls", set()),
     ("walk_ins", "Walk-ins", {"walk_in"}),
+    ("unknown", "Unknown source", {"meta_sheet"}),
 ]
 _CHANNEL_TO_SOURCE = {ch: key for key, _label, chans in LEAD_SOURCES for ch in chans}
-# The city sheets' own "Lead Source" column already says PM / GM.
+# The city sheets' own "Lead Source" column says PM / GM.
 _TYPED_SOURCE = {"pm": "performance_marketing", "performance marketing": "performance_marketing",
                  "gm": "growth_marketing", "growth marketing": "growth_marketing"}
 
 
 def lead_source_bucket(channel: str, typed: str = "") -> str:
     """Portfolio source for a lead: the sheet's PM/GM tag when present, else
-    its CRM source channel; unknown channels count as Growth Marketing
-    (organic/other) so no lead is ever dropped."""
+    its CRM source channel. A sheet row with no (or an unrecognised) tag is
+    Unknown source — read on every request, so it moves to PM/GM as soon as
+    the sheet's cell is filled. Other unknown channels count as Growth
+    Marketing (organic/other) so no lead is ever dropped."""
     tag = _TYPED_SOURCE.get(" ".join((typed or "").lower().split()))
     if tag:
         return tag
@@ -200,6 +205,33 @@ def best_of(group: list):
     return max(group, key=lambda l: STATUS_RANK.get(l.status or "", 0))
 
 
+# Current lead status, in the stages a team leader works with.
+STATUS_GROUPS = [
+    ("new", "New", None), ("unattended", "Unattended", None),
+    ("follow_up", "Follow-up", {"Call Not Connected", "Unattended", "Call back later"}),
+    ("visit_planned", "Visit planned", {"Will Visit", "Appointment"}),
+    ("converted", "Converted", {"Sale Conversion"}),
+    ("lost", "Lost", {"Not Interested", "Wrong number"}),
+]
+NEW_LEAD_HOURS = 24
+
+
+def status_groups(leads: list, when, now) -> list[dict]:
+    """Each lead in one group by its call status; a lead nobody has called
+    is New for its first day, then Unattended."""
+    counts = {key: 0 for key, _l, _s in STATUS_GROUPS}
+    for lead in leads:
+        st = lead.status or ""
+        if not st:
+            counts["new" if (now - when(lead)).total_seconds() < NEW_LEAD_HOURS * 3600 else "unattended"] += 1
+            continue
+        for key, _label, statuses in STATUS_GROUPS:
+            if statuses and st in statuses:
+                counts[key] += 1
+                break
+    return [{"key": k, "label": label, "count": counts[k]} for k, label, _s in STATUS_GROUPS]
+
+
 # ── Targets ────────────────────────────────────────────────────────
 DEFAULT_LEAD_TARGETS = {"leads_monthly": 3000, "conversion_pct": 10.0}
 
@@ -318,7 +350,7 @@ def _per_day(p: dict) -> str:
     return f"{_n(p['required_daily'])}/day"
 
 
-def analyse(social: dict, leads: dict, sales: dict, reviews: dict, money) -> dict:
+def analyse(social: dict, leads: dict, sales: dict, reviews: dict, money, stay: Optional[dict] = None) -> dict:
     """Rule-based read of the four sections: one row per area with the gap,
     the pace needed and the next step, plus strengths and concerns.
     `money` formats an amount in the store's currency."""
@@ -385,6 +417,22 @@ def analyse(social: dict, leads: dict, sales: dict, reviews: dict, money) -> dic
         elif rate_target:
             strengths.append(f"Conversion {rate}% meets the {rate_target}% target")
 
+    # Hot leads and customers (from the stay-on-target funnel)
+    for st in (stay or {}).get("stages", [])[2:]:
+        p = st["pace"]
+        if not p:
+            continue
+        tgt = f"{_n(p['target'])} target" + (" (proposed)" if st["proposed"] else "")
+        if p["remaining"] > 0:
+            gap = f"{_n(p['remaining'])} more {st['unit']} for the {tgt} · {_per_day(p)}"
+        else:
+            gap = f"Target reached ({p['pct']}%)"
+        action = ("Offer the ₹99 advance on interested calls; mark leads Hot when they pay or agree." if st["key"] == "hot"
+                  else "Follow up booked visits and walk-ins who didn't buy.")
+        rows.append({"area": st["key"], "status": p["status"], "gap": gap, "action": action})
+        if p["status"] in BEHIND:
+            concerns.append(f"{st['title']} at {p['pct']}% of target")
+
     # Sales
     s = sales.get("pace")
     if s and s["status"] != "no_target":
@@ -446,3 +494,197 @@ _RANKS = {"no_target": 0, "no_data": 0, "achieved": 1, "ahead": 1, "on_track": 2
 
 def _rank(status: str) -> int:
     return _RANKS.get(status, 0)
+
+
+# ── "What should you do now to stay on target?" ─────────────────────
+# The store's funnel — Visibility → Leads → Hot leads → Customers — with a
+# target and pace for each stage, where it's slipping, and the next steps.
+# Targets the app has no setting for yet are derived and flagged "proposed":
+#   customers = monthly sales target ÷ average bill;
+#   hot leads = customers ÷ a 40% (min) to 30% (stretch) hot-to-customer rate;
+#   leads stretch = LEAD_STRETCH_MONTHLY.
+LEAD_STRETCH_MONTHLY = 5000
+HOT_CLOSE_RATE = (0.40, 0.30)  # (min target, stretch target)
+_STAGE_UNITS = {"visibility": "views", "leads": "leads", "hot": "hot leads", "customers": "customers"}
+_NEXT_STEP = {
+    "visibility": "Post more reels; reuse the formats that got the most views.",
+    "leads": "Keep campaigns running; log every inbound call and walk-in enquiry.",
+    "hot": "Offer the ₹99 advance to interested leads; mark them Hot when they pay or agree.",
+    "customers": "Follow up every booked visit; ask walk-ins who don't buy why.",
+}
+BEHIND = ("behind", "at_risk")
+
+
+def _ratio(p: Pace) -> float:
+    return p.achieved / p.expected_to_date if p.expected_to_date else 1.0
+
+
+def _stage(key: str, title: str, value: Optional[float], monthly: float, start: date, end: date, today: date,
+           *, stretch: float = 0, as_of: Optional[date] = None, proposed: bool = False,
+           quality: str = "good", source: str = "", not_recorded: bool = False) -> dict:
+    p = pace(monthly, value or 0, start, end, today, as_of=as_of) if value is not None and monthly else None
+    top = pace(stretch, value or 0, start, end, today, as_of=as_of) if p and stretch else None
+    return {
+        "key": key, "title": title, "unit": _STAGE_UNITS[key], "value": value, "not_recorded": not_recorded,
+        "target_monthly": monthly or None, "stretch_monthly": stretch or None, "proposed": proposed,
+        "pace": p.as_dict() if p else None, "ratio": round(_ratio(p), 3) if p else None,
+        "stretch_pace": top.as_dict() if top else None,
+        "status": (p.status if p else "no_data"), "quality": quality, "source": source,
+    }
+
+
+def funnel(*, start: date, end: date, today: date, social: dict, leads: dict, sales: dict, reviews: dict,
+           walkins: Optional[dict], team_leader: str, money) -> dict:
+    """Plain numbers in, the stay-on-target section out (no database)."""
+    closed = sales["pace"]["days_remaining"] == 0
+    days_total = sales["pace"]["days_total"]
+
+    # 1. Visibility: the tracker's month-to-date Instagram views
+    vis = social["views"]
+    as_of = date.fromisoformat(social["as_of"]) if social.get("as_of") else None
+    last = social.get("last_report")
+    visibility = _stage(
+        "visibility", "Visibility", vis["achieved"] if social.get("has_data") else None, vis["monthly_target"],
+        start, end, today, as_of=as_of,
+        quality="good" if social.get("has_data") else "bad",
+        source=(f"Daily Tracker sheet, Instagram up to {social['as_of']}" if social.get("has_data")
+                else f"Not reported for this period · last report {last['as_of']}: {_n(last['instagram'])} views" if last
+                else "Not reported in the Daily Tracker sheet"))
+    visibility["followers"] = {"total": social.get("followers") or 0, "new": social.get("new_followers") or 0}
+
+    # 2. Lead generation: every channel the store records
+    bills = sales["sales_count"]
+    total = leads["total"]
+    pool = leads.get("area") or {}
+    lead_stage = _stage(
+        "leads", "Lead generation", total if total else None, leads["targets"]["leads_monthly"], start, end, today,
+        stretch=LEAD_STRETCH_MONTHLY, not_recorded=not total,
+        quality="bad" if not total else "warn" if pool.get("total") else "good",
+        source=(f"Not recorded: {_n(bills)} people bought, so leads came in, but no source logged them" if not total
+                else f"{_n(pool['total'])} {pool.get('label', '')} area leads can't be linked to a shop and aren't counted"
+                if pool.get("total") else "All its lead sources are counted"))
+
+    # 3. Hot leads: website leads (₹99 paid) + leads marked Hot
+    avg_bill = sales.get("avg_bill") or 0
+    cust_monthly = round(sales["monthly_target"] / avg_bill) if avg_bill and sales["monthly_target"] else 0
+    hot = leads.get("hot") or {"total": 0, "website": 0, "marked": 0}
+    hot_stage = _stage(
+        "hot", "Hot leads", hot["total"], round(cust_monthly / HOT_CLOSE_RATE[0]) if cust_monthly else 0,
+        start, end, today, stretch=round(cust_monthly / HOT_CLOSE_RATE[1]) if cust_monthly else 0, proposed=True,
+        quality="warn", source=f"{_n(hot['website'])} website (₹99 paid) · {_n(hot['marked'])} marked Hot")
+    hot_stage["breakdown"] = hot
+
+    # 4. Customers: MCP bills
+    cust_stage = _stage("customers", "Customers", bills, cust_monthly, start, end, today, proposed=True,
+                        source=f"MCP bills · {money(sales['pace']['achieved'])} revenue")
+    stages = [visibility, lead_stage, hot_stage, cust_stage]
+
+    def rate(a, b):
+        return round(a / b * 100, 1) if a is not None and b else None
+    v, l_, h, c = (s["value"] for s in stages)
+    ratios = [{"label": "Views → leads", "pct": rate(l_, v)}, {"label": "Leads → hot leads", "pct": rate(h, l_)},
+              {"label": "Hot leads → customers", "pct": rate(c, h)}, {"label": "Leads → customers", "pct": rate(c, l_)}]
+
+    # Where it's slipping: one row per stage
+    slipping = []
+    for s in stages:
+        p, top = s["pace"], s["stretch_pace"]
+        row = {"key": s["key"], "title": s["title"], "status": s["status"], "next_step": _NEXT_STEP[s["key"]]}
+        if not p:
+            row.update(kind="not_measured", note=s["source"])
+        elif p["achieved"] >= p["target"]:
+            row.update(kind="reached", achieved=p["achieved"], target=p["target"])
+        elif closed:
+            row.update(kind="short", short=p["remaining"], pct=p["pct"])
+        else:
+            row.update(kind="pace", behind=round(p["expected_to_date"] - p["achieved"], 1),
+                       need_more=p["remaining"], need_more_stretch=top["remaining"] if top else None,
+                       per_day_needed=p["required_daily"], per_day_stretch=top["required_daily"] if top else None,
+                       per_day_now=p["current_daily"])
+        slipping.append(row)
+    worst = sorted([s for s in stages if s["pace"] and s["pace"]["achieved"] < s["pace"]["target"]
+                    and (closed or s["status"] in BEHIND)], key=lambda s: s["ratio"])[:2]
+
+    # Run-rate: month-end at today's pace (open periods only)
+    run_rate = None
+    if not closed:
+        elapsed = sales["pace"]["days_elapsed"]
+        run_rate = {s["key"]: (round(s["value"] / elapsed * days_total) if s["value"] is not None and elapsed else None)
+                    for s in stages}
+        run_rate["revenue"] = round(sales["pace"]["achieved"] / elapsed * days_total) if elapsed else None
+
+    return {
+        "closed": closed, "stages": stages, "ratios": ratios, "slipping": slipping,
+        "bottleneck": [{"key": s["key"], "title": s["title"], "pct": s["pace"]["pct"]} for s in worst],
+        "not_measured": [s["title"] for s in stages if not s["pace"]],
+        "run_rate": run_rate,
+        "actions": _actions(stages, closed=closed, sales=sales, leads=leads, walkins=walkins, social=social,
+                            reviews=reviews, team_leader=team_leader, money=money),
+    }
+
+
+def _actions(stages: list[dict], *, closed: bool, sales: dict, leads: dict, walkins: Optional[dict], social: dict,
+             reviews: dict, team_leader: str, money) -> list[dict]:
+    """Up to five next steps, most urgent first: (rank, who, text). Text may
+    carry **bold** spans for the figures to act on."""
+    vis, lead, hot, cust = stages
+    tl = f"Team leader {team_leader}" if team_leader else "Team leader"
+    out: list[tuple[float, str, str]] = []
+    cp = cust["pace"]
+    if cp and cp["achieved"] < cp["target"]:
+        bill = sales.get("avg_bill") or 0
+        if closed:
+            out.append((_stage_rank(cust), f"{tl} · store team",
+                        f"Closed at {_n(cp['achieved'])} of {_n(cp['target'])} customers ({money(sales['pace']['achieved'])}). "
+                        f"Plan next month for {_n(cust['target_monthly'])} bills, about {cust['target_monthly'] / 30:.1f} a day."))
+        elif cp["required_daily"] is not None and cp["status"] in BEHIND:
+            per = cp["required_daily"]
+            out.append((_stage_rank(cust), f"{tl} · store team",
+                        f"Close **{per:.1f} sales a day** for the next {cp['days_remaining']} days "
+                        f"(now {cp['current_daily']:.1f}/day)" + (f": {money(per * bill)} a day at a {money(bill)} average bill." if bill else ".")))
+    if walkins and walkins.get("total"):
+        bought = walkins.get("bills_same_days", sales["sales_count"])  # bills on the days the walk-ins were counted
+        rate = round(bought / walkins["total"] * 100, 1)
+        if bought and rate < 60:
+            out.append((0.8, "Store team", f"Only **{rate}% of walk-ins bought** ({_n(bought)} bills from "
+                                            f"{_n(walkins['total'])} walk-ins). Ask every walk-in who leaves without buying why, and note it in the daily form."))
+        elif rate > 100:
+            out.append((0.4, "Store team", f"**More bills ({_n(bought)}) than walk-ins counted ({_n(walkins['total'])})** on the same days: "
+                                            "walk-ins are being under-counted. Count every visitor in the Walk-ins sheet."))
+    hp = hot["pace"]
+    if hp and hp["achieved"] < hp["target"]:
+        warm = leads.get("warm", 0)
+        out.append((0.05 if not hot["value"] else _stage_rank(hot), "Telecallers · TL",
+                    ("**No hot leads yet.** Offer the ₹99 advance on every interested call and mark the lead Hot when the customer pays or agrees"
+                     + (f" (start with the {_n(warm)} Will Visit / Call-back leads)." if warm else "."))
+                    if not hot["value"] else
+                    f"Need **{hp['required_daily'] or 0:.1f} more hot leads a day** (now {hp['current_daily']:.1f}/day): push the ₹99 advance on interested calls."))
+    lp = lead["pace"]
+    if lead["not_recorded"]:
+        out.append((0, f"{tl} · store team", f"**Record this store's leads.** It made {_n(sales['sales_count'])} sales but no enquiry was logged: "
+                                            "fill the daily form every evening (inbound leads, walk-ins) and its column in the Walk-ins sheet."))
+    elif lp and lp["achieved"] < lp["target"] and (closed or lp["status"] in BEHIND):
+        best = max((r for r in leads["sources"] if r["leads"]), key=lambda r: r["leads"], default=None)
+        where = f" Most come from {best['label'].lower()} ({_n(best['leads'])})." if best else ""
+        out.append((_stage_rank(lead), f"{tl} · marketing",
+                    f"Leads finished at {_n(lp['achieved'])} of {_n(lp['target'])}.{where}" if closed else
+                    f"Bring in **{lp['required_daily'] or 0:.0f} leads a day** (now {lp['current_daily']:.0f}/day).{where}"))
+    vp = vis["pace"]
+    if not vp:
+        out.append((0.3, "Store team", "Fill this month's row in the Daily Tracker sheet (Instagram views and reels). Visibility can't be tracked without it."))
+    elif vp["achieved"] < vp["target"] and (closed or vp["status"] in BEHIND):
+        reels = social.get("reels") or 0
+        per_reel = vp["achieved"] / reels if reels else 0
+        more = f": about **{max(1, round(vp['remaining'] / per_reel))} more reels** at the current {_n(per_reel)} views per reel" if per_reel else ""
+        out.append((_stage_rank(vis), "Store team · social", f"Need {_n(vp['remaining'])} more views{more}."))
+    rating = reviews.get("rating")
+    if rating is not None and rating < RATING_GOOD:
+        out.append((0.6 + (rating - 4) / 10, "Store team",
+                    f"Lift the Google rating from **{rating:.1f}★** toward {RATING_GOOD}★: ask happy customers for a review at billing"
+                    + (f" and reply to the {_n(reviews['unanswered'])} unanswered reviews." if reviews.get("unanswered") else ".")))
+    out.sort(key=lambda a: a[0])
+    return [{"who": who, "text": text} for _, who, text in out[:5]]
+
+
+def _stage_rank(stage: dict) -> float:
+    return stage["ratio"] if stage.get("ratio") is not None else 0.5

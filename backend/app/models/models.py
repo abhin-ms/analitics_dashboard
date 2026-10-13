@@ -620,6 +620,36 @@ class SocialViewTarget(Base):
     __table_args__ = (UniqueConstraint("store_id", "platform"),)
 
 
+# ── MCP bills (one row per transaction, synced with mcp_daily_sales) ──
+# Kept so a bill number written on a lead can be checked without calling
+# MCP: did the sale happen, at which shop, for how much. MCP sends no
+# customer on a bill, so this is how a sale is tied back to its lead.
+class McpBill(Base):
+    __tablename__ = "mcp_bills"
+    id = Column(Integer, primary_key=True, autoincrement=False)  # MCP's bill number (#117180)
+    date = Column(Date, nullable=False, index=True)
+    shop = Column(String(150), default="")
+    category = Column(String(60), default="")   # New Sale | Replacement | ...
+    model = Column(String(150), default="")
+    imei = Column(String(40), default="")
+    amount = Column(Numeric(12, 2), default=0)
+    discount = Column(Numeric(12, 2), default=0)
+    paid = Column(Boolean, default=False)
+    country_id = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+    # From the vendor's Sales Report API (/api/v1/reports/sales). The customer
+    # fields are how a sale is tied to its lead; stores rarely fill them today.
+    customer_name = Column(String(150), nullable=True)
+    mobile = Column(String(30), nullable=True)
+    mobile10 = Column(String(10), nullable=True, index=True)   # last 10 digits, for matching leads
+    salesman = Column(String(150), nullable=True)
+    purchase_type = Column(String(80), nullable=True)           # BP Authorized | Break Protection Care Plus | ...
+    is_care_plus = Column(Boolean, nullable=True)
+    installation_status = Column(String(20), nullable=True)     # installed | pending
+    payment_status = Column(String(20), nullable=True)          # paid | pending
+    mcp_shop_id = Column(Integer, nullable=True)
+
+
 # ── Store walk-ins (synced from the "Walk-ins Data" sheet) ──────────
 # One row per store per day: everyone who came in ("Actual Walkins") and
 # the walk-ins the store wrote in its daily sales report ("Dsr Walkins").
@@ -780,6 +810,13 @@ class TeleCallLead(Base):
     # ── Lead source & website premium leads (migration 013) ──
     # meta_sheet (city Google Sheets) | website | walk_in | referral | phone |
     # whatsapp | facebook | … ; NULL on older rows = derived (sheet or app).
+    # Bill number the telecaller / store noted when the lead bought (sheet
+    # "Bill No" column or the CRM), and what checking it against MCP found:
+    # verified | not_found | duplicate | check (see services/crm/bill_verify).
+    bill_no = Column(String(30), nullable=True, index=True)
+    bill_status = Column(String(20), nullable=True)
+    bill_note = Column(String(200), nullable=True)
+    bill_checked_at = Column(DateTime, nullable=True)
     source_channel = Column(String(30), nullable=True, index=True)
     is_premium = Column(Boolean, default=False, nullable=True)  # paid ₹99 on the website
     store_id = Column(Integer, ForeignKey("stores.id"), nullable=True)

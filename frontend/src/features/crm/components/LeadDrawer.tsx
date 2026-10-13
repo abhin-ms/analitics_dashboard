@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { SourceIcon } from "@/components/shared/BrandIcon";
 import { create } from "zustand";
 import {
-  X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine,
+  X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine, Receipt,
 } from "lucide-react";
 import { useToast } from "@/components/shared/Toast";
 import { PhoneActions } from "@/components/shared/PhoneActions";
@@ -11,6 +11,13 @@ import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PREMIUM_COLOR, PRIORITIES,
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { AssignDialog, BookAppointmentDialog, LogActivityDialog, ScheduleFollowupDialog } from "./dialogs";
 import { Button, Pill, PriorityBadge, StageBadge, StatusBadge, inputCls } from "./ui";
+
+const BILL_STATUS = {
+  verified: { label: "Verified by bill", color: "#16a34a" },
+  not_found: { label: "Bill not found yet", color: "#f59e0b" },
+  duplicate: { label: "Bill already used", color: "#ef4444" },
+  check: { label: "Check this bill", color: "#ef4444" },
+} as const;
 
 /** Open the lead drawer from anywhere: useLeadDrawer.getState().open(id) */
 export const useLeadDrawer = create<{ leadId: number | null; open: (id: number) => void; close: () => void }>((set) => ({
@@ -62,11 +69,14 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
   const [dialog, setDialog] = useState<"" | "log" | "assign" | "appt" | "followup">("");
   const [device, setDevice] = useState({ phone_model: "", service_type: "", coverage: "Standard" });
   const [note, setNote] = useState("");
+  const [billNo, setBillNo] = useState("");
 
   const lead = data?.lead;
   useEffect(() => {
     if (lead) setDevice({ phone_model: lead.phone_model || "", service_type: lead.service_type || "", coverage: lead.coverage || "Standard" });
   }, [lead?.id, lead?.phone_model, lead?.service_type, lead?.coverage]);
+
+  useEffect(() => { if (lead) setBillNo(lead.bill_no || ""); }, [lead?.id, lead?.bill_no]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !dialog && onClose();
@@ -189,6 +199,28 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
                 <Button size="sm" className="self-end" disabled={!note.trim()} loading={patch.isPending}
                   onClick={async () => { await save({ note }, "Note added"); setNote(""); }}>Add note</Button>
               </div>
+            </div>
+
+            <div className="px-5 py-4 border-b border-[var(--border-subtle)] space-y-2">
+              <p className="text-xs font-semibold text-white flex items-center gap-1.5"><Receipt size={14} />Sale bill</p>
+              <div className="flex gap-2">
+                <input id="lead-bill-no" className={inputCls} inputMode="numeric" placeholder="Bill number from the store, e.g. 117180"
+                  value={billNo} onChange={(e) => setBillNo(e.target.value)} />
+                <Button size="sm" loading={patch.isPending} disabled={billNo.trim() === (lead.bill_no || "")}
+                  onClick={() => save({ bill_no: billNo.trim() }, billNo.trim() ? "Bill checked" : "Bill number removed")}>
+                  {billNo.trim() || !lead.bill_no ? "Check bill" : "Remove"}
+                </Button>
+              </div>
+              {lead.bill_status && (
+                <p className="flex items-start gap-2 text-xs">
+                  <Pill label={BILL_STATUS[lead.bill_status].label} color={BILL_STATUS[lead.bill_status].color} />
+                  <span className="text-[var(--text-secondary)] min-w-0 break-words">{lead.bill_note}</span>
+                </p>
+              )}
+              <p className="text-[10px] text-[var(--text-muted)]">
+                When this customer buys, enter the bill number. It's checked against the sales report: a real new sale marks the
+                lead converted at that store for the bill's exact amount.
+              </p>
             </div>
 
             <div className="px-5 py-4 border-b border-[var(--border-subtle)] space-y-2">

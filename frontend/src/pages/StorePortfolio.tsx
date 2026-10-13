@@ -5,8 +5,8 @@ import {
   Bar, CartesianGrid, ComposedChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, BarChart3, Bookmark, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList,
-  Film, Footprints, Globe, Megaphone, PhoneCall, PhoneIncoming, PhoneOutgoing, MessageSquare, Receipt, Repeat2, Share2, Star, Target,
+  AlertTriangle, ArrowLeft, BarChart3, Bookmark, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleHelp, ClipboardList,
+  Film, Flame, Footprints, Globe, Megaphone, PhoneCall, PhoneIncoming, PhoneOutgoing, MessageSquare, Receipt, Repeat2, Share2, Star, Target,
   TrendingUp, Truck, UserCheck, Users,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -14,6 +14,7 @@ import { BrandIcon } from "@/components/shared/BrandIcon";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { PLATFORM_LABEL, Platform, STATUS_COLOR, Status } from "@/features/social/socialData";
+import { Funnel, StayOnTarget } from "./StayOnTarget";
 
 // ── API shape ──────────────────────────────────────────────────────
 type PaceStatus = "achieved" | "ahead" | "on_track" | "behind" | "at_risk" | "no_target" | "no_data";
@@ -48,6 +49,9 @@ interface Portfolio {
     visits: { attended: number; scheduled: number; no_show: number; total: number };
     matched_by: Record<string, number>;
     duplicates_merged: number;
+    hot: { total: number; website: number; marked: number };
+    bill_verified: number;
+    status_groups: { key: string; label: string; count: number }[];
     area_label: string;
     area: { label: string; shops: number; total: number; converted: number; status_counts: Record<string, number>; sources: LeadSource[] } | null;
   };
@@ -55,6 +59,12 @@ interface Portfolio {
     monthly_target: number; pace: Pace; sales_count: number; units: number; avg_bill: number; sales_needed: number;
     series: { date: string; revenue: number | null; cumulative: number | null; target_pace: number }[];
     last_synced_at: string | null;
+    /** From the vendor's Sales Report API; null until its bills are synced. */
+    bills: {
+      new_sales: number; care_plus: number; care_plus_pct: number; installation_pending: number; payment_pending: number;
+      payment_pending_amount: number; with_customer_mobile: number; plan_types: Record<string, number>;
+      salesmen: { name: string; sales: number; revenue: number }[];
+    } | null;
   };
   reviews: {
     rating: number | null; rating_as_of: string | null; rating_previous: number | null; new_reviews: number; total_reviews: number | null;
@@ -62,7 +72,7 @@ interface Portfolio {
     extra_columns: Record<string, number | string>;
   };
   activity: {
-    walkins: { total: number; actual: number; dsr: number; days_reported: number; has_actual: boolean; bill_pct: number | null } | null;
+    walkins: { total: number; actual: number; dsr: number; days_reported: number; has_actual: boolean; bill_pct: number | null; through: string; bills_same_days: number } | null;
     walkins_last_date: string | null;
     ops: {
       walk_ins: number; walk_in_conversions: number; calls_made: number; calls_connected: number; inbound_leads: number;
@@ -75,9 +85,10 @@ interface Portfolio {
     whatsapp: { chats: number; walkins_booked: number } | null;
   };
   analysis: {
-    rows: { area: "social" | "leads" | "sales" | "reviews"; status: PaceStatus; gap: string; action: string; priority: string }[];
+    rows: { area: "social" | "leads" | "hot" | "customers" | "sales" | "reviews"; status: PaceStatus; gap: string; action: string; priority: string }[];
     strengths: string[]; concerns: string[]; needs_attention: string[];
   };
+  funnel: Funnel;
   sheet_updated_at: string | null;
 }
 
@@ -122,6 +133,8 @@ const PRIORITY_TONE: Record<string, Status> = {
 const AREA: Record<string, { label: string; icon: typeof Megaphone; color: string }> = {
   social: { label: "Social Media", icon: Megaphone, color: "#db2777" },
   leads: { label: "Leads & Conversion", icon: Users, color: "#7c3aed" },
+  hot: { label: "Hot leads", icon: Flame, color: "#f97316" },
+  customers: { label: "Customers", icon: UserCheck, color: "#e5484d" },
   sales: { label: "Sales", icon: BarChart3, color: "#16a34a" },
   reviews: { label: "Google Reviews", icon: Star, color: "#f59e0b" },
 };
@@ -157,7 +170,12 @@ const SOURCE_ICON: Record<string, IconComp> = {
   inbound_calls: ({ size, style }) => <PhoneIncoming size={size} style={{ ...style, color: "#7c3aed" }} />,
   outbound_calls: ({ size, style }) => <PhoneOutgoing size={size} style={{ ...style, color: "#f97316" }} />,
   walk_ins: ({ size, style }) => <Footprints size={size} style={{ ...style, color: "#0d9488" }} />,
+  unknown: ({ size, style }) => <CircleHelp size={size} style={{ ...style, color: "#64748b" }} />,
 };
+const STATUS_GROUP_COLOR: Record<string, string> = {
+  new: "#2f6fed", unattended: "#f59e0b", follow_up: "#7c3aed", visit_planned: "#0ea5e9", converted: "#16a34a", lost: "#e5484d",
+};
+const daysInMonth = (iso: string) => { const d = new Date(iso + "T00:00:00"); return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); };
 const AXIS_TICK = { fontSize: 10, fill: "var(--chart-axis)" };
 const TOOLTIP_STYLE = { backgroundColor: "var(--bg-card)", borderColor: "var(--border-subtle)", borderRadius: 12, fontSize: 12 };
 
@@ -230,10 +248,14 @@ function ActivityBlock({ activity, period }: { activity: Portfolio["activity"]; 
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <Stat tone="indigo" icon={Footprints} label="Walk-ins" value={w ? num(w.total) : "—"}
-          sub={w ? (w.has_actual ? `Counted ${num(w.actual)} · in DSR ${num(w.dsr)}` : `From DSR · ${w.days_reported} days`) : since(activity.walkins_last_date)}
+          sub={w ? `${w.has_actual ? `Counted ${num(w.actual)} · in DSR ${num(w.dsr)}` : "From DSR"} · filled up to ${shortDate(w.through)}` : since(activity.walkins_last_date)}
           subTone={w ? undefined : "crit"} />
         <Stat tone="green" icon={Receipt} label="Bills (MCP)" value={num(activity.bills)}
-          sub={w?.bill_pct != null ? `${w.bill_pct}% of walk-ins bought` : `${num(activity.units)} units`} />
+          sub={w?.bill_pct != null
+            ? (w.bill_pct > 100 ? `${num(w.bills_same_days)} bills up to ${shortDate(w.through)}: more than the walk-ins counted`
+              : `${w.bill_pct}% of walk-ins bought (${num(w.bills_same_days)} bills up to ${shortDate(w.through)})`)
+            : `${num(activity.units)} units`}
+          subTone={w?.bill_pct != null && w.bill_pct > 100 ? "warn" : undefined} />
         <Stat tone="purple" icon={PhoneIncoming} label="Inbound leads" value={ops ? num(ops.inbound_leads) : "—"}
           sub={ops ? `Outbound ${num(ops.outbound_leads)} · appts ${num(ops.appointments_set)}` : since(activity.ops_last_date)}
           subTone={ops ? undefined : "crit"} />
@@ -486,14 +508,20 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
   const { social, leads, sales, reviews, analysis } = data;
   const sp = social.platforms[platform];
   const shownPlatforms = (Object.keys(social.platforms) as Platform[]).filter((p) => p === "instagram" || social.platforms[p].has_data);
-  const statusRows = Object.entries(leads.status_counts).sort((a, b) => b[1] - a[1]);
-  const maxStatus = Math.max(1, ...statusRows.map(([, c]) => c));
+  const statusGroups = leads.status_groups;
+  const maxStatus = Math.max(1, ...statusGroups.map((g) => g.count));
+  const stage = Object.fromEntries(data.funnel.stages.map((st) => [st.key, st]));
+  // The store's sales are MCP bills; only those with a bill number on a lead belong to a source.
+  const unlinkedBills = Math.max(sales.sales_count - leads.converted, 0);
+  const unlinkedRevenue = Math.max(sales.pace.achieved - leads.revenue, 0);
   const salesPace = sales.pace;
   const salesPoints = sales.series.filter((p) => p.cumulative !== null);
   const lastPoint = salesPoints[salesPoints.length - 1];
 
   return (
     <>
+      <StayOnTarget funnel={data.funnel} reviews={reviews} money={money} period={data.period} />
+
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <Stat tone="green" icon={BarChart3} label="Revenue" value={money(salesPace.achieved)} sub={`${num(sales.sales_count)} sales · MCP`} />
@@ -612,15 +640,35 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
             </div>
           )}
         </div>
+        {/* Daily views: the tracker has one month-to-date row per store, so this waits for a daily source. */}
+        <div className="rounded-xl border border-dashed border-[var(--border-strong)] bg-[var(--bg-card)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-white">
+              Daily {PLATFORM_LABEL[platform]} views vs target · {num(sp.monthly_target / daysInMonth(data.period.start))}/day
+            </p>
+            <span className="rounded-full bg-[var(--accent-blue-glow)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--accent-blue)]">Coming soon</span>
+          </div>
+          <div className="relative mt-3 h-32 rounded-lg bg-[var(--bg-subtle)]">
+            <div className="absolute inset-x-3 top-1/2 border-t-2 border-dashed" style={{ borderColor: TARGET_LINE }} aria-hidden />
+            <span className="absolute right-3 top-1/2 mt-1 text-[10px]" style={{ color: TARGET_LINE }}>Daily target</span>
+            <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-[var(--text-secondary)]">
+              <span className="rounded-lg bg-[var(--bg-card)] px-3 py-1.5 shadow-sm">Daily views will show here once they're recorded per day. The tracker sheet has one month-to-date figure today.</span>
+            </p>
+          </div>
+        </div>
       </Section>
 
       {/* 2. Leads */}
       <Section n={2} title="Leads & Conversions" icon={Users} tone="purple">
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           <Stat tone="orange" icon={Target} label="Lead target (month)" value={num(leads.targets.leads_monthly)} sub={`${num(leads.volume.target)} for this period`} />
           <Stat tone="purple" icon={Users} label="Leads received" value={num(leads.total)} sub={`${leads.volume.pct ?? 0}% · ${PACE_STATUS[leads.volume.status].label}`}
             subTone={PACE_STATUS[leads.volume.status].tone} />
           <Stat tone="red" icon={UserCheck} label="Conversions (sales this period)" value={num(leads.converted)} sub={`${leads.conversion_pct}% of leads · ${money(leads.revenue)}`} />
+          <Stat tone="orange" icon={Flame} label="Hot leads" value={num(leads.hot.total)}
+            sub={stage.hot?.target_monthly ? `of ${num(stage.hot.target_monthly)}–${num(stage.hot.stretch_monthly)} · ${num(leads.hot.website)} website` : `${num(leads.hot.website)} website · ${num(leads.hot.marked)} marked`} />
+          <Stat tone="red" icon={UserCheck} label="Customers (MCP bills)" value={num(stage.customers?.value)}
+            sub={stage.customers?.target_monthly ? `of ${num(stage.customers.target_monthly)} / month · proposed` : undefined} />
           <Stat tone="blue" icon={TrendingUp} label="Conversion target" value={`${leads.conversion_target_pct}%`}
             sub={`${num(leads.conversions.remaining)} more to reach ${num(leads.conversions.target)}`}
             subTone={PACE_STATUS[leads.conversions.status].tone} />
@@ -650,39 +698,56 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                       )}
                     </td>
                     <td className="py-2 px-3 text-right tabular-nums">{num(s.leads)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{s.converted_unknown ? "—" : num(s.converted)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{s.leads && !s.converted_unknown ? `${s.rate}%` : "—"}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{money(s.revenue)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{s.converted_unknown || (!s.leads && !s.converted) ? "—" : num(s.converted)}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{s.leads && s.converted && !s.converted_unknown ? `${s.rate}%` : "—"}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{s.revenue ? money(s.revenue) : "—"}</td>
                   </tr>
                 ))}
+                {/* MCP bills carry no customer, so a sale reaches a source only through a bill number on its lead. */}
+                <tr className="text-[var(--text-secondary)]">
+                  <td className="py-2 px-3 font-medium text-white">
+                    Sales not linked to a source yet
+                    <span className="block text-[10px] font-normal text-[var(--text-muted)]">
+                      Enter the bill number on the lead to link a sale · {num(leads.bill_verified)} linked so far (by customer mobile or bill number)
+                    </span>
+                  </td>
+                  <td className="py-2 px-3 text-right text-[var(--text-muted)]">—</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{num(unlinkedBills)}</td>
+                  <td className="py-2 px-3 text-right text-[var(--text-muted)]">—</td>
+                  <td className="py-2 px-3 text-right tabular-nums">{money(unlinkedRevenue)}</td>
+                </tr>
                 <tr className="font-bold text-white bg-blue-500/5">
-                  <td className="py-2.5 px-3">Total</td>
+                  <td className="py-2.5 px-3">Total<span className="block text-[10px] font-normal text-[var(--text-muted)]">Sales from MCP</span></td>
                   <td className="py-2.5 px-3 text-right tabular-nums">{num(leads.total)}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums">{num(leads.converted)}</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums">{leads.conversion_pct}%</td>
-                  <td className="py-2.5 px-3 text-right tabular-nums">{money(leads.revenue)}</td>
+                  <td className="py-2.5 px-3 text-right tabular-nums">{num(sales.sales_count)}</td>
+                  <td className="py-2.5 px-3 text-right tabular-nums">{leads.total >= sales.sales_count && leads.total ? `${Math.round(sales.sales_count / leads.total * 1000) / 10}%` : "—"}</td>
+                  <td className="py-2.5 px-3 text-right tabular-nums">{money(salesPace.achieved)}</td>
                 </tr>
               </tbody>
             </table>
             <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
-              Leads = leads that arrived in this period. Converted and Revenue = sales made in this period, even when the
-              lead arrived earlier — so a rate can go over 100% when older leads buy. Each CRM lead counts once. Rows marked
-              "From …" are the counts the store keeps in that sheet; a CRM lead who also walks in counts in both rows.
+              Leads = enquiries that arrived in this period; rows marked "From …" are counts the store keeps in that sheet.
+              Converted and Revenue per source = sales tied to a lead of that source (bill number on the lead). The total is
+              every MCP bill in the period; sales with no bill number on a lead sit in "not linked". The total rate shows only
+              when the leads recorded cover the sales.
             </p>
           </div>
           <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-2.5">
             <p className="text-sm font-semibold text-white">Current lead status</p>
-            {statusRows.length === 0 ? (
-              <p className="text-xs text-[var(--text-muted)]">No leads in this period.</p>
-            ) : statusRows.map(([status, count]) => (
-              <div key={status} className="grid grid-cols-[110px_1fr_44px] items-center gap-2 text-xs" title={`${status}: ${count}`}>
-                <span className="truncate text-[var(--text-secondary)]">{status}</span>
+            {statusGroups.every((g) => !g.count) ? (
+              <p className="text-xs text-[var(--text-muted)]">No CRM leads linked to this store in this period.</p>
+            ) : statusGroups.map((g) => (
+              <div key={g.key} className="grid grid-cols-[110px_1fr_44px] items-center gap-2 text-xs" title={`${g.label}: ${g.count}`}>
+                <span className="flex items-center gap-1.5 truncate text-[var(--text-secondary)]">
+                  <i className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_GROUP_COLOR[g.key] }} />{g.label}
+                </span>
                 <div className="h-2.5 rounded-full bg-[var(--border-subtle)] overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${(count / maxStatus) * 100}%`, background: CHART_BLUE }} />
+                  <div className="h-full rounded-full" style={{ width: `${(g.count / maxStatus) * 100}%`, background: STATUS_GROUP_COLOR[g.key] }} />
                 </div>
-                <span className="text-right font-semibold text-white tabular-nums">{num(count)}</span>
+                <span className="text-right font-semibold text-white tabular-nums">{num(g.count)}</span>
               </div>
             ))}
+            <p className="text-[10.5px] text-[var(--text-muted)]">One current status per lead. New = not called yet, under a day old.</p>
             <div className="mt-2 grid grid-cols-3 gap-2 border-t border-[var(--border-subtle)] pt-3 text-center text-xs">
               <div><p className="font-bold text-white tabular-nums">{num(leads.visits.attended)}</p><p className="text-[var(--text-muted)]">Store visits</p></div>
               <div><p className="font-bold text-white tabular-nums">{num(leads.visits.scheduled)}</p><p className="text-[var(--text-muted)]">Visits planned</p></div>
@@ -792,11 +857,46 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
             </div>
           </div>
         </div>
+        {sales.bills && (
+          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-3">
+            <p className="text-sm font-semibold text-white">From the bills <span className="font-normal text-[var(--text-muted)]">· {num(sales.bills.new_sales)} new sales</span></p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat tone="purple" icon={CheckCircle2} label="Care Plus covered" value={num(sales.bills.care_plus)} sub={`${sales.bills.care_plus_pct}% of new sales`} />
+              <Stat tone="orange" icon={AlertTriangle} label="Installations pending" value={num(sales.bills.installation_pending)}
+                subTone={sales.bills.installation_pending ? "warn" : "good"} sub={sales.bills.installation_pending ? "Sold, not installed yet" : "All installed"} />
+              <Stat tone="red" icon={Receipt} label="Unpaid bills" value={num(sales.bills.payment_pending)}
+                subTone={sales.bills.payment_pending ? "crit" : "good"} sub={sales.bills.payment_pending ? `${money(sales.bills.payment_pending_amount)} to collect` : "All paid"} />
+              <Stat tone="blue" icon={UserCheck} label="Bills with customer mobile" value={`${num(sales.bills.with_customer_mobile)} / ${num(sales.bills.new_sales)}`}
+                subTone={sales.bills.with_customer_mobile ? "good" : "crit"}
+                sub={sales.bills.with_customer_mobile ? "These link to their lead automatically" : "Needed to link a sale to its lead automatically"} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+              <div>
+                <p className="mb-1.5 text-[var(--text-muted)]">Plan sold</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(sales.bills.plan_types).map(([plan, n]) => (
+                    <span key={plan} className="rounded-full border border-[var(--border-subtle)] px-2.5 py-0.5 text-[var(--text-secondary)]">{plan}: <b className="text-white tabular-nums">{num(n)}</b></span>
+                  ))}
+                </div>
+              </div>
+              {sales.bills.salesmen.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-[var(--text-muted)]">Sold by</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {sales.bills.salesmen.map((m) => (
+                      <span key={m.name} className="rounded-full border border-[var(--border-subtle)] px-2.5 py-0.5 text-[var(--text-secondary)]">{m.name}: <b className="text-white tabular-nums">{num(m.sales)}</b> · {money(m.revenue)}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* 4. Reviews */}
       <Section n={4} title="Google Reviews" icon={Star} tone="amber">
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           <Stat tone="green" icon={Star} label="Overall rating" value={reviews.rating === null ? "—" : `${reviews.rating.toFixed(1)} / 5`}
             sub={reviews.rating_as_of
               ? `As of ${shortDate(reviews.rating_as_of)}${reviews.rating_previous !== null && reviews.rating !== null && reviews.rating_previous !== reviews.rating
@@ -807,7 +907,9 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
           <Stat tone="blue" icon={ClipboardList} label="Total reviews" value={reviews.total_reviews === null ? "—" : num(reviews.total_reviews)} />
           <Stat tone="red" icon={CheckCircle2} label="Positive / negative"
             value={reviews.positive === null && reviews.negative === null ? "—" : `${num(reviews.positive ?? 0)} / ${num(reviews.negative ?? 0)}`}
-            sub={reviews.positive === null && reviews.negative === null ? "Not tracked in the sheet yet" : undefined} />
+            sub={reviews.positive === null && reviews.negative === null ? "Coming soon" : undefined} />
+          <Stat tone="red" icon={AlertTriangle} label="Unanswered negative" value={reviews.unanswered === null ? "—" : num(reviews.unanswered)}
+            sub={reviews.unanswered === null ? "Coming soon" : undefined} />
           <Stat tone="amber" icon={Repeat2} label="Replying to reviews" value={reviews.response || "—"}
             sub={reviews.unanswered !== null ? `${num(reviews.unanswered)} unanswered` : undefined}
             subTone={reviews.response === "Yes" ? "good" : reviews.response === "Partial" ? "warn" : reviews.response === "No" ? "crit" : undefined} />

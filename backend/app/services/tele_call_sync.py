@@ -53,10 +53,10 @@ def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]
     """Fetch all rows from a single TL lead sheet (or one tab of it)."""
     service = _get_service()
     if tab:
-        rows = _read(service, spreadsheet_id, f"'{tab}'!A1:L5000")
+        rows = _read(service, spreadsheet_id, f"'{tab}'!A1:P5000")
     else:
         try:
-            rows = _read(service, spreadsheet_id, "Sheet1!A1:L5000")
+            rows = _read(service, spreadsheet_id, "Sheet1!A1:P5000")
         except Exception as e:
             logger.warning(f"Default tab read failed for {spreadsheet_id}, trying first visible tab: {e}")
             # Some sheets may have different tab names — try first visible tab
@@ -65,18 +65,24 @@ def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]
             if not sheets:
                 return []
             tab_name = sheets[0]["properties"]["title"]
-            rows = _read(service, spreadsheet_id, f"{tab_name}!A1:L5000")
+            rows = _read(service, spreadsheet_id, f"{tab_name}!A1:P5000")
 
     if len(rows) < 2:
         return []
 
+    # Optional "Bill No" column, wherever the team adds it after the 12
+    # standard ones: the bill the lead bought with (see crm/bill_verify.py).
+    bill_col = next((i for i, h in enumerate(rows[0]) if i >= len(COL_MAP) and "bill" in (h or "").lower()), None)
+
     leads = []
     for row in rows[1:]:
-        if not row or not any(cell.strip() for cell in row if cell):
+        if not row or not any(cell.strip() for cell in row[:len(COL_MAP)] if cell):
             continue
         record = {}
         for col_idx, field in COL_MAP.items():
             record[field] = row[col_idx].strip() if col_idx < len(row) and row[col_idx] else ""
+        if bill_col is not None:
+            record["bill_no"] = row[bill_col].strip()[:30] if bill_col < len(row) and row[bill_col] else ""
         # Skip rows with no name at all
         if not record.get("full_name"):
             continue
@@ -87,7 +93,7 @@ def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]
 # Sheet fields the sync writes. When a lead was edited in the app
 # (edited_by_user) the original behaviour is kept: only these three still
 # follow the sheet...
-SHEET_FIELDS_AFTER_APP_EDIT = {"lead_source", "product", "sale_amount"}
+SHEET_FIELDS_AFTER_APP_EDIT = {"lead_source", "product", "sale_amount", "bill_no"}
 
 # Last run summary per city (read by CRM Settings → Integrations).
 LAST_SYNC: dict[str, dict] = {}
@@ -200,6 +206,8 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
                 "product": lead_data.get("product", ""),
                 "last_synced_at": datetime.now(timezone.utc),
             }
+            if "bill_no" in lead_data:  # only sheets that have the column
+                fields["bill_no"] = lead_data["bill_no"]
 
             if existing:
                 old_status = existing.status or ""
@@ -255,6 +263,14 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
         logger.info(f"Synced tele leads for {tl_name}: {synced} rows ({inserted} new)")
 
     await db.commit()
+    try:  # new leads may match a bill's customer mobile; bill numbers typed in the sheets get checked
+        from .crm.bill_verify import run_bill_matching
+        matching = await run_bill_matching(db)
+        ctx.stats["bills"] = matching["by_bill_no"]
+        ctx.stats["bills_by_mobile"] = matching["by_mobile"]
+    except Exception as e:
+        logger.error(f"Bill verification failed: {e}")
+        await db.rollback()
     from .crm.notify import emit_notifications
     await emit_notifications(ctx.new_notifications)  # first, so the browser skips a second popup
     await emit_alerts(ctx.new_alerts)
