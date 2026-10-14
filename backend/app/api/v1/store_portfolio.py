@@ -26,7 +26,7 @@ from ...services.crm.engine import parse_amount
 from ...services.crm.status import NO_STATUS
 from ...services.crm.timeutil import utcnow
 from ...services.store_portfolio import (
-    AREA_LABELS, DEFAULT_LEAD_TARGETS, LEAD_SOURCES, SHEET_AREA, analyse, area_of_sheet, area_of_store,
+    AREA_LABELS, DEFAULT_LEAD_TARGETS, LEAD_SOURCES, analyse, area_of_sheet, area_of_store,
     attribute_lead, best_of, funnel, shop_of_sheet, status_groups, days_in_month, group_duplicates, lead_source_bucket, pace, prorated_target,
     shop_of, shops_mentioned,
 )
@@ -403,7 +403,8 @@ async def _leads(db: AsyncSession, store: Store, start: date, end: date, today: 
     same_shop_ids = [s.id for s in all_stores if shop_key(s.id) == target_shop]
     area_shops = {store_shop[s.id] for s in all_stores
                   if s.is_active and store_shop[s.id] and area_of_store(s.name, s.region or "") == target_area}
-    area_sheets = [sheet for sheet, area in SHEET_AREA.items() if target_area and area == target_area]
+    sheet_names = (await db.execute(select(TeleCallLead.sheet_tl_name).distinct())).scalars().all()
+    area_sheets = [n.lower() for n in sheet_names if n and target_area and area_of_sheet(n) == target_area]
 
     p_start, p_end = crm_metrics.period_bounds(start, end)
     appt_lead_ids = select(TeleAppointment.lead_id).where(TeleAppointment.store_id.in_(same_shop_ids))

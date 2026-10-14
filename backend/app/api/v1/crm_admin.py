@@ -495,6 +495,7 @@ async def integrations(db: AsyncSession = Depends(get_db), user=Depends(get_curr
         run = LAST_SYNC.get(name)
         sheets.append({
             "city": name,
+            "team_leader": cfg.get("team_leader"), "tab": cfg.get("tab"),
             "spreadsheet_id": cfg["spreadsheet_id"] if scope.is_admin else None,
             "leads": count, "app_only_leads": int(app_only.get(name, 0)),
             "last_synced_at": iso_utc(last.replace(tzinfo=None) if last and last.tzinfo else last),

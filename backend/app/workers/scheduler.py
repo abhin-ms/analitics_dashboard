@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -55,9 +56,12 @@ async def poll_instagram_comments():
 
 async def sync_tele_call_leads():
     from ..db.session import AsyncSessionLocal
-    from ..services.tele_call_sync import sync_tele_call_leads as _sync
+    from ..services.tele_call_sync import refresh_sheet_list, sync_tele_call_leads as _sync
 
     try:
+        # one read per team leader's spreadsheet: finds its store tabs and
+        # leaves their rows cached for the sync below
+        await asyncio.to_thread(refresh_sheet_list)
         async with AsyncSessionLocal() as db:
             await _sync(db)
     except Exception as e:

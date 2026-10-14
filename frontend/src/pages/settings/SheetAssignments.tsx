@@ -45,7 +45,7 @@ export default function SheetAssignments() {
             Sheet Assignments
           </h2>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">
-            Assign a Team Leader or Telecaller to a city lead sheet (e.g. "Kerala", "Bangalore") —
+            Assign a Team Leader or Telecaller to a store's lead sheet (e.g. "Kochi", "Hitech City") —
             required before they can see or update any tele-calling leads at all.
           </p>
         </div>
@@ -77,7 +77,7 @@ export default function SheetAssignments() {
           >
             <option value="">Select Sheet *</option>
             {sheets.map((s: any) => (
-              <option key={s.tl_name} value={s.tl_name}>{s.tl_name}</option>
+              <option key={s.tl_name} value={s.tl_name}>{s.tl_name}{s.team_leader ? ` · ${s.team_leader}'s sheet` : ""}</option>
             ))}
           </select>
           <button
