@@ -437,8 +437,9 @@ class SheetSyncService:
             )
             db.add(store)
             await db.flush()
-        elif store.team_leader_id != tl_user_id:
-            store.team_leader_id = tl_user_id
+        # An existing store keeps its team leader: it is assigned in the app
+        # (Stores page), and the sheet's TL column would otherwise undo that
+        # reassignment on every sync.
         return store
 
     async def _upsert_submission(self, db: AsyncSession, store_id: int, row: dict) -> None:
