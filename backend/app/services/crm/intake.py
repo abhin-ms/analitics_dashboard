@@ -184,11 +184,9 @@ async def team_telecallers(db: AsyncSession, tl: User) -> list[User]:
     return team
 
 
-# City sheet that covers each state (sheet names are cities).
-STATE_TO_SHEET = {
-    "kerala": "Kerala", "tamilnadu": "Chennai", "karnataka": "Bangalore",
-    "delhi": "Delhi", "newdelhi": "Delhi", "assam": "Guwahati",
-}
+# Lead sheet that covers a whole state, where one does. Elsewhere each
+# store has its own sheet, found by its name in the store text below.
+STATE_TO_SHEET = {"karnataka": "Bangalore", "assam": "Guwahati", "delhi": "Delhi", "newdelhi": "Delhi"}
 
 
 def pick_sheet(tl_sheets: list[str], state: str | None, region: str | None, store_text: str | None) -> str:

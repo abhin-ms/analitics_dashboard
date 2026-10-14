@@ -50,21 +50,18 @@ def lead_source_bucket(channel: str, typed: str = "") -> str:
 # without editing any sheet or record:
 #   * every store has a "shop" (TVM and Kerala Trivandrum are one shop) and
 #     an area; placeholders like "Kerala Store" have an area but no shop;
-#   * every lead has an area from its city sheet;
+#   * every lead has a sheet: a tab of its team leader's spreadsheet, named
+#     after a store ("Kochi", "Hitech City") or, for Bangalore, a city with
+#     two shops;
 #   * a lead belongs to a shop when it has a store or an appointment at a
-#     store; else when its sheet is that shop's own sheet (Mysore); else,
-#     when its area has only one shop (Guwahati), that shop;
+#     store; else when its sheet is that shop's own tab; else, when its
+#     area has only one shop, that shop;
 #     else when its remarks name exactly one shop of its area (Meta's "city"
 #     answer lands there too); otherwise it stays an area lead.
 AREA_LABELS = {
     "kerala": "Kerala", "assam": "Assam", "karnataka": "Karnataka",
     "tamil_nadu": "Tamil Nadu", "north": "Delhi, Hyderabad & Mumbai",
 }
-SHEET_AREA = {"kerala": "kerala", "guwahati": "assam", "bangalore": "karnataka",
-              "mysore": "karnataka", "mangalore": "karnataka",
-              "chennai": "tamil_nadu", "delhi": "north"}
-# Sheets that hold one shop's leads only, not a whole area's.
-SHEET_SHOP = {"mysore": "mysore", "mangalore": "mangalore"}
 # (shop, area, spellings) — most specific first, so "Delhi Lajpat Nagar"
 # is Lajpat Nagar, not Delhi.
 SHOPS: list[tuple[str, str, tuple[str, ...]]] = [
@@ -91,7 +88,7 @@ SHOPS: list[tuple[str, str, tuple[str, ...]]] = [
     ("lajpat_nagar", "north", ("lajpat nagar",)),
     ("hitech_city", "north", ("hitech city", "hi tech city", "hitec city", "hitech", "hitec")),
     ("kukatpally", "north", ("kukatpally",)),
-    ("korum", "north", ("korum",)),
+    ("korum", "north", ("korum", "thane")),
     ("bandra", "north", ("bandra",)),
     ("delhi", "north", ("delhi",)),
 ]
@@ -136,12 +133,14 @@ def area_of_store(name: str, region: str = "") -> Optional[str]:
     return None
 
 
-def area_of_sheet(sheet: str) -> Optional[str]:
-    return SHEET_AREA.get((sheet or "").strip().lower())
-
-
 def shop_of_sheet(sheet: str) -> Optional[str]:
-    return SHEET_SHOP.get((sheet or "").strip().lower())
+    """The shop a lead sheet (a store's tab) holds leads for; None for a
+    tab that covers a whole city, like Bangalore."""
+    return shop_of(sheet or "")
+
+
+def area_of_sheet(sheet: str) -> Optional[str]:
+    return area_of_store(sheet or "")
 
 
 def shops_mentioned(text: str, area: Optional[str]) -> set[str]:

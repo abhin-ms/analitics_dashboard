@@ -67,22 +67,22 @@ async def env():
         db.add_all(users.values())
         await db.flush()
         for key in ("tl", "sureka", "riya"):
-            db.add(TeleSheetAssignment(user_id=users[key].id, sheet_tl_name="Kerala"))
-        db.add(TeleSheetAssignment(user_id=users["sam"].id, sheet_tl_name="Chennai"))
+            db.add(TeleSheetAssignment(user_id=users[key].id, sheet_tl_name="Kochi"))
+        db.add(TeleSheetAssignment(user_id=users["sam"].id, sheet_tl_name="Velachery"))
         db.add(Setting(key="crm.go_live_at", value='"2026-01-01T00:00:00"'))
         now = utcnow()
         tomorrow_ist = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
         db.add_all([
-            TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="k", full_name="Arjun Mehta", phone="9876500001",
+            TeleCallLead(sheet_tl_name="Kochi", spreadsheet_id="k", full_name="Arjun Mehta", phone="9876500001",
                          status="Call back later", person_calling="Sureka K", owner_user_id=users["sureka"].id,
                          stage="contacting", priority="warm", created_at=now, submitted_at=now),
-            TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="k", full_name="Leena Rao", phone="9876500002",
+            TeleCallLead(sheet_tl_name="Kochi", spreadsheet_id="k", full_name="Leena Rao", phone="9876500002",
                          status="", stage="new", priority="warm", created_at=now, submitted_at=now,
                          appointment_date=tomorrow_ist),
-            TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="k", full_name="Maya Iyer", phone="9876500003",
+            TeleCallLead(sheet_tl_name="Kochi", spreadsheet_id="k", full_name="Maya Iyer", phone="9876500003",
                          status="Sale Conversion", sale_amount="12,000", owner_user_id=users["riya"].id,
                          stage="converted", priority="warm", created_at=now, submitted_at=now),
-            TeleCallLead(sheet_tl_name="Chennai", spreadsheet_id="c", full_name="Noah F", phone="9876500004",
+            TeleCallLead(sheet_tl_name="Velachery", spreadsheet_id="c", full_name="Noah F", phone="9876500004",
                          status="Not Interested", owner_user_id=users["sam"].id, stage="not_interested",
                          priority="cold", created_at=now, submitted_at=now),
         ])
@@ -119,7 +119,7 @@ async def test_telecaller_sees_city_and_my_leads(env):
     assert r.status_code == 200, r.text
     body = r.json()
     names = {i["full_name"] for i in body["items"]}
-    assert names == {"Arjun Mehta", "Leena Rao", "Maya Iyer"}      # whole Kerala sheet, not Chennai
+    assert names == {"Arjun Mehta", "Leena Rao", "Maya Iyer"}      # whole Kochi sheet, not Velachery
     assert body["tab_counts"]["mine"] == 1 and body["tab_counts"]["unassigned"] == 1
     assert body["status_counts"]["No Status"] == 1
     r = await c.get("/api/v1/crm/leads", params={"tab": "mine"})
@@ -173,14 +173,14 @@ async def test_new_lead_price_book_and_pipeline(env):
     assert book["rows"][0]["prices"]["Standard"] == 18000.0
 
     c = as_user("sureka")
-    r = await c.post("/api/v1/crm/leads", json={"full_name": "Walk In", "phone": "9000000000", "city": "Kerala",
+    r = await c.post("/api/v1/crm/leads", json={"full_name": "Walk In", "phone": "9000000000", "city": "Kochi",
                                                  "phone_model": "iPhone 15", "service_type": "Screen repair",
                                                  "coverage": "AppleCare+"})
     assert r.status_code == 200, r.text
     lead = r.json()["lead"]
     assert lead["potential_value"] == 14000.0 and lead["owner_user_id"] == ids["sureka"]
     assert lead["first_call_pending"] and not lead["from_sheet"]
-    r = await c.post("/api/v1/crm/leads", json={"full_name": "X", "phone": "9000000001", "city": "Chennai"})
+    r = await c.post("/api/v1/crm/leads", json={"full_name": "X", "phone": "9000000001", "city": "Velachery"})
     assert r.status_code == 403  # not her city
 
     r = await c.patch(f"/api/v1/crm/leads/{lead['id']}", json={"stage": "paid_advance"})
@@ -237,7 +237,7 @@ async def test_admin_settings_tabs_and_export(env):
     dq = (await a.get("/api/v1/crm/data-quality")).json()
     assert dq["unassigned_open"]["count"] == 1
     integ = (await a.get("/api/v1/crm/integrations")).json()
-    assert {s["city"] for s in integ["sheets"]} >= {"Kerala", "Chennai"}
+    assert {s["city"] for s in integ["sheets"]} >= {"Kochi", "Velachery"}
     csv = await a.get("/api/v1/crm/reports/export")
     assert csv.status_code == 200 and "Arjun Mehta" in csv.text
     assert (await as_user("tl").get("/api/v1/crm/reports/export")).status_code == 403
@@ -274,14 +274,14 @@ async def test_old_leads_endpoints(env):
     as_user, ids = env
     c = as_user("sureka")
     data = (await c.get("/api/v1/tele-call-leads")).json()
-    assert data["total"] == 3 and "Kerala" in data["tl_groups"]
-    lead = next(l for l in data["tl_groups"]["Kerala"]["leads"] if l["full_name"] == "Leena Rao")
+    assert data["total"] == 3 and "Kochi" in data["tl_groups"]
+    lead = next(l for l in data["tl_groups"]["Kochi"]["leads"] if l["full_name"] == "Leena Rao")
     r = await c.put(f"/api/v1/tele-call-leads/{lead['id']}", json={"status": "Will Visit", "person_calling": "Riya Menon"})
     assert r.status_code == 200 and r.json()["lead"]["status"] == "Will Visit"
     detail = (await c.get(f"/api/v1/crm/leads/{lead['id']}")).json()
     assert detail["lead"]["owner_name"] == "Riya Menon" and detail["lead"]["stage"] == "qualified"
     summ = (await c.get("/api/v1/tele-call-leads/status-summary", params={"owner": "me"})).json()
-    assert summ["summary"]["Kerala"]["statuses"] == {"Call back later": 1}
+    assert summ["summary"]["Kochi"]["statuses"] == {"Call back later": 1}
     assert (await c.get("/api/v1/tele-call-leads/live")).status_code == 403
 
 
@@ -306,7 +306,7 @@ async def test_team_overview_shows_team_leaders_with_their_telecallers(env):
     as_user, ids = env
     data = (await as_user("admin").get("/api/v1/crm/team-overview")).json()
     team = data["teams"][0]
-    assert team["name"] == "Tara Lead" and team["sheets"] == ["Kerala"]
+    assert team["name"] == "Tara Lead" and team["sheets"] == ["Kochi"]
     assert {t["name"] for t in team["telecallers"]} == {"Sureka K", "Riya Menon"}
     assert [t["name"] for t in data["unattached_telecallers"]] == ["Sam B"]   # Chennai has no team leader
     assert team["totals"]["total"] == 3 and team["totals"]["unassigned"] == 1

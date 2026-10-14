@@ -1,30 +1,52 @@
 """Fetch tele call leads from the TL Google Sheets and sync to DB."""
 import asyncio
 import logging
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from ..models.models import TeleCallLead
-from .google_sheets import _get_service, _read
+from .google_sheets import _get_service
 
 logger = logging.getLogger(__name__)
 
-# TL lead sheets — all have identical column structure:
+# Lead sheets: one spreadsheet per team leader, one tab per store. Every
+# lead tab has the same columns:
 # Lead Source | Created Time | Full Name | Phone number | Email |
 # Person Calling | Status | Call date | Appointment Date | Remarks | Sale Amount | Product
-# "tab" picks one tab of a spreadsheet that holds several cities; without it
-# the first tab is read.
-TELE_CALL_SHEETS = [
-    {"spreadsheet_id": "1TRA3RXhnXwIsvduSVJddsDprKcmmkUh6zuSrPQMsvAo", "tl_name": "Kerala"},
-    {"spreadsheet_id": "1Or2WJUUn_rsb3MKfRE83UJZYgQDiMA-CDvMJLtFCN10", "tl_name": "Guwahati"},
-    {"spreadsheet_id": "1SE8tGQgtEDz5Wo3jb1U9fsXzujD3GdKwYy01gRV2rQU", "tl_name": "Bangalore"},
-    {"spreadsheet_id": "1jR035-uTOEcshHGM4BBOFyMdPWhbGNlq9o19x3PhFlI", "tl_name": "Delhi"},
-    {"spreadsheet_id": "1viO0nNPq-SDJXB29xM32AULi4qoK7PFKMQe4pW3HD4A", "tl_name": "Chennai"},
-    # "Dev Leads Tracker": one tab per city ("... Follow up" tabs are formula
-    # views of these and are not synced).
-    {"spreadsheet_id": "16hQmLFME-ZA2OiIzbt8HmV2o8OTB4J3aKrs4U8GpH0s", "tab": "Mysore", "tl_name": "Mysore"},
-    {"spreadsheet_id": "16hQmLFME-ZA2OiIzbt8HmV2o8OTB4J3aKrs4U8GpH0s", "tab": "Mangalore", "tl_name": "Mangalore"},
+# (+ optional extras such as "Follow ups" or "Bill No"). The "... Follow up"
+# tabs are formula views of the lead tabs and are not synced.
+TL_SPREADSHEETS = [
+    {"spreadsheet_id": "16hQmLFME-ZA2OiIzbt8HmV2o8OTB4J3aKrs4U8GpH0s", "team_leader": "DEVIAHH"},
+    {"spreadsheet_id": "1viO0nNPq-SDJXB29xM32AULi4qoK7PFKMQe4pW3HD4A", "team_leader": "SAM"},
+    {"spreadsheet_id": "1Or2WJUUn_rsb3MKfRE83UJZYgQDiMA-CDvMJLtFCN10", "team_leader": "HARSH"},
+    {"spreadsheet_id": "1SE8tGQgtEDz5Wo3jb1U9fsXzujD3GdKwYy01gRV2rQU", "team_leader": "NAZIL"},
+    {"spreadsheet_id": "1TRA3RXhnXwIsvduSVJddsDprKcmmkUh6zuSrPQMsvAo", "team_leader": "MICHAEL"},
+    {"spreadsheet_id": "1jR035-uTOEcshHGM4BBOFyMdPWhbGNlq9o19x3PhFlI", "team_leader": "ABDULLAH"},
 ]
+# The lead tabs known when this was written, so the app has its sheet list
+# before the first sync; refresh_sheet_list() then keeps it in step with the
+# spreadsheets (a tab added for a new store is picked up by itself).
+_KNOWN_TABS = {
+    "DEVIAHH": ["Mysore", "Mangalore"],
+    "SAM": ["Kodambakkam", "Coimbatore", "Velachery", "Thrissur", "Kannur"],
+    "HARSH": ["Guwahati"],
+    "NAZIL": ["BLR"],
+    "MICHAEL": ["Calicut", "Kochi", "TVM", "Wayanad", "Kasargod"],
+    "ABDULLAH": ["Hitech", "Kukatpally", "Bandra", "Thane", "Delhi"],
+}
+# Tab title → the sheet name the app shows and assigns people to.
+TAB_LABELS = {"BLR": "Bangalore", "Hitech": "Hitech City", "TVM": "Trivandrum", "Kasargod": "Kasaragod"}
+
+
+def _cfg(spreadsheet_id: str, team_leader: str, tab: str) -> dict:
+    return {"spreadsheet_id": spreadsheet_id, "tab": tab, "tl_name": TAB_LABELS.get(tab.strip(), tab.strip()),
+            "team_leader": team_leader}
+
+
+TELE_CALL_SHEETS = [_cfg(sp["spreadsheet_id"], sp["team_leader"], tab)
+                    for sp in TL_SPREADSHEETS for tab in _KNOWN_TABS[sp["team_leader"]]]
 
 
 def sheet_key(cfg: dict) -> str:
@@ -32,6 +54,49 @@ def sheet_key(cfg: dict) -> str:
     Tabs of one spreadsheet get their own key so their leads never match
     each other during sync."""
     return f"{cfg['spreadsheet_id']}#{cfg['tab']}" if cfg.get("tab") else cfg["spreadsheet_id"]
+
+
+def _is_lead_tab(rows: list[list[str]]) -> bool:
+    return bool(rows and rows[0] and str(rows[0][0]).strip().lower().startswith("lead source"))
+
+
+# One spreadsheet's tabs, read in a single request and kept for the sync
+# that follows (Google allows 60 reads a minute; tab by tab would use 19).
+_TAB_CACHE: dict[str, tuple[float, dict[str, list[list[str]]]]] = {}
+_TAB_CACHE_SECONDS = 45
+
+
+def _fetch_spreadsheet(spreadsheet_id: str) -> dict[str, list[list[str]]]:
+    """{tab title: rows} for every tab of a spreadsheet, in two requests."""
+    cached = _TAB_CACHE.get(spreadsheet_id)
+    if cached and time.monotonic() - cached[0] < _TAB_CACHE_SECONDS:
+        return cached[1]
+    service = _get_service()
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties.title").execute()
+    titles = [sh["properties"]["title"] for sh in meta.get("sheets", [])]
+    res = service.spreadsheets().values().batchGet(
+        spreadsheetId=spreadsheet_id, ranges=[f"'{t}'!A1:P5000" for t in titles]).execute()
+    tabs = {t: [[str(c) for c in row] for row in vr.get("values", [])] for t, vr in zip(titles, res.get("valueRanges", []))}
+    _TAB_CACHE[spreadsheet_id] = (time.monotonic(), tabs)
+    return tabs
+
+
+def refresh_sheet_list() -> list[dict]:
+    """Re-read every team leader's spreadsheet and bring TELE_CALL_SHEETS in
+    step with its lead tabs. A spreadsheet that can't be read keeps the tabs
+    it had, so one bad read never drops a store's sheet."""
+    fresh: list[dict] = []
+    for sp in TL_SPREADSHEETS:
+        try:
+            tabs = _fetch_spreadsheet(sp["spreadsheet_id"])
+            fresh += [_cfg(sp["spreadsheet_id"], sp["team_leader"], t) for t, rows in tabs.items() if _is_lead_tab(rows)]
+        except Exception as e:
+            logger.warning(f"Could not list tabs of {sp['team_leader']}'s lead sheet: {e}")
+            fresh += [c for c in TELE_CALL_SHEETS if c["spreadsheet_id"] == sp["spreadsheet_id"]]
+    if fresh:
+        TELE_CALL_SHEETS[:] = fresh
+    return TELE_CALL_SHEETS
+
 
 COL_MAP = {
     0: "lead_source",
@@ -50,22 +115,12 @@ COL_MAP = {
 
 
 def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]:
-    """Fetch all rows from a single TL lead sheet (or one tab of it)."""
-    service = _get_service()
-    if tab:
-        rows = _read(service, spreadsheet_id, f"'{tab}'!A1:P5000")
-    else:
-        try:
-            rows = _read(service, spreadsheet_id, "Sheet1!A1:P5000")
-        except Exception as e:
-            logger.warning(f"Default tab read failed for {spreadsheet_id}, trying first visible tab: {e}")
-            # Some sheets may have different tab names — try first visible tab
-            meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-            sheets = meta.get("sheets", [])
-            if not sheets:
-                return []
-            tab_name = sheets[0]["properties"]["title"]
-            rows = _read(service, spreadsheet_id, f"{tab_name}!A1:P5000")
+    """The leads of one tab of a team leader's sheet (the first lead tab
+    when no tab is named)."""
+    tabs = _fetch_spreadsheet(spreadsheet_id)
+    rows = tabs.get(tab) if tab else next((r for r in tabs.values() if _is_lead_tab(r)), [])
+    if rows is None:
+        raise ValueError(f"Tab {tab!r} not found in spreadsheet {spreadsheet_id}")
 
     if len(rows) < 2:
         return []
@@ -104,7 +159,39 @@ def _norm_phone(text: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
-async def sync_tele_call_leads(db: AsyncSession) -> dict:
+@asynccontextmanager
+async def leads_sync_lock(db: AsyncSession, wait_seconds: int = 0):
+    """One lead sync at a time across every process (the scheduler in each
+    worker, a script run by hand). Two syncs starting together both see a
+    lead as missing and both insert it. Yields whether the lock was got;
+    a database-wide named lock on MySQL, a no-op elsewhere (tests)."""
+    if db.get_bind().dialect.name != "mysql":
+        yield True
+        return
+    from ..db.session import engine
+    async with engine.connect() as conn:  # the lock lives on this connection, so it's kept open
+        got = (await conn.execute(text("SELECT GET_LOCK('tele_call_leads_sync', :w)"), {"w": wait_seconds})).scalar()
+        try:
+            yield bool(got)
+        finally:
+            if got:
+                await conn.execute(text("SELECT RELEASE_LOCK('tele_call_leads_sync')"))
+
+
+async def sync_tele_call_leads(db: AsyncSession, *, locked: bool = False) -> dict:
+    """Fetch all TL sheets and upsert leads into DB. Returns summary. Skips
+    (status "skipped") when another sync is already running; `locked` means
+    the caller already holds leads_sync_lock."""
+    if locked:
+        return await _sync_tele_call_leads(db)
+    async with leads_sync_lock(db) as got:
+        if not got:
+            logger.info("Lead sync skipped: another one is running")
+            return {"status": "skipped", "rows_synced": 0, "crm": {}}
+        return await _sync_tele_call_leads(db)
+
+
+async def _sync_tele_call_leads(db: AsyncSession) -> dict:
     """Fetch all TL sheets and upsert leads into DB. Returns summary.
 
     Read-only towards Google Sheets. Existing rows are matched on
@@ -286,6 +373,7 @@ async def sync_tele_call_leads(db: AsyncSession) -> dict:
 
 async def fetch_tele_leads_direct() -> dict:
     """Fetch all TL sheets directly (no DB) — for live view."""
+    await asyncio.to_thread(refresh_sheet_list)
     all_leads = []
     for sheet_cfg in TELE_CALL_SHEETS:
         try:

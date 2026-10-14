@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from ...core.deps import get_db, require_permission, require_admin_tier
-from ...models.models import SheetSource, SheetSyncLog, User
+from ...models.models import DailySubmission, SheetSource, SheetSyncLog, StoreWalkin, TeleCallLead, User
 from ...schemas import SheetSourceCreate, SheetSourceUpdate, SheetSourceResponse
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -90,6 +90,85 @@ async def daily_tracker_sync(
         raise HTTPException(status_code=404, detail="Daily Tracker sheet source is not configured")
     from ...services.sheet_sync_service import SheetSyncService
     return await SheetSyncService().sync_source(db, source.id)
+
+
+def _utc(dt):
+    """Naive-UTC timestamp as an ISO string the browser reads as UTC."""
+    if dt is None:
+        return None
+    return (dt.replace(tzinfo=None).isoformat() + "Z") if hasattr(dt, "tzinfo") else str(dt)
+
+
+@router.get("/background-sheets")
+async def list_background_sheets(
+    db: AsyncSession = Depends(get_db),
+    _user: User = require_permission("sheet_sync", "view"),
+):
+    """The sheets that sync on their own schedule and aren't "sources" in
+    the table above: each team leader's lead sheet (one tab per store), the
+    Walk-ins sheet, and the stores' daily form."""
+    from ...services.tele_call_sync import LAST_SYNC, TELE_CALL_SHEETS, TL_SPREADSHEETS, sheet_key
+    from ...services import daily_submission_sync, walkins_sync
+
+    stats = {k: (n, last) for k, n, last in (await db.execute(
+        select(TeleCallLead.spreadsheet_id, func.count(TeleCallLead.id), func.max(TeleCallLead.last_synced_at))
+        .group_by(TeleCallLead.spreadsheet_id))).all()}
+    lead_sheets = []
+    for sp in TL_SPREADSHEETS:
+        tabs = []
+        for cfg in (c for c in TELE_CALL_SHEETS if c["spreadsheet_id"] == sp["spreadsheet_id"]):
+            n, last = stats.get(sheet_key(cfg), (0, None))
+            run = LAST_SYNC.get(cfg["tl_name"]) or {}
+            tabs.append({"name": cfg["tl_name"], "tab": cfg["tab"], "leads": int(n or 0), "last_synced_at": _utc(last),
+                         "ok": run.get("ok", True), "error": run.get("error")})
+        times = [t["last_synced_at"] for t in tabs if t["last_synced_at"]]
+        lead_sheets.append({
+            "team_leader": sp["team_leader"], "spreadsheet_id": sp["spreadsheet_id"], "tabs": tabs,
+            "leads": sum(t["leads"] for t in tabs), "last_synced_at": max(times) if times else None,
+            "status": "error" if any(not t["ok"] for t in tabs) else "ok" if times else "never",
+        })
+
+    w_rows, w_last, w_date = (await db.execute(select(func.count(StoreWalkin.id), func.max(StoreWalkin.synced_at), func.max(StoreWalkin.date)))).one()
+    d_rows, d_last, d_date = (await db.execute(
+        select(func.count(DailySubmission.id), func.max(DailySubmission.updated_at), func.max(DailySubmission.date))
+        .where(DailySubmission.submitted_by.is_(None)))).one()
+    other = [
+        {"key": "walkins", "label": "Walk-ins Data", "spreadsheet_id": walkins_sync.WALKINS_SHEET_ID, "every": "15 min",
+         "rows": int(w_rows or 0), "rows_label": "store-days",
+         "last_synced_at": walkins_sync.LAST_SYNC.get("at") or _utc(w_last),  # the last run, else the last row written
+         "latest_data": w_date.isoformat() if w_date else None, "status": "ok" if w_rows else "never",
+         "unmatched": walkins_sync.LAST_SYNC.get("unmatched_stores") or []},
+        {"key": "daily-form", "label": "Stores' daily form (Dashboard Sheet · DAILY SUBMISSION tab)",
+         "spreadsheet_id": daily_submission_sync.DASHBOARD_SHEET_ID, "every": "15 min",
+         "rows": int(d_rows or 0), "rows_label": "store-days",
+         "last_synced_at": daily_submission_sync.LAST_SYNC.get("at") or _utc(d_last),
+         "latest_data": d_date.isoformat() if d_date else None, "status": "ok" if d_rows else "never",
+         "unmatched": daily_submission_sync.LAST_SYNC.get("unmatched_stores") or []},
+    ]
+    return {"lead_sheets": lead_sheets, "other": other}
+
+
+@router.post("/background-sheets/{key}")
+async def sync_background_sheet(
+    key: str,
+    db: AsyncSession = Depends(get_db),
+    _user: User = require_admin_tier(),
+):
+    """Sync one of the background sheets now: "leads", "walkins" or "daily-form"."""
+    import asyncio
+    if key == "leads":
+        from ...services.tele_call_sync import refresh_sheet_list, sync_tele_call_leads
+        await asyncio.to_thread(refresh_sheet_list)
+        result = await sync_tele_call_leads(db)
+        return {"ok": result["status"] != "skipped", "status": result["status"], "rows": result["rows_synced"],
+                "message": "Another lead sync is running; it will finish in a moment." if result["status"] == "skipped" else None}
+    if key == "walkins":
+        from ...services.walkins_sync import sync_walkins
+        return {"ok": True, **(await sync_walkins(db))}
+    if key == "daily-form":
+        from ...services.daily_submission_sync import sync_daily_submissions
+        return {"ok": True, **(await sync_daily_submissions(db))}
+    raise HTTPException(status_code=404, detail="Unknown sheet")
 
 
 @router.get("/sources", response_model=list[SheetSourceResponse])
