@@ -526,9 +526,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Team leaders ranked on one score, with an analysis per team leader */}
-            <TeamLeaderRanking />
-
             {/* MCP Sync Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] p-3 rounded-2xl">
               <div className="text-xs text-[var(--text-muted)]">
@@ -668,6 +665,9 @@ export default function Dashboard() {
             </Suspense>
           </ErrorBoundary>
         )}
+
+        {/* Team leaders ranked on one score, with an analysis per team leader */}
+        <TeamLeaderRanking />
 
         {/* Charts Grid: Revenue Trend & Gauge */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-w-0">
