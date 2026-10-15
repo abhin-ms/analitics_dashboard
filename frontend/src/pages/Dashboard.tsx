@@ -19,6 +19,7 @@ import { useSocketRefresh } from "../hooks/useSocketRefresh";
 import { AISummary } from "@/components/dashboard/AISummary";
 import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { DashboardInbox } from "@/features/crm/components/DashboardInbox";
+import TeamLeaderRanking from "@/components/dashboard/TeamLeaderRanking";
 import {
   CardFilterPopover,
   CardFilterState,
@@ -524,6 +525,9 @@ export default function Dashboard() {
                 </p>
               </div>
             </div>
+
+            {/* Team leaders ranked on one score, with an analysis per team leader */}
+            <TeamLeaderRanking />
 
             {/* MCP Sync Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] p-3 rounded-2xl">

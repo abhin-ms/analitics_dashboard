@@ -16,6 +16,7 @@ import { statusColor } from "@/features/crm/statusConfig";
 import { TeamCrmPanel } from "@/features/crm/components/DashboardPanels";
 import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { PeriodKey, periodRange } from "@/features/crm/components/shared";
+import TeamLeaderRanking from "@/components/dashboard/TeamLeaderRanking";
 
 const COLORS = ["#3b82f6", "#10b981", "#a855f7", "#f97316", "#ec4899", "#06b6d4", "#f59e0b", "#ef4444"];
 
@@ -57,6 +58,9 @@ export default function TeamLeaderDashboard() {
             Your stores, leads, and telecaller analytics
           </p>
         </div>
+
+        {/* Rank among team leaders, with what to work on */}
+        <TeamLeaderRanking />
 
         {/* Telecalling: team queue, status, status-by-telecaller, performance (new) */}
         <TeamCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
