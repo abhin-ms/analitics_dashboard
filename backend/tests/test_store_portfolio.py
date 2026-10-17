@@ -415,3 +415,75 @@ def test_status_groups_split_new_from_unattended():
              NS(status="Call back later", at=now), NS(status="Will Visit", at=now), NS(status="Wrong number", at=now)]
     got = {g["key"]: g["count"] for g in status_groups(leads, lambda l: l.at, now)}
     assert got == {"new": 1, "unattended": 1, "follow_up": 1, "visit_planned": 1, "converted": 0, "lost": 1}
+
+
+# ── Every MCP bill gets a source (_attribute_sales) ──────────────────
+def _src(key, leads=0, converted=0, revenue=0.0, verified=0, verified_rev=0.0):
+    return {"key": key, "label": key, "leads": leads, "converted": converted, "revenue": revenue,
+            "converted_verified": verified, "revenue_verified": verified_rev, "rate": 0.0, "from": None}
+
+
+async def _attribution_db(bills):
+    from app.db.base import Base
+    from app.models.models import McpBill, Role, Store, StoreMcpAlias, User
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool,
+                                 connect_args={"check_same_thread": False})
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as db:
+        role = Role(name="Team Leader")
+        db.add(role)
+        await db.flush()
+        tl = User(name="TL", email="t@x", password_hash="x", role_id=role.id)
+        db.add(tl)
+        await db.flush()
+        store = Store(name="Kochi", team_leader_id=tl.id)
+        db.add(store)
+        await db.flush()
+        db.add(StoreMcpAlias(store_id=store.id, mcp_shop_name="Kochi MCP"))
+        for i, (amount, mobile) in enumerate(bills, start=1):
+            db.add(McpBill(id=i, date=date(2026, 10, 5), shop="Kochi MCP", category="New Sale", amount=amount,
+                           payment_status="paid", mobile10=mobile))
+        await db.commit()
+    return engine, Session, store.id
+
+
+@pytest.mark.asyncio
+async def test_bills_not_from_leads_are_walk_in_sales():
+    from app.api.v1.store_portfolio import _attribute_sales
+    # 4 bills (3 with a customer mobile); one lead sale tied to a bill, one only marked sold in a sheet
+    engine, Session, sid = await _attribution_db([(5000, "9800000001"), (3000, "9800000002"),
+                                                  (2000, "9800000003"), (1000, None)])
+    leads = {"total": 20, "converted": 2, "revenue": 9000.0,
+             "targets": {"leads_monthly": 300, "conversion_pct": 10.0},
+             "sources": [_src("performance_marketing", leads=10, converted=2, revenue=9000.0, verified=1, verified_rev=5000.0),
+                         _src("walk_ins", leads=10)]}
+    sales = {"sales_count": 4, "pace": {"achieved": 11000.0}}
+    activity = {"walkins": {"bill_pct": 30.0}}
+    async with Session() as db:
+        await _attribute_sales(db, [sid], date(2026, 10, 1), date(2026, 10, 31), leads, sales, activity)
+    pm, walk = leads["sources"]
+    assert (pm["converted"], pm["revenue"]) == (1, 5000.0)       # only the sale with a bill behind it
+    assert leads["marked_unverified"] == 1                         # the sheet-only "sale" is listed apart
+    assert (walk["converted"], walk["revenue"]) == (2, 5000.0)     # the two other customers with a mobile
+    assert walk["rate"] == 30.0                                    # same-days walk-in rate
+    assert leads["unlinked"] == {"bills": 1, "revenue": 1000.0, "walk_ins_worked_out": True}
+    # every bill is in exactly one place
+    assert pm["converted"] + walk["converted"] + leads["unlinked"]["bills"] == sales["sales_count"]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_without_customer_mobiles_nothing_is_guessed():
+    from app.api.v1.store_portfolio import _attribute_sales
+    engine, Session, sid = await _attribution_db([(5000, None), (3000, None), (2000, "9800000003")])
+    leads = {"total": 5, "converted": 1, "revenue": 5000.0, "targets": {"leads_monthly": 300, "conversion_pct": 10.0},
+             "sources": [_src("performance_marketing", leads=5, converted=1, revenue=5000.0), _src("walk_ins")]}
+    sales = {"sales_count": 3, "pace": {"achieved": 10000.0}}
+    async with Session() as db:
+        await _attribute_sales(db, [sid], date(2026, 10, 1), date(2026, 10, 31), leads, sales, {"walkins": None})
+    assert leads["sources"][0]["converted"] == 1  # the sheet's status still counts
+    assert leads["sources"][1]["converted"] == 0
+    assert leads["unlinked"] == {"bills": 2, "revenue": 5000.0, "walk_ins_worked_out": False}
+    await engine.dispose()

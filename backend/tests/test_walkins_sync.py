@@ -101,3 +101,17 @@ def test_store_tabs_put_leads_on_their_store():
         "kochi", "trivandrum", "hitech_city", "korum", "kasaragod", "delhi"]
     assert shop_of_sheet("Bangalore") is None and area_of_sheet("Bangalore") == "karnataka"   # one tab, two shops
     assert area_of_sheet("Thrissur") == "kerala" and area_of_sheet("Bandra") == "north"
+
+
+def test_lead_sheet_cells_are_cut_to_column_size(monkeypatch):
+    """A customer who pastes a paragraph as their name must not fail the sync."""
+    from app.services import tele_call_sync
+    header = ["Lead Source", "Created Time", "Full Name", "Phone number", "Email", "Person Calling", "Status",
+              "Call date", "Appointment Date", "Remarks", "Sale Amount", "Product"]
+    row = ["GM", "2026-10-15T06:33:27-05:00", "x" * 1500, "p:+918300000000", "a@b.c", "Ashok", "Will Visit",
+           "", "", "r" * 3000, "", ""]
+    monkeypatch.setattr(tele_call_sync, "_fetch_spreadsheet", lambda _sid: {"Hitech": [header, row]})
+    [lead] = tele_call_sync._fetch_sheet_rows("sheet", "Hitech")
+    assert len(lead["full_name"]) == 200
+    assert len(lead["remarks"]) == 3000  # unlimited text column: kept whole
+    assert lead["phone"] == "p:+918300000000"

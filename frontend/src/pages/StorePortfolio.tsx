@@ -32,6 +32,8 @@ interface LeadSource {
   from: string | null;
   /** The sheet has a count but no conversions for this source. */
   converted_unknown?: boolean;
+  /** Where "converted" comes from when it isn't this source's leads (walk-ins: MCP bills). */
+  bought_from?: string;
 }
 interface Portfolio {
   store: { id: number; name: string; country: string; region: string; address: string; team_leader: string; is_active: boolean; currency: string };
@@ -51,6 +53,10 @@ interface Portfolio {
     duplicates_merged: number;
     hot: { total: number; website: number; marked: number };
     bill_verified: number;
+    /** MCP bills left without a source: no customer mobile (or, where walk-ins can't be worked out, every bill not tied to a lead). */
+    unlinked: { bills: number; revenue: number; walk_ins_worked_out: boolean };
+    /** Leads marked "Sale Conversion" in a sheet whose number is on no MCP bill: not counted as sales. */
+    marked_unverified: number;
     status_groups: { key: string; label: string; count: number }[];
     area_label: string;
     area: { label: string; shops: number; total: number; converted: number; status_counts: Record<string, number>; sources: LeadSource[] } | null;
@@ -511,9 +517,9 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
   const statusGroups = leads.status_groups;
   const maxStatus = Math.max(1, ...statusGroups.map((g) => g.count));
   const stage = Object.fromEntries(data.funnel.stages.map((st) => [st.key, st]));
-  // The store's sales are MCP bills; only those with a bill number on a lead belong to a source.
-  const unlinkedBills = Math.max(sales.sales_count - leads.converted, 0);
-  const unlinkedRevenue = Math.max(sales.pace.achieved - leads.revenue, 0);
+  // Every MCP bill has a source (a lead's, or walk-in) except those the backend couldn't place.
+  const unlinkedBills = leads.unlinked.bills;
+  const unlinkedRevenue = leads.unlinked.revenue;
   const salesPace = sales.pace;
   const salesPoints = sales.series.filter((p) => p.cumulative !== null);
   const lastPoint = salesPoints[salesPoints.length - 1];
@@ -693,8 +699,10 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                         {SOURCE_ICON[s.key]?.({ size: 15 })}
                         {s.label}
                       </span>
-                      {s.from && (
-                        <span className="block text-[10px] font-normal text-[var(--text-muted)]">From {s.from}</span>
+                      {(s.from || s.bought_from) && (
+                        <span className="block text-[10px] font-normal text-[var(--text-muted)]">
+                          {[s.from && `From ${s.from}`, s.bought_from && `bought: ${s.bought_from}`].filter(Boolean).join(" · ")}
+                        </span>
                       )}
                     </td>
                     <td className="py-2 px-3 text-right tabular-nums">{num(s.leads)}</td>
@@ -703,12 +711,14 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                     <td className="py-2 px-3 text-right tabular-nums">{s.revenue ? money(s.revenue) : "—"}</td>
                   </tr>
                 ))}
-                {/* MCP bills carry no customer, so a sale reaches a source only through a bill number on its lead. */}
+                {/* Bills a source couldn't be found for: no customer mobile on the bill. */}
                 <tr className="text-[var(--text-secondary)]">
                   <td className="py-2 px-3 font-medium text-white">
-                    Sales not linked to a source yet
+                    {leads.unlinked.walk_ins_worked_out ? "Sales with no customer number" : "Sales not linked to a source yet"}
                     <span className="block text-[10px] font-normal text-[var(--text-muted)]">
-                      Enter the bill number on the lead to link a sale · {num(leads.bill_verified)} linked so far (by customer mobile or bill number)
+                      {leads.unlinked.walk_ins_worked_out
+                        ? `No mobile on the bill, so the source can't be found · ${num(leads.bill_verified)} sales matched to leads`
+                        : `This store's bills carry no customer mobile · ${num(leads.bill_verified)} linked by bill number`}
                     </span>
                   </td>
                   <td className="py-2 px-3 text-right text-[var(--text-muted)]">—</td>
@@ -725,11 +735,18 @@ function PortfolioBody({ data, money, platform, setPlatform, onViewMonth }: {
                 </tr>
               </tbody>
             </table>
+            {leads.marked_unverified > 0 && (
+              <p className="border-t border-[var(--border-subtle)] bg-amber-500/5 px-3 py-2 text-[11px] text-amber-500">
+                {num(leads.marked_unverified)} lead{leads.marked_unverified === 1 ? " is" : "s are"} marked "Sale Conversion" in the sheet
+                but no MCP bill has {leads.marked_unverified === 1 ? "their" : "those"} customer number, so {leads.marked_unverified === 1 ? "it isn't" : "they aren't"} counted
+                as sales. Check them in Leads: the customer may have bought with another number, or the status is wrong.
+              </p>
+            )}
             <p className="border-t border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
               Leads = enquiries that arrived in this period; rows marked "From …" are counts the store keeps in that sheet.
-              Converted and Revenue per source = sales tied to a lead of that source (bill number on the lead). The total is
-              every MCP bill in the period; sales with no bill number on a lead sit in "not linked". The total rate shows only
-              when the leads recorded cover the sales.
+              Each MCP bill is matched by the customer's mobile: a lead's number puts the sale under that lead's source,
+              any other customer counts as a walk-in sale. The walk-in rate compares bills with walk-ins on the days the
+              Walk-ins sheet covers. The total is every MCP bill in the period.
             </p>
           </div>
           <div className="lg:col-span-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-2.5">

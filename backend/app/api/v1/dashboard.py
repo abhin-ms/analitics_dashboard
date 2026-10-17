@@ -1,3 +1,4 @@
+import logging
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +6,10 @@ from sqlalchemy import select, func, case, and_, true
 from ...core.deps import get_db, require_permission
 from ...core.store_scope import allowed_store_ids, store_filter
 from ...models.models import Store, User, DailySubmission, Lead, Campaign, Task, Investment, TeleCallLead, TeleSheetAssignment, Role
+from ...models.models import McpDailySale, StoreMcpAlias, StoreWalkin
+from ...services import sales_report_service
+from ...services.sales_report_service import currency_of, inr_rates
+from ...services.store_portfolio import prorated_target
 from ...schemas import DashboardResponse, KPICard
 from ...services.crm import metrics as crm_metrics
 from ...services.crm.config import get_automation, get_targets
@@ -13,6 +18,7 @@ from ...services.crm.scope import get_scope, lead_filter, visible_agents
 from ...services.crm.status import ACTIVE_STATUSES, NO_STATUS, NOT_CONNECTED_STATUSES
 from ...services.crm.timeutil import utcnow
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
@@ -171,31 +177,53 @@ async def get_team_leader_dashboard(
         select(TeleSheetAssignment.sheet_tl_name).where(TeleSheetAssignment.user_id == user.id)
     )).scalars().all()
 
+    # Sales from MCP (what the stores actually billed), not the stores' daily
+    # form, which they have mostly stopped filling. Each store against its own
+    # MCP target, spread over the real days of each month; stores abroad are
+    # turned into ₹ before anything is added up.
+    counted_end = min(end, today)
+    if store_ids and start <= counted_end:
+        try:
+            await sales_report_service._ensure_mcp_coverage(db, start, counted_end)
+        except Exception as e:  # stale sales are better than no dashboard
+            logger.warning("team-leader dashboard: MCP coverage %s..%s failed: %s", start, counted_end, e)
+            await db.rollback()
+    rates = await inr_rates(db)
+    to_inr = {s.id: rates.get(currency_of(s.country), {"rate": 1.0})["rate"] for s in stores}
+    aliased = set((await db.execute(
+        select(StoreMcpAlias.store_id).where(StoreMcpAlias.store_id.in_(store_ids or [-1])).distinct()
+    )).scalars().all())
+    mcp_rows = (await db.execute(
+        select(McpDailySale.store_id, McpDailySale.date, McpDailySale.revenue, McpDailySale.new_sale_count).where(
+            McpDailySale.store_id.in_(store_ids or [-1]), McpDailySale.date >= start, McpDailySale.date <= counted_end)
+    )).all()
+    revenue_by_store: dict[int, float] = {}
+    bills_by_day: dict[tuple, int] = {}
+    revenue_by_day: dict = {}
+    for sid, d, rev, bills in mcp_rows:
+        inr = float(rev or 0) * to_inr[sid]
+        revenue_by_store[sid] = revenue_by_store.get(sid, 0.0) + inr
+        revenue_by_day[d] = revenue_by_day.get(d, 0.0) + inr
+        bills_by_day[(sid, d)] = bills_by_day.get((sid, d), 0) + (bills or 0)
+    # Walk-ins from the Walk-ins sheet; "converted" = bills on the days it covers.
+    walk_by_store: dict[int, list] = {}
+    for w in (await db.execute(select(StoreWalkin).where(
+        StoreWalkin.store_id.in_(store_ids or [-1]), StoreWalkin.date >= start, StoreWalkin.date <= end,
+    ))).scalars().all():
+        walk_by_store.setdefault(w.store_id, []).append(w)
+
     total_revenue = 0
     total_target = 0
     store_data = []
     for s in stores:
-        rev = float((await db.execute(
-            select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
-                DailySubmission.store_id == s.id,
-                DailySubmission.date >= start, DailySubmission.date <= end,
-            )
-        )).scalar() or 0)
-        tgt = float(s.monthly_target) * days_in_period / 30
+        rev = revenue_by_store.get(s.id, 0.0)
+        monthly = float(s.monthly_target or 0) if s.id in aliased else 0.0
+        tgt = prorated_target(monthly, start, end) * to_inr[s.id]
         ach = (rev / tgt * 100) if tgt > 0 else 0
 
-        wi = int((await db.execute(
-            select(func.coalesce(func.sum(DailySubmission.walk_ins), 0)).where(
-                DailySubmission.store_id == s.id,
-                DailySubmission.date >= start, DailySubmission.date <= end,
-            )
-        )).scalar() or 0)
-        wic = int((await db.execute(
-            select(func.coalesce(func.sum(DailySubmission.walk_in_conversions), 0)).where(
-                DailySubmission.store_id == s.id,
-                DailySubmission.date >= start, DailySubmission.date <= end,
-            )
-        )).scalar() or 0)
+        walks = walk_by_store.get(s.id, [])
+        wi = sum((w.actual if w.actual is not None else w.dsr) or 0 for w in walks)
+        wic = sum(bills_by_day.get((s.id, w.date), 0) for w in walks)
 
         submitted = (await db.execute(
             select(func.count(DailySubmission.id)).where(
@@ -206,7 +234,7 @@ async def get_team_leader_dashboard(
         total_revenue += rev
         total_target += tgt
         store_data.append({
-            "id": s.id, "name": s.name, "revenue": rev, "target": tgt,
+            "id": s.id, "name": s.name, "revenue": round(rev, 2), "target": round(tgt, 2),
             "achievement_pct": round(ach, 1),
             "walk_ins": wi, "walk_in_conversions": wic,
             "conversion_pct": round((wic / wi * 100) if wi > 0 else 0, 1),
@@ -294,13 +322,7 @@ async def get_team_leader_dashboard(
     trend = []
     current = start
     while current <= end:
-        day_rev = float((await db.execute(
-            select(func.coalesce(func.sum(DailySubmission.revenue), 0)).where(
-                DailySubmission.date == current,
-                DailySubmission.store_id.in_(store_ids),
-            )
-        )).scalar() or 0)
-        trend.append({"date": current.isoformat(), "revenue": day_rev})
+        trend.append({"date": current.isoformat(), "revenue": round(revenue_by_day.get(current, 0.0), 2)})
         current += timedelta(days=1)
 
     return {
