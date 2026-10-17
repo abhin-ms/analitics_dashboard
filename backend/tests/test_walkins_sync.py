@@ -115,3 +115,26 @@ def test_lead_sheet_cells_are_cut_to_column_size(monkeypatch):
     assert len(lead["full_name"]) == 200
     assert len(lead["remarks"]) == 3000  # unlimited text column: kept whole
     assert lead["phone"] == "p:+918300000000"
+
+
+def test_shop_targets_read_in_every_currency_format():
+    """OMR/BHD print 3 decimals and the UK prints "Pound": all must be read."""
+    from app.services.mcp_parsers import parse_shop_target_achievement
+    text = "\r\n".join([
+        "SHOP TARGET ACHIEVEMENT — OMAN", "Period: October 2026",
+        "Shop                                         Target         Actual  Achiev%  Status",
+        "Sharaf DG Oman Mall SIS               OMR 4,200.000  OMR 1,954.576    46.5%  ▼ UNDER",
+        "ONESHIELD PRIVATE LIMITED - Kochi    INR 900,000.00 INR 851,834.91    94.6%  ▼ UNDER",
+        "Speedy Technical Services Al Qusais    AED 1,000.00   AED 1,726.00   172.6%  ▲ OVER ",
+        "TOTAL                                 QAR 60,000.00  QAR 44,354.97    73.9%",
+        "NOTE — shops with sales but no target set for this month:",
+        "  iMobile Stratford - UK                 Pound 110.00  (no target)",
+    ])
+    rows = {r["shop"]: r for r in parse_shop_target_achievement(text)}
+    assert rows["Sharaf DG Oman Mall SIS"]["target"] == 4200.0
+    assert rows["Sharaf DG Oman Mall SIS"]["actual"] == 1954.576
+    assert rows["ONESHIELD PRIVATE LIMITED - Kochi"]["target"] == 900000.0
+    assert rows["Speedy Technical Services Al Qusais"]["achievement_pct"] == 172.6
+    assert rows["iMobile Stratford - UK"] == {"shop": "iMobile Stratford - UK", "target": 0.0, "actual": 110.0,
+                                              "achievement_pct": 0.0, "status": "no target"}
+    assert "TOTAL" not in rows

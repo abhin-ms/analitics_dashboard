@@ -2,25 +2,31 @@
 
 The sync stays read-only towards Google Sheets. These hooks only fill the
 app-owned CRM columns: parsed submission time, stage/priority, owner (sheet
-"Person Calling" wins, otherwise round-robin for brand-new leads), the
-first-call task, and follow-up bookkeeping when an agent updates the sheet.
+"Person Calling" wins; otherwise the lead's store's team leader, passed on to
+the telecaller on that team with the fewest leads today, or kept by the team
+leader when the team has none), the first-call task, and follow-up
+bookkeeping when an agent updates the sheet.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models.models import TeleCallLead
+from ...models.models import Store, TeleCallLead, User
 from .config import ensure_go_live, get_aliases, get_automation
 from .engine import (
     RoundRobin, apply_sheet_status_change, create_alert, create_followup,
     match_user_by_name, refresh_derived, team_leader_ids, transfer_ownership,
 )
 from .scope import sheet_members
-from .timeutil import add_working_minutes, parse_sheet_datetime, utcnow
+from .status import CLOSED_STATUSES
+from .timeutil import add_working_minutes, ist_day_bounds_utc, ist_today, parse_sheet_datetime, utcnow
 
 RECENT_WINDOW = timedelta(hours=24)
+# assignment_source of a lead given out by the store → team leader → telecaller rule
+STORE_ROUTED = "store_tl"
 
 
 class SyncContext:
@@ -56,6 +62,63 @@ class SyncContext:
     def is_recent(self, lead: TeleCallLead) -> bool:
         return lead.submitted_at is None or lead.submitted_at >= self.now - RECENT_WINDOW
 
+    # ── store → team leader → telecaller ──
+    async def team_leader_for(self, lead: TeleCallLead) -> User | None:
+        """The team leader of the lead's store (its own store, else the store
+        its sheet tab is for); for a tab covering an area (Bangalore), or a
+        store without a real team leader, the team leader on that tab."""
+        from ..store_portfolio import shop_of, shop_of_sheet
+        from .intake import _real_team_leader
+        if not hasattr(self, "_tl_by_store"):
+            self._tl_by_store: dict[int, User | None] = {}
+            self._stores_by_shop: dict[str, list[Store]] = {}
+            for st in (await self.db.execute(select(Store).where(Store.is_active == True))).scalars().all():  # noqa: E712
+                if shop_of(st.name):
+                    self._stores_by_shop.setdefault(shop_of(st.name), []).append(st)
+            self._tab_tl: dict[str, User | None] = {}
+
+        async def tl_of(store: Store) -> User | None:
+            if store.id not in self._tl_by_store:
+                self._tl_by_store[store.id] = await _real_team_leader(self.db, store)
+            return self._tl_by_store[store.id]
+
+        candidates: list[Store] = []
+        if lead.store_id:
+            st = await self.db.get(Store, lead.store_id)
+            if st:
+                candidates.append(st)
+        candidates += self._stores_by_shop.get(shop_of_sheet(lead.sheet_tl_name) or "", [])
+        for st in candidates:
+            tl = await tl_of(st)
+            if tl:
+                return tl
+        tab = lead.sheet_tl_name
+        if tab not in self._tab_tl:
+            leaders = [m for m in await self.members(tab) if m["role"] == "Team Leader"]
+            self._tab_tl[tab] = await self.db.get(User, leaders[0]["id"]) if leaders else None
+        return self._tab_tl[tab]
+
+    async def telecaller_for(self, tl: User) -> User | None:
+        """Available telecaller on this team leader's team with the fewest
+        leads given out today (counting the ones handed out in this run)."""
+        from .intake import team_telecallers
+        if not hasattr(self, "_teams"):
+            self._teams: dict[int, list[User]] = {}
+            start, end = ist_day_bounds_utc(ist_today(self.now))
+            self._today = dict((await self.db.execute(
+                select(TeleCallLead.owner_user_id, func.count(TeleCallLead.id))
+                .where(TeleCallLead.owner_user_id.isnot(None),
+                       TeleCallLead.assigned_at >= start, TeleCallLead.assigned_at < end)
+                .group_by(TeleCallLead.owner_user_id))).all())
+        if tl.id not in self._teams:
+            self._teams[tl.id] = [u for u in await team_telecallers(self.db, tl) if u.available_for_leads is not False]
+        team = self._teams[tl.id]
+        if not team:
+            return None
+        chosen = min(team, key=lambda u: (self._today.get(u.id, 0), u.id))
+        self._today[chosen.id] = self._today.get(chosen.id, 0) + 1
+        return chosen
+
 
 async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
                        sheet_person_calling: str, old_status: str, status_changed: bool,
@@ -76,7 +139,7 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
     #    reassigned the lead by hand in the app. (Checking for a *change*
     #    stops the sync undoing the automatic 15-minute reassignment.)
     if (lead.assignment_source != "manual" and sheet_person_calling
-            and (lead.owner_user_id is None or sheet_person_changed)):
+            and (lead.owner_user_id is None or sheet_person_changed or lead.assignment_source == STORE_ROUTED)):
         matched = match_user_by_name(sheet_person_calling, await ctx.members(lead.sheet_tl_name), ctx.aliases)
         if matched and lead.owner_user_id != matched["id"]:
             quiet_backfill = historic and lead.owner_user_id is None
@@ -88,14 +151,26 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
             )
             ctx.stats["sheet_assigned"] += 1
 
-    # 2. Brand-new lead with nobody in "Person Calling": round-robin.
-    if (tracked_new and lead.owner_user_id is None and not sheet_person_calling
-            and ctx.automation.get("auto_assign", True)):
-        chosen = await ctx.round_robin.pick(lead.sheet_tl_name)
-        if chosen:
-            await transfer_ownership(db, lead, chosen["id"], source="auto", actor_id=None, now=ctx.now,
-                                     automation=ctx.automation, reason="Round-robin to an available telecaller")
-            ctx.stats["auto_assigned"] += 1
+    # 2. Still no owner (nobody in "Person Calling", or a name with no app
+    #    login): the store's team leader, passed on to a telecaller on their
+    #    team when there is one. A team leader holding such a lead hands it on
+    #    once their team gets a telecaller, while it's still open.
+    if ctx.automation.get("auto_assign", True) and lead.assignment_source != "manual":
+        reroute = (lead.assignment_source == STORE_ROUTED and lead.owner_user_id is not None
+                   and (lead.status or "") not in CLOSED_STATUSES)
+        tl = await ctx.team_leader_for(lead) if lead.owner_user_id is None or reroute else None
+        # a re-route only takes leads the team leader still holds, never one a telecaller has
+        if tl and (lead.owner_user_id is None or lead.owner_user_id == tl.id):
+            agent = await ctx.telecaller_for(tl)
+            owner = agent or (tl if lead.owner_user_id is None else None)
+            if owner and owner.id != lead.owner_user_id:
+                quiet = historic and lead.owner_user_id is None
+                await transfer_ownership(
+                    db, lead, owner.id, source=STORE_ROUTED, actor_id=None, now=ctx.now, automation=ctx.automation,
+                    reason=(f"Telecaller on {tl.name}'s team" if agent else f"Team leader of the store ({tl.name}) — no telecaller on the team"),
+                    record=not quiet, assigned_at=(lead.submitted_at or lead.created_at) if quiet else None,
+                )
+                ctx.stats["auto_assigned"] += 1
 
     # New-lead notifications (owner and branch, or everyone if unassigned).
     # A sheet row that attached to a lead the Meta webhook already created

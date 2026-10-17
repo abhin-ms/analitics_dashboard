@@ -151,10 +151,15 @@ def parse_transaction_detail(text: str) -> list[dict[str, Any]]:
     return transactions
 
 
+# Currency as MCP prints it: a code ("AED", "OMR") or a word ("Pound"); amounts
+# with 2 decimals, or 3 for OMR/BHD ("OMR 4,200.000"), which a 2-decimal-only
+# pattern skipped, leaving every Oman and Bahrain target at 0.
+_CUR = r"[A-Za-z]{2,6}\.?"
+_AMT = r"[\d,]+(?:\.\d{1,3})?"
 _TARGET_ROW_RE = re.compile(
-    r"^(.+?)\s+[A-Z]{3}\s*([\d,]+\.\d{2})\s+[A-Z]{3}\s*([\d,]+\.\d{2})\s+([\d.]+)%\s*(.*)$"
+    rf"^(.+?)\s+{_CUR}\s*({_AMT})\s+{_CUR}\s*({_AMT})\s+([\d.]+)%\s*(.*)$"
 )
-_NOTE_ROW_RE = re.compile(r"^(.*?)\s+[A-Z]{3}\s*([\d,]+\.?\d*)\s*\(no target\)")
+_NOTE_ROW_RE = re.compile(rf"^(.*?)\s+{_CUR}\s*({_AMT})\s*\(no target\)")
 
 
 def parse_shop_target_achievement(text: str) -> list[dict[str, Any]]:
@@ -168,7 +173,7 @@ def parse_shop_target_achievement(text: str) -> list[dict[str, Any]]:
     shops = []
     in_note_section = False
 
-    lines = text.split("\r\n")
+    lines = text.splitlines()  # \r\n today; don't depend on it
     for line in lines:
         line = line.strip()
         if not line or line.startswith("─") or line.startswith("Period") or line.startswith("SHOP TARGET"):

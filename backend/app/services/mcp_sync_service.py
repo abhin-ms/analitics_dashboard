@@ -319,16 +319,14 @@ async def sync_mcp_sales(
                 store_aliases = (await db.execute(
                     select(StoreMcpAlias.mcp_shop_name).where(StoreMcpAlias.store_id == store.id)
                 )).scalars().all()
-                # A store can carry more than one known name (e.g. two
-                # different companies' shops were merged into it); take
-                # whichever of its names has the highest current target —
-                # in practice only one is ever genuinely non-zero, so this
-                # picks the real one without needing to guess which alias
-                # is "the" name. Defaults to 0 if none of its names appear
-                # in this month's sheet at all.
-                store.monthly_target = max(
-                    (current_targets.get(_normalize_shop_name(name), 0.0) for name in store_aliases),
-                    default=0.0,
+                # A store can carry more than one known name: a renamed
+                # shop, or several branches kept as one store ("Speedy" =
+                # five Speedy branches, each with its own target). Its sales
+                # add up over all of them, so its target does too. A month's
+                # report lists each shop once, so a renamed shop isn't
+                # counted twice; 0 if none of its names appear this month.
+                store.monthly_target = sum(
+                    current_targets.get(_normalize_shop_name(name), 0.0) for name in set(store_aliases)
                 )
         except Exception as e:
             logger.warning("Current-month target refresh failed for %s: %s", country["name"], e)

@@ -98,7 +98,8 @@ async def test_first_sync_is_a_quiet_backfill(db, team, sheet):
     assert arjun.owner_user_id == team["sureka"].id     # matched from "Person Calling"
     assert arjun.stage == "contacting" and arjun.priority == "warm"
     assert arjun.submitted_at == ist(2026, 9, 20, 10, 0)
-    assert leena.owner_user_id is None                  # historic: never auto-assigned
+    # historic and no "Person Calling": quietly given to someone on the team, like any lead
+    assert leena.owner_user_id is not None and leena.assignment_source == "store_tl"
     # historic rows get no SLA timers, no alerts and no timeline noise
     assert await count(db, TeleLeadFollowup) == 0
     assert await count(db, CrmAlert) == 0
@@ -115,7 +116,7 @@ async def test_new_lead_is_assigned_and_gets_a_first_call_task(db, team, sheet):
 
     sara = (await db.execute(select(TeleCallLead).where(TeleCallLead.full_name == "Sara Joseph"))).scalar_one()
     assert sara.owner_user_id in (team["sureka"].id, team["riya"].id)
-    assert sara.assignment_source == "auto"
+    assert sara.assignment_source == "store_tl"
     fu = (await db.execute(select(TeleLeadFollowup).where(TeleLeadFollowup.lead_id == sara.id))).scalar_one()
     assert fu.kind == "first_call" and fu.status == "open" and fu.owner_user_id == sara.owner_user_id
     assert result["crm"]["auto_assigned"] == 1 and result["crm"]["first_call_tasks"] == 1
@@ -559,3 +560,82 @@ async def test_bill_with_customer_mobile_links_to_its_lead_automatically(db, tea
     visit = (await db.execute(select(TeleAppointment).where(TeleAppointment.lead_id == buyer.id))).scalar_one()
     assert (visit.source, visit.matched_purchase_id) == ("phone", "120001")
     assert (await match_bills_by_mobile(db))["matched"] == 0            # runs every sync without double-counting
+
+
+# ── store → team leader → telecaller ────────────────────────────────
+@pytest.fixture
+def thane_sheet(monkeypatch):
+    rows: list[dict] = []
+    monkeypatch.setattr(tele_call_sync, "TELE_CALL_SHEETS", [{"spreadsheet_id": "sheet-abd", "tl_name": "Thane"}])
+    monkeypatch.setattr(tele_call_sync, "_fetch_sheet_rows", lambda _sid, _tab=None: [dict(r) for r in rows])
+    return rows
+
+
+async def _korum_team(db, with_telecaller: bool):
+    """Korum Mall (the Thane tab's store) run by Abdullah; nobody is on the Thane tab."""
+    from app.models.models import Store
+    roles = {n: Role(name=n) for n in ("Telecaller", "Team Leader")}
+    db.add_all(roles.values())
+    await db.flush()
+    abd = User(name="Abdullah", email="ab@x", password_hash="x", role_id=roles["Team Leader"].id)
+    db.add(abd)
+    await db.flush()
+    db.add(Store(name="Mumbai - Korum Mall", country="India", is_active=True, team_leader_id=abd.id))
+    team = {"tl": abd, "roles": roles}
+    if with_telecaller:
+        team["dilip"] = User(name="Dilip", email="d@x", password_hash="x", role_id=roles["Telecaller"].id,
+                             team_leader_id=abd.id)
+        db.add(team["dilip"])
+    await db.commit()
+    return team
+
+
+@pytest.mark.asyncio
+async def test_new_lead_goes_to_a_telecaller_of_the_stores_team_leader(db, thane_sheet):
+    team = await _korum_team(db, with_telecaller=True)
+    thane_sheet.append(row("Old", "9876500001", "2026-09-01T10:00:00+05:30"))
+    await tele_call_sync.sync_tele_call_leads(db)                      # go-live
+    thane_sheet.append(row("Ebrahim Sk", "9877000001", datetime.now().strftime("%Y-%m-%d %H:%M")))
+    await tele_call_sync.sync_tele_call_leads(db)
+    lead = (await db.execute(select(TeleCallLead).where(TeleCallLead.full_name == "Ebrahim Sk"))).scalar_one()
+    assert lead.owner_user_id == team["dilip"].id and lead.assignment_source == "store_tl"
+    assert await count(db, TeleLeadFollowup, TeleLeadFollowup.lead_id == lead.id) == 1   # first-call task
+
+
+@pytest.mark.asyncio
+async def test_team_leader_keeps_leads_until_the_team_has_a_telecaller(db, thane_sheet):
+    team = await _korum_team(db, with_telecaller=False)
+    thane_sheet += [row("Open Lead", "9877000002", "2026-10-15T10:00:00+05:30", status="will visit"),
+                    row("Closed Lead", "9877000003", "2026-10-15T10:00:00+05:30", status="not interested")]
+    await tele_call_sync.sync_tele_call_leads(db)
+    leads = {l.full_name: l for l in (await db.execute(select(TeleCallLead))).scalars().all()}
+    assert {l.owner_user_id for l in leads.values()} == {team["tl"].id}   # no telecaller: the team leader
+
+    dilip = User(name="Dilip", email="d@x", password_hash="x", role_id=team["roles"]["Telecaller"].id,
+                 team_leader_id=team["tl"].id)
+    db.add(dilip)
+    await db.commit()
+    await tele_call_sync.sync_tele_call_leads(db)
+    await db.refresh(leads["Open Lead"])
+    await db.refresh(leads["Closed Lead"])
+    assert leads["Open Lead"].owner_user_id == dilip.id        # handed on to the new telecaller
+    assert leads["Closed Lead"].owner_user_id == team["tl"].id  # finished leads stay put
+
+
+@pytest.mark.asyncio
+async def test_person_calling_takes_over_once_they_have_a_login(db, thane_sheet):
+    team = await _korum_team(db, with_telecaller=False)
+    thane_sheet.append(row("Ebrahim Sk", "9877000001", "2026-10-15T10:00:00+05:30", person="SAMEER"))
+    await tele_call_sync.sync_tele_call_leads(db)
+    lead = (await db.execute(select(TeleCallLead))).scalar_one()
+    assert lead.owner_user_id == team["tl"].id          # no "Sameer" login yet: the team leader holds it
+
+    sameer = User(name="Sameer", email="sa@x", password_hash="x", role_id=team["roles"]["Telecaller"].id,
+                  team_leader_id=team["tl"].id)
+    db.add(sameer)
+    await db.flush()
+    db.add(TeleSheetAssignment(user_id=sameer.id, sheet_tl_name="Thane"))
+    await db.commit()
+    await tele_call_sync.sync_tele_call_leads(db)
+    await db.refresh(lead)
+    assert lead.owner_user_id == sameer.id and lead.assignment_source == "sheet"
