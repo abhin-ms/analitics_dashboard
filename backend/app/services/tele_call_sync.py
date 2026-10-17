@@ -113,6 +113,10 @@ COL_MAP = {
     11: "product",
 }
 
+# Size of each sheet field's column (remarks is unlimited text).
+FIELD_LIMITS = {f: TeleCallLead.__table__.c[f].type.length for f in COL_MAP.values()
+                if getattr(TeleCallLead.__table__.c[f].type, "length", None)}
+
 
 def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]:
     """The leads of one tab of a team leader's sheet (the first lead tab
@@ -135,7 +139,10 @@ def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]
             continue
         record = {}
         for col_idx, field in COL_MAP.items():
-            record[field] = row[col_idx].strip() if col_idx < len(row) and row[col_idx] else ""
+            value = row[col_idx].strip() if col_idx < len(row) and row[col_idx] else ""
+            # Cut to the column's size: one over-long cell (a customer pasted a
+            # paragraph as their name) would otherwise fail the whole sync.
+            record[field] = value[:FIELD_LIMITS[field]] if field in FIELD_LIMITS else value
         if bill_col is not None:
             record["bill_no"] = row[bill_col].strip()[:30] if bill_col < len(row) and row[bill_col] else ""
         # Skip rows with no name at all

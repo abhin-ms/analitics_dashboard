@@ -340,7 +340,8 @@ def _lead_figures(groups: list[list], conv_groups: list[list]) -> dict:
     arrived in the period, `conv_groups` bought in the period (whenever they
     arrived) — so a September lead who buys in October counts in October."""
     reps = [best_of(g) for g in groups]
-    sources = {key: {"key": key, "label": label, "leads": 0, "converted": 0, "revenue": 0.0}
+    sources = {key: {"key": key, "label": label, "leads": 0, "converted": 0, "revenue": 0.0,
+                     "converted_verified": 0, "revenue_verified": 0.0}
                for key, label, _ in LEAD_SOURCES}
 
     def bucket(g):
@@ -349,21 +350,28 @@ def _lead_figures(groups: list[list], conv_groups: list[list]) -> dict:
 
     for g in groups:
         bucket(g)["leads"] += 1
-    revenue = 0.0
+    revenue = verified = verified_revenue = 0.0
     for g in conv_groups:
         amount = parse_amount(best_of(g).sale_amount)
         b = bucket(g)
         b["converted"] += 1
         b["revenue"] += amount
         revenue += amount
+        # tied to an MCP bill (customer mobile or bill number), not only marked sold in a sheet
+        if any(l.bill_status == "verified" for l in g):
+            b["converted_verified"] += 1
+            b["revenue_verified"] += amount
+            verified += 1
+            verified_revenue += amount
     for b in sources.values():
         b["rate"] = round(b["converted"] / b["leads"] * 100, 1) if b["leads"] else 0.0
-        b["revenue"] = round(b["revenue"], 2)
+        b["revenue"], b["revenue_verified"] = round(b["revenue"], 2), round(b["revenue_verified"], 2)
         b["from"] = None
     kpis = crm_metrics.lead_kpis(reps)
     kpis["converted"] = len(conv_groups)
     kpis["conversion_pct"] = round(len(conv_groups) / len(groups) * 100, 1) if groups else 0.0
     kpis["total_sale_amount"] = revenue
+    kpis["converted_verified"], kpis["revenue_verified"] = int(verified), verified_revenue
     return {"kpis": kpis, "status_counts": crm_metrics.status_counts(reps), "sources": list(sources.values()),
             "merged": sum(len(g) - 1 for g in groups)}
 
@@ -650,6 +658,74 @@ def _add_sheet_counts(leads: dict, activity: dict, start: date, end: date, today
     })
 
 
+# Below this share of bills carrying a customer mobile (stores abroad, old
+# months), a bill with no lead can't be told apart from one with an unknown
+# customer, so walk-in sales aren't worked out.
+MIN_MOBILE_SHARE = 0.5
+
+
+async def _attribute_sales(db: AsyncSession, store_ids: list[int], start: date, end: date,
+                           leads: dict, sales: dict, activity: dict) -> None:
+    """Give every MCP bill of the period a source. Bills tied to a lead (by
+    customer mobile or bill number) are already in that lead's source row;
+    of the rest, a bill whose customer has a mobile was a customer who never
+    came in as a lead: a walk-in sale. Only bills with no customer mobile
+    stay "not linked". Totals always add up to the MCP figures."""
+    shops = (await db.execute(select(StoreMcpAlias.mcp_shop_name).where(StoreMcpAlias.store_id.in_(store_ids)))).scalars().all()
+    bills = [b for b in (await db.execute(select(McpBill).where(
+        McpBill.shop.in_(shops or ["-"]), McpBill.date >= start, McpBill.date <= end, McpBill.payment_status.isnot(None),
+    ))).scalars().all() if "new sale" in (b.category or "").lower() and float(b.amount or 0) > 0]
+    walk = next((r for r in leads["sources"] if r["key"] == "walk_ins"), None)
+    lead_rows = [r for r in leads["sources"] if r["key"] != "walk_ins"]
+    total_bills, total_rev = sales["sales_count"], float(sales["pace"]["achieved"] or 0)
+    with_mobile = sum(1 for b in bills if b.mobile10)
+    if walk is None or not bills or with_mobile < MIN_MOBILE_SHARE * len(bills):
+        leads["unlinked"] = {"bills": max(total_bills - leads["converted"], 0),
+                             "revenue": round(max(total_rev - leads["revenue"], 0.0), 2), "walk_ins_worked_out": False}
+        leads["marked_unverified"] = 0
+        return
+    # Bills now name the customer, so a lead counts as sold only with a bill behind it; leads
+    # marked sold in a sheet whose number is on no bill are listed apart for the team to check.
+    unverified = 0
+    for r in lead_rows:
+        unverified += r["converted"] - r["converted_verified"]
+        r["converted"], r["revenue"] = r["converted_verified"], r["revenue_verified"]
+        r["rate"] = round(r["converted"] / r["leads"] * 100, 1) if r["leads"] else 0.0
+    lead_conv = sum(r["converted"] for r in lead_rows)
+    lead_rev = sum(r["revenue"] for r in lead_rows)
+    linked = set((await db.execute(select(TeleAppointment.matched_purchase_id)
+                                   .where(TeleAppointment.matched_purchase_id.isnot(None)))).scalars().all())
+    linked |= set((await db.execute(select(TeleCallLead.bill_no).where(TeleCallLead.bill_status == "verified"))).scalars().all())
+    no_mobile = [b for b in bills if not b.mobile10 and str(b.id) not in linked]
+    nm_count, nm_rev = len(no_mobile), float(sum(b.amount or 0 for b in no_mobile))
+    walk_conv = max(total_bills - lead_conv - nm_count, 0)
+    walk_rev = max(total_rev - lead_rev - nm_rev, 0.0)
+    walk["converted"], walk["revenue"], walk["converted_unknown"] = walk_conv, round(walk_rev, 2), False
+    wk = activity.get("walkins")
+    # Stores fill the Walk-ins sheet days behind: the rate compares bills with walk-ins on the same days.
+    walk["rate"] = (wk["bill_pct"] if wk and wk.get("bill_pct") is not None
+                    else round(walk_conv / walk["leads"] * 100, 1) if walk["leads"] else 0.0)
+    if walk.get("from"):  # the daily form no longer decides who bought
+        walk["from"] = walk["from"].split(" · ")[0]
+    walk["bought_from"] = "MCP bills from customers who aren't leads"
+    # "Conversions" = sales that came from leads; walk-in sales stay in their row and in the MCP total.
+    lead_count = sum(r["leads"] for r in lead_rows)
+    ranked = [r for r in lead_rows if r["leads"] >= 5 and r["key"] != "unknown"]
+    best = max(ranked, key=lambda r: r["rate"]) if ranked else None
+    leads.update({
+        "converted": lead_conv,
+        "revenue": round(lead_rev, 2),
+        "conversion_pct": round(lead_conv / lead_count * 100, 1) if lead_count else 0.0,
+        "best_source": {"label": best["label"], "rate": best["rate"]} if best else None,
+        "marked_unverified": unverified,
+        "unlinked": {"bills": min(nm_count, max(total_bills - lead_conv - walk_conv, 0)),
+                     "revenue": round(min(nm_rev, max(total_rev - lead_rev - walk_rev, 0.0)), 2),
+                     "walk_ins_worked_out": True},
+    })
+    t = leads["targets"]
+    leads["conversions"] = pace(t["leads_monthly"] * t["conversion_pct"] / 100, lead_conv, start, end, date.today()).as_dict()
+
+
 @router.get("/{store_id}")
 async def store_portfolio(
     store_id: int,
@@ -689,6 +765,7 @@ async def store_portfolio(
     sales["bills"] = await _bill_details(db, store_ids, start, end)
     activity = await _activity(db, store_ids, start, end, sales, leads, _in_range(history, start, end))
     _add_sheet_counts(leads, activity, start, end, today)
+    await _attribute_sales(db, store_ids, start, end, leads, sales, activity)
     money = _money_formatter(currency)
     stay = funnel(start=start, end=end, today=today, social=social, leads=leads, sales=sales, reviews=reviews,
                   walkins=activity["walkins"], team_leader=tl_name or "", money=money)
