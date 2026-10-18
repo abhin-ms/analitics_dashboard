@@ -41,6 +41,7 @@ const ROUTE_MAP: Record<string, { title: string; subtitle: string }> = {
   "/crm/automation": { title: "Automation", subtitle: "Telecalling · contact workflow rules" },
   "/crm/pricing": { title: "Pricing", subtitle: "Telecalling · phone model price book" },
   "/settings/crm": { title: "Telecalling Settings", subtitle: "Access, integrations and data quality" },
+  "/settings/whatsapp": { title: "WhatsApp", subtitle: "Business number, alert numbers and template tests" },
   "/social-performance": { title: "Social Performance", subtitle: "Social media, Google reviews & sheet updates" },
   "/stock-position": { title: "Stock Position", subtitle: "Branch stock from MCP" },
   "/country-comparison": { title: "Country Comparison", subtitle: "Sales by country" },

@@ -609,6 +609,9 @@ class ActivityRequest(BaseModel):
     appointment_purpose: Optional[str] = None
     store_id: Optional[int] = None
     sale_amount: Optional[str] = None
+    # Length of the call in seconds, timed by the mobile telecaller view
+    # (call button → End call). Stored on the timeline entry's meta.
+    call_seconds: Optional[int] = Field(None, ge=0, le=6 * 3600)
 
 
 @router.post("/leads/{lead_id}/activities")
@@ -631,7 +634,7 @@ async def log_activity(lead_id: int, body: ActivityRequest, db: AsyncSession = D
         next_follow_up_at=parse_client_datetime(body.next_follow_up_at),
         appointment_at=parse_client_datetime(body.appointment_at),
         appointment_purpose=body.appointment_purpose, store_id=body.store_id,
-        sale_amount=body.sale_amount, actor_role=scope.role,
+        sale_amount=body.sale_amount, actor_role=scope.role, call_seconds=body.call_seconds,
     )
     await db.commit()
     names = await user_names(db, [lead.owner_user_id])

@@ -148,6 +148,20 @@ async def test_log_activity_claims_and_schedules(env):
 
 
 @pytest.mark.asyncio
+async def test_log_activity_keeps_call_length(env):
+    as_user, _ = env
+    c = as_user("sureka")
+    lead_id = (await c.get("/api/v1/crm/leads", params={"q": "Arjun"})).json()["items"][0]["id"]
+    r = await c.post(f"/api/v1/crm/leads/{lead_id}/activities",
+                     json={"outcome": "will_visit", "call_seconds": 135})
+    assert r.status_code == 200, r.text
+    calls = [t for t in (await c.get(f"/api/v1/crm/leads/{lead_id}")).json()["timeline"] if t["type"] == "call"]
+    assert calls[0]["meta"]["call_seconds"] == 135
+    r = await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={"outcome": "busy", "call_seconds": -5})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_only_team_leader_reassigns(env):
     as_user, ids = env
     lead_id = (await as_user("sureka").get("/api/v1/crm/leads", params={"q": "Arjun"})).json()["items"][0]["id"]

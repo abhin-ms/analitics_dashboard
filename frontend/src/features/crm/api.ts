@@ -82,6 +82,8 @@ export interface ActivityBody {
   appointment_purpose?: string;
   store_id?: number | null;
   sale_amount?: string;
+  /** Call length timed by the mobile call screen (call button → End call). */
+  call_seconds?: number;
 }
 
 export function useLogActivity() {

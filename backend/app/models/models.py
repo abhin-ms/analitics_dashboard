@@ -1093,3 +1093,50 @@ class AISummaryRun(Base):
     __table_args__ = (
         Index("ix_summary_run_period", "period"),
     )
+
+
+# ── WhatsApp Business (Cloud API) ───────────────────────────────────
+class WhatsAppContact(Base):
+    """Who WhatsApp alerts go to: CEO, team leaders, telecallers (per store)
+    and each store's branch number. Set in Settings → WhatsApp → Numbers."""
+    __tablename__ = "whatsapp_contacts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    role = Column(String(20), nullable=False)  # ceo | team_leader | telecaller | store
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    store_id = Column(Integer, ForeignKey("stores.id", ondelete="CASCADE"), nullable=True)
+    name = Column(String(100), nullable=True)  # a CEO number with no user account
+    phone = Column(String(20), nullable=False)  # digits only, with country code
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_wa_contacts_role", "role"),
+    )
+
+
+class WhatsAppMessage(Base):
+    """Every WhatsApp template message sent, with the delivery status Meta
+    reports back through the webhook (sent → delivered → read, or failed)."""
+    __tablename__ = "whatsapp_messages"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    wa_message_id = Column(String(128), nullable=True, unique=True)
+    to_phone = Column(String(20), nullable=False)
+    template = Column(String(100), nullable=False)
+    language = Column(String(10), nullable=False, default="en")
+    purpose = Column(String(30), nullable=False, default="test")  # test, or the flow step later
+    params = Column(JSON, nullable=True)
+    status = Column(String(20), nullable=False, default="accepted")  # accepted|sent|delivered|read|failed
+    error_code = Column(String(20), nullable=True)
+    error_text = Column(Text, nullable=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="SET NULL"), nullable=True)
+    sent_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True)
+    failed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_wa_messages_created", "created_at"),
+    )
