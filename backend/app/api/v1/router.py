@@ -29,6 +29,7 @@ from .social import router as social_router
 from .store_owner import router as store_owner_router
 from .store_portfolio import router as store_portfolio_router
 from .tl_ranking import router as tl_ranking_router
+from .whatsapp import router as whatsapp_router, public_router as whatsapp_public_router
 from ...instagram.router import router as instagram_router
 from ...instagram.webhook_handler import router as instagram_webhook_router
 from ...instagram.form_router import router as instagram_form_router
@@ -65,6 +66,8 @@ api_router.include_router(social_router)
 api_router.include_router(store_owner_router)
 api_router.include_router(store_portfolio_router)
 api_router.include_router(tl_ranking_router)
+api_router.include_router(whatsapp_router)
+api_router.include_router(whatsapp_public_router)
 api_router.include_router(instagram_webhook_router)
 api_router.include_router(instagram_router)
 api_router.include_router(instagram_form_router)

@@ -402,7 +402,7 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
                       callback_at: datetime | None = None, next_follow_up_at: datetime | None = None,
                       appointment_at: datetime | None = None, appointment_purpose: str | None = None,
                       store_id: int | None = None, sale_amount=None, actor_role: str = "",
-                      now: datetime | None = None) -> dict:
+                      call_seconds: int | None = None, now: datetime | None = None) -> dict:
     """Record what happened on a lead and schedule the next step."""
     if outcome not in OUTCOMES:
         raise ValueError(f"Unknown outcome: {outcome}")
@@ -438,11 +438,14 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
     lead.edited_by_user = True
 
     today_calls = await calls_today(db, lead.id, now) if not is_note else 0
+    meta = {"stage_from": old_stage, "stage_to": lead.stage}
+    if call_seconds is not None and not is_note:
+        meta["call_seconds"] = int(call_seconds)
     add_activity(
         db, lead, "note" if is_note else "call", user_id=actor.id, outcome=outcome,
         old_value=(old_status or "No Status") if new_status and new_status != old_status else None,
         new_value=new_status if new_status and new_status != old_status else None,
-        notes=notes, meta={"stage_from": old_stage, "stage_to": lead.stage}, at=now,
+        notes=notes, meta=meta, at=now,
     )
 
     closed: list[int] = []

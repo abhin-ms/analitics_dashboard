@@ -35,6 +35,7 @@ import CurrencySettings from "./pages/settings/Currency";
 import InstagramForms from "./pages/settings/InstagramForms";
 import AIProviders from "./pages/settings/AIProviders";
 import SocialTargets from "./pages/settings/SocialTargets";
+import WhatsAppSettings from "./pages/settings/WhatsApp";
 import LeadTargets from "./pages/settings/LeadTargets";
 import InstagramDashboard from "./pages/instagram/InstagramDashboard";
 import InstagramSetup from "./pages/instagram/InstagramSetup";
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="/settings/instagram-forms" element={<InstagramForms />} />
           <Route path="/settings/ai-providers" element={<AIProviders />} />
           <Route path="/settings/social-targets" element={<SocialTargets />} />
+          <Route path="/settings/whatsapp" element={<WhatsAppSettings />} />
           <Route path="/settings/lead-targets" element={<LeadTargets />} />
           {/* Telecalling now lives in the main Dashboard and the tabbed Leads page */}
           <Route path="/crm" element={<Navigate to="/dashboard" replace />} />

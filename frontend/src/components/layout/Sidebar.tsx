@@ -63,6 +63,7 @@ const SETTINGS_NAV_ITEMS: NavItem[] = [
   { to: "/settings/instagram-forms", label: "Instagram Forms", icon: FileText, resource: "settings" },
   { to: "/settings/ai-providers", label: "AI Providers", icon: Brain, resource: "settings" },
   { to: "/settings/crm", label: "Telecalling Settings", icon: Headset, resource: "settings" },
+  { to: "/settings/whatsapp", label: "WhatsApp", icon: MessageCircle, resource: "settings" },
   { to: "/crm/automation", label: "Telecalling Automation", icon: Zap, resource: "settings" },
 ];
 

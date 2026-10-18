@@ -7,7 +7,7 @@ import { TableSkeleton } from "@/components/shared/Skeleton";
 import { PhoneActions } from "@/components/shared/PhoneActions";
 import {
   Phone, PhoneCall, PhoneOff, CalendarCheck, DollarSign,
-  Clock, AlertCircle, CheckCircle2, TrendingUp, Brain,
+  Clock, AlertCircle, CheckCircle2, TrendingUp, Brain, List,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
@@ -19,6 +19,8 @@ import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { useAuthStore } from "@/lib/authStore";
 import { PeriodKey, periodRange } from "@/features/crm/components/shared";
 import { openLead } from "@/features/crm/components/LeadDrawer";
+import { useTouchLayout } from "@/hooks/useTouchLayout";
+import TelecallerMobile from "@/features/crm/mobile/TelecallerMobile";
 const COLORS = ["#10b981", "#3b82f6", "#a855f7", "#f59e0b", "#ef4444", "#64748b", "#6b7280", "#374151"];
 
 export default function TelecallerDashboard() {
@@ -34,6 +36,15 @@ export default function TelecallerDashboard() {
     refetchInterval: 300000,
     placeholderData: (prev) => prev,
   });
+  // Telecallers on a phone or tablet get the call-list view; laptops and
+  // desktops (and Salespersons) keep this page as it is.
+  const touch = useTouchLayout();
+  const [showFull, setShowFull] = useState(false);
+  const mobile = role === "Telecaller" && touch;
+
+  if (mobile && !showFull) {
+    return <ErrorBoundary><TelecallerMobile data={data} onShowFull={() => setShowFull(true)} /></ErrorBoundary>;
+  }
 
   if (isLoading) return <div className="p-6"><TableSkeleton /></div>;
   if (!data) return null;
@@ -43,11 +54,19 @@ export default function TelecallerDashboard() {
   return (
     <ErrorBoundary>
       <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">My Performance</h1>
-          <p className="text-xs text-[var(--text-muted)] mt-0.5">
-            Your calling stats, lead conversions, and analytics
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-tight">My Performance</h1>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              Your calling stats, lead conversions, and analytics
+            </p>
+          </div>
+          {mobile && (
+            <button onClick={() => setShowFull(false)}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold cursor-pointer">
+              <List size={14} />Call list
+            </button>
+          )}
         </div>
 
         {/* Telecalling: today queue, lead status, my numbers (new) */}

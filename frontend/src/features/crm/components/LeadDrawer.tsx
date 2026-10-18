@@ -47,10 +47,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function timelineText(t: { type: string; outcome_label?: string | null; old_value?: string | null; new_value?: string | null; label?: string; notes?: string | null }) {
+function callLength(meta: Record<string, unknown> | null | undefined): string {
+  const s = typeof meta?.call_seconds === "number" ? meta.call_seconds : null;
+  if (s == null) return "";
+  return ` · ${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+function timelineText(t: { type: string; outcome_label?: string | null; old_value?: string | null; new_value?: string | null; label?: string; notes?: string | null; meta?: Record<string, unknown> | null }) {
   switch (t.type) {
     case "milestone": return t.label;
-    case "call": return `Call · ${t.outcome_label || "logged"}${t.new_value ? ` → ${t.new_value}` : ""}`;
+    case "call": return `Call · ${t.outcome_label || "logged"}${callLength(t.meta)}${t.new_value ? ` → ${t.new_value}` : ""}`;
     case "status_change": return `Status: ${t.old_value} → ${t.new_value}`;
     case "stage_change": return `Stage: ${t.old_value} → ${t.new_value}`;
     case "assignment": return `Owner: ${t.old_value} → ${t.new_value}`;

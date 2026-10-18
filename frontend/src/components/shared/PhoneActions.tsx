@@ -6,7 +6,7 @@ import { Phone, Copy, Check } from "lucide-react";
 // handle at all. Strips everything except digits and a single leading "+"
 // so what reaches the dialer, the display, and the clipboard is always a
 // clean, dialable number.
-function sanitizePhone(phone: string): string {
+export function sanitizePhone(phone: string): string {
   const hasPlus = phone.includes("+");
   const digits = phone.replace(/\D/g, "");
   return (hasPlus ? "+" : "") + digits;
