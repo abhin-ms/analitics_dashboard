@@ -120,12 +120,19 @@ async def save_config(db: AsyncSession, cfg: WhatsAppConfig, user_id: int | None
 
 
 async def mark_webhook_received(db: AsyncSession) -> None:
-    now = datetime.utcnow().isoformat()
+    """Note the time of the last call from Meta — at most once a minute, so
+    a busy number doesn't mean a database write on every call."""
+    now = datetime.utcnow()
     row = await db.get(Setting, LAST_WEBHOOK_KEY)
     if row:
-        row.value = now
+        try:
+            if (now - datetime.fromisoformat(row.value)).total_seconds() < 60:
+                return
+        except (TypeError, ValueError):
+            pass
+        row.value = now.isoformat()
     else:
-        db.add(Setting(key=LAST_WEBHOOK_KEY, value=now))
+        db.add(Setting(key=LAST_WEBHOOK_KEY, value=now.isoformat()))
 
 
 async def last_webhook_at(db: AsyncSession) -> str | None:

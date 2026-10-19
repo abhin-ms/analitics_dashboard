@@ -245,7 +245,7 @@ async def test_test_send_and_delivery_statuses(env):
     log = (await c.get("/api/v1/whatsapp/webhook-log")).json()["items"]
     kinds = [(e["kind"], e["ok"]) for e in log]
     assert ("verify", True) in kinds and ("verify", False) in kinds and ("update", False) in kinds
-    assert "1 status update (read 1) · 1 matched" in log[1]["summary"]  # newest first: delivered, read, sent
+    assert not any(e["kind"] == "update" and e["ok"] for e in log)  # normal updates aren't logged
     assert "Refused" in next(e for e in log if e["kind"] == "update" and not e["ok"])["summary"]
 
     await post([{"id": "wamid.TEST1", "status": "failed", "timestamp": "1792330090",

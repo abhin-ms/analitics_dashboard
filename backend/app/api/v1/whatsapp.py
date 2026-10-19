@@ -158,7 +158,10 @@ async def webhook_subscribe(db: AsyncSession = Depends(get_db), user: User = req
 
 @router.get("/webhook-log")
 async def read_webhook_log(db: AsyncSession = Depends(get_db), _u: User = require_permission("settings", "view")):
-    return {"items": await webhook_log(db), "last_webhook_at": await last_webhook_at(db)}
+    # Problems, verify checks and test calls only (older versions also kept
+    # every normal update; those are left out here).
+    items = [e for e in await webhook_log(db) if not (e.get("kind") == "update" and e.get("ok") and not e.get("test"))]
+    return {"items": items, "last_webhook_at": await last_webhook_at(db)}
 
 
 SELFTEST_HEADER = "x-bp-selftest"
@@ -445,9 +448,12 @@ async def receive(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
         return {"ok": True, "ignored": True}
     updated = await apply_statuses(db, data)
-    await log_webhook(db, kind="update", ok=True, status=200, summary=summarize(data, updated),
-                      ip=_ip(request), test=test)
-    if not test:
+    # Normal updates aren't logged (they show as Sent/Delivered/Read on the
+    # message itself); only test calls are, to confirm the webhook works.
+    if test:
+        await log_webhook(db, kind="update", ok=True, status=200, summary=summarize(data, updated),
+                          ip=_ip(request), test=True)
+    else:
         await mark_webhook_received(db)
     await db.commit()
     # Customer replies and button taps arrive here too; stage 2 acts on them.

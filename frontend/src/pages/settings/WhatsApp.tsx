@@ -31,34 +31,34 @@ interface WaConfig {
 
 interface WebhookLogEntry { at: string; kind: "verify" | "update"; ok: boolean; status: number; summary: string; ip: string | null; test: boolean }
 
-/** Every call that reached the webhook, newest first — shows at a glance
- * whether Meta calls it at all, and what happened to each call. */
+/** Webhook troubleshooting: refused calls, verify checks and test calls.
+ * Normal delivery updates aren't listed — they show on each message. */
 function WebhookActivity() {
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const log = useQuery({
     queryKey: ["whatsapp", "webhook-log"],
-    queryFn: () => api.get<{ items: WebhookLogEntry[] }>("/whatsapp/webhook-log"),
-    refetchInterval: 5000,
+    queryFn: () => api.get<{ items: WebhookLogEntry[]; last_webhook_at: string | null }>("/whatsapp/webhook-log"),
   });
   const selftest = useMutation({
     mutationFn: () => api.post<{ ok: boolean; detail: string }>("/whatsapp/webhook-selftest"),
     onSettled: () => qc.invalidateQueries({ queryKey: ["whatsapp", "webhook-log"] }),
   });
   const items = log.data?.items || [];
-  const fromMeta = items.filter((e) => !e.test);
+  const last = log.data?.last_webhook_at;
   return (
     <Card>
-      <CardHeader title="Webhook activity" subtitle="Every call that reaches the webhook, newest first · refreshes every 5 seconds"
+      <CardHeader title="Webhook problems & tests"
+        subtitle={last ? <>Last call from Meta: <span className="text-emerald-400">{fmtDateTime(last + "Z")} ✓</span> · delivery times show under Sent messages on the Test tab</> : "No call from Meta yet"}
         action={canEdit ? <Button size="sm" onClick={() => selftest.mutate()} loading={selftest.isPending}>Send a test call</Button> : undefined} />
       {selftest.data && (
         <div className={cn("mx-5 mt-3 rounded-xl px-3 py-2 text-xs", selftest.data.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400")}>
-          {selftest.data.detail}{selftest.data.ok && fromMeta.length === 0 ? " Your side works — if Meta's calls still don't show up below, check the subscription and the messages field in Meta." : ""}
+          {selftest.data.detail}{selftest.data.ok && !last ? " Your side works — if Meta's calls still don't arrive, check the subscription and the messages field in Meta." : ""}
         </div>
       )}
       <ErrorText error={selftest.error} />
       {!log.data ? <div className="p-5"><TableSkeleton /></div> : items.length === 0 ? (
-        <Empty>No call has reached the webhook yet. Send a test message, or press "Send a test call" to check your side.</Empty>
+        <Empty>No problems recorded. Press "Send a test call" any time to check the webhook.</Empty>
       ) : (
         <div className="divide-y divide-[var(--border-subtle)] mt-2">
           {items.map((e, i) => (
