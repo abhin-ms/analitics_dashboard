@@ -9,11 +9,14 @@ Meta → app → WhatsApp → Configuration:
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
+import time
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -26,11 +29,12 @@ from ...services.crm.engine import record_audit
 from ...services.crm.timeutil import iso_utc
 from ...services.whatsapp import templates as wa_templates
 from ...services.whatsapp.client import (
-    WhatsAppError, apply_statuses, check_phone_number, list_templates, send_template, signature_ok,
+    WhatsAppError, apply_statuses, check_phone_number, list_templates, meta_buttons, send_template, signature_ok,
+    subscribe_app, subscribed_apps, summarize,
 )
 from ...services.whatsapp.config import (
-    get_config, last_webhook_at, mark_webhook_received, mask, normalize_phone, save_config, valid_phone,
-    webhook_url,
+    get_config, last_webhook_at, last_webhook_error, log_webhook, mark_webhook_received, mark_webhook_rejected,
+    mask, normalize_phone, save_config, valid_phone, webhook_log, webhook_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +62,7 @@ async def _config_view(db: AsyncSession) -> dict:
         "webhook_url": webhook_url(),
         "verify_token": cfg.verify_token if cfg.ready else "",
         "last_webhook_at": await last_webhook_at(db),
+        "last_webhook_error": await last_webhook_error(db),
     }
 
 
@@ -120,6 +125,67 @@ async def set_enabled(body: EnabledIn, db: AsyncSession = Depends(get_db),
                  after={"enabled": body.enabled})
     await db.commit()
     return await _config_view(db)
+
+
+@router.get("/webhook-check")
+async def webhook_check(db: AsyncSession = Depends(get_db), _u: User = require_permission("settings", "view")):
+    """Is this WhatsApp Business Account subscribed to an app? If not, Meta
+    sends no delivery statuses even when the callback URL verified fine."""
+    cfg = await get_config(db)
+    if not cfg.ready or not cfg.waba_id:
+        return {"checked": False, "reason": "Add the WhatsApp Business Account ID on the Setup tab to check this."}
+    try:
+        apps = await subscribed_apps(cfg)
+    except WhatsAppError as e:
+        return {"checked": False, "reason": f"Meta: {e}"}
+    return {"checked": True, "subscribed": bool(apps), "apps": [a.get("name") or a.get("id") for a in apps]}
+
+
+@router.post("/webhook-subscribe")
+async def webhook_subscribe(db: AsyncSession = Depends(get_db), user: User = require_permission("settings", "edit")):
+    cfg = await get_config(db)
+    if not cfg.ready or not cfg.waba_id:
+        raise HTTPException(status_code=400, detail="Add the WhatsApp Business Account ID on the Setup tab first")
+    try:
+        await subscribe_app(cfg)
+        apps = await subscribed_apps(cfg)
+    except WhatsAppError as e:
+        raise HTTPException(status_code=400, detail=f"Meta refused: {e}")
+    record_audit(db, user.id, "subscribe", "whatsapp_webhook", None, after={"waba_id": cfg.waba_id})
+    await db.commit()
+    return {"checked": True, "subscribed": bool(apps), "apps": [a.get("name") or a.get("id") for a in apps]}
+
+
+@router.get("/webhook-log")
+async def read_webhook_log(db: AsyncSession = Depends(get_db), _u: User = require_permission("settings", "view")):
+    return {"items": await webhook_log(db), "last_webhook_at": await last_webhook_at(db)}
+
+
+SELFTEST_HEADER = "x-bp-selftest"
+
+
+@router.post("/webhook-selftest")
+async def webhook_selftest(db: AsyncSession = Depends(get_db), _u: User = require_permission("settings", "edit")):
+    """Send a signed sample update to our own public webhook URL, the way
+    Meta would. Shows whether the URL, nginx and the App secret all work;
+    if this arrives but Meta's calls don't, the problem is on Meta's side."""
+    cfg = await get_config(db)
+    if not cfg.signing_secrets:
+        raise HTTPException(status_code=400, detail="Enter the App secret on the Setup tab first")
+    payload = {"object": "whatsapp_business_account", "entry": [{"id": "selftest", "changes": [{
+        "field": "messages", "value": {"statuses": [
+            {"id": "bp-selftest", "status": "delivered", "timestamp": str(int(time.time()))}]}}]}]}
+    raw = json.dumps(payload).encode()
+    sig = "sha256=" + hmac.new(cfg.signing_secrets[0].encode(), raw, hashlib.sha256).hexdigest()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(webhook_url(), content=raw, headers={
+                "content-type": "application/json", "x-hub-signature-256": sig, SELFTEST_HEADER: "1"})
+    except httpx.HTTPError as e:
+        return {"ok": False, "detail": f"Could not reach {webhook_url()}: {e}"}
+    if resp.status_code != 200:
+        return {"ok": False, "detail": f"The webhook answered HTTP {resp.status_code}: {resp.text[:200]}"}
+    return {"ok": True, "detail": "The test call reached the webhook and was accepted."}
 
 
 @router.post("/config/new-verify-token")
@@ -256,7 +322,8 @@ async def read_templates(db: AsyncSession = Depends(get_db), _u: User = require_
         try:
             for t in await list_templates(cfg):
                 meta_status.setdefault(t.get("name"), []).append(
-                    {"status": t.get("status"), "language": t.get("language"), "category": t.get("category")})
+                    {"status": t.get("status"), "language": t.get("language"), "category": t.get("category"),
+                     "buttons": meta_buttons(t)})
         except WhatsAppError as e:
             meta_error = str(e)
     return {
@@ -328,32 +395,60 @@ async def read_messages(limit: int = Query(30, ge=1, le=200), db: AsyncSession =
 
 # ── Public webhook (Meta) ───────────────────────────────────────────
 
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 @public_router.get("/webhook")
 async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     """Meta's one-time check when the callback URL is saved."""
     q = request.query_params
     expected = (await get_config(db)).verify_token
     if expected and q.get("hub.mode") == "subscribe" and hmac.compare_digest(q.get("hub.verify_token") or "", expected):
+        await log_webhook(db, kind="verify", ok=True, status=200, summary="Verify check: passed", ip=_ip(request))
+        await db.commit()
         return Response(content=q.get("hub.challenge") or "", media_type="text/plain")
+    reason = ("Verify check failed: the verify token doesn't match the one on the Setup tab"
+              if q.get("hub.verify_token") else "Verify check failed: no verify token sent (opened in a browser?)")
+    await log_webhook(db, kind="verify", ok=False, status=403, summary=reason, ip=_ip(request))
+    await db.commit()
     return Response(content="Verification failed", status_code=403)
 
 
 @public_router.post("/webhook")
 async def receive(request: Request, db: AsyncSession = Depends(get_db)):
     cfg = await get_config(db)
-    if not cfg.signing_secret:
-        raise HTTPException(status_code=503, detail="WhatsApp webhook is not configured on the server")
+    test = request.headers.get(SELFTEST_HEADER) == "1"
+
+    async def reject(status: int, reason: str):
+        logger.warning("WhatsApp webhook refused: %s", reason)
+        await mark_webhook_rejected(db, reason)
+        await log_webhook(db, kind="update", ok=False, status=status, summary=f"Refused: {reason}",
+                          ip=_ip(request), test=test)
+        await db.commit()
+        raise HTTPException(status_code=status, detail=reason)
+
+    if not cfg.signing_secrets:
+        await reject(503, "No App secret saved, so the app can't check that the call came from Meta. "
+                          "Enter the App secret on the Setup tab.")
     body = await request.body()
-    if not signature_ok(cfg.signing_secret, body, request.headers.get("x-hub-signature-256", "")):
-        raise HTTPException(status_code=403, detail="Invalid signature")
+    if not signature_ok(cfg.signing_secrets, body, request.headers.get("x-hub-signature-256", "")):
+        await reject(403, "Meta's signature didn't match the App secret. Enter the App secret of the Meta app "
+                          "that owns this WhatsApp number (App settings → Basic).")
     try:
         data = json.loads(body)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        await reject(400, "The call's body was not JSON")
     if data.get("object") != "whatsapp_business_account":
+        await log_webhook(db, kind="update", ok=True, status=200, ip=_ip(request), test=test,
+                          summary=f"Ignored: not a WhatsApp call (object: {data.get('object')})")
+        await db.commit()
         return {"ok": True, "ignored": True}
     updated = await apply_statuses(db, data)
-    await mark_webhook_received(db)
+    await log_webhook(db, kind="update", ok=True, status=200, summary=summarize(data, updated),
+                      ip=_ip(request), test=test)
+    if not test:
+        await mark_webhook_received(db)
     await db.commit()
     # Customer replies and button taps arrive here too; stage 2 acts on them.
     return {"ok": True, "updated": updated}

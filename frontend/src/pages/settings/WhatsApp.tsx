@@ -26,7 +26,62 @@ interface WaConfig {
   webhook_url: string;
   verify_token: string;
   last_webhook_at: string | null;
+  last_webhook_error: { at: string; reason: string } | null;
 }
+
+interface WebhookLogEntry { at: string; kind: "verify" | "update"; ok: boolean; status: number; summary: string; ip: string | null; test: boolean }
+
+/** Every call that reached the webhook, newest first — shows at a glance
+ * whether Meta calls it at all, and what happened to each call. */
+function WebhookActivity() {
+  const canEdit = useCanEdit();
+  const qc = useQueryClient();
+  const log = useQuery({
+    queryKey: ["whatsapp", "webhook-log"],
+    queryFn: () => api.get<{ items: WebhookLogEntry[] }>("/whatsapp/webhook-log"),
+    refetchInterval: 5000,
+  });
+  const selftest = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; detail: string }>("/whatsapp/webhook-selftest"),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["whatsapp", "webhook-log"] }),
+  });
+  const items = log.data?.items || [];
+  const fromMeta = items.filter((e) => !e.test);
+  return (
+    <Card>
+      <CardHeader title="Webhook activity" subtitle="Every call that reaches the webhook, newest first · refreshes every 5 seconds"
+        action={canEdit ? <Button size="sm" onClick={() => selftest.mutate()} loading={selftest.isPending}>Send a test call</Button> : undefined} />
+      {selftest.data && (
+        <div className={cn("mx-5 mt-3 rounded-xl px-3 py-2 text-xs", selftest.data.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400")}>
+          {selftest.data.detail}{selftest.data.ok && fromMeta.length === 0 ? " Your side works — if Meta's calls still don't show up below, check the subscription and the messages field in Meta." : ""}
+        </div>
+      )}
+      <ErrorText error={selftest.error} />
+      {!log.data ? <div className="p-5"><TableSkeleton /></div> : items.length === 0 ? (
+        <Empty>No call has reached the webhook yet. Send a test message, or press "Send a test call" to check your side.</Empty>
+      ) : (
+        <div className="divide-y divide-[var(--border-subtle)] mt-2">
+          {items.map((e, i) => (
+            <div key={i} className="px-5 py-2.5 flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 text-xs">
+              <span className="w-32 shrink-0 text-[var(--text-muted)] whitespace-nowrap">{fmtDateTime(e.at + "Z")}</span>
+              <span className="w-28 shrink-0">
+                <span className={cn("inline-block px-1.5 py-0.5 rounded font-semibold",
+                  e.test ? "bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
+                    : e.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400")}>
+                  {e.test ? "Test call" : e.kind === "verify" ? "Verify" : "From Meta"}
+                </span>
+              </span>
+              <span className={cn("flex-1 min-w-0 break-words", e.ok ? "text-[var(--text-primary)]" : "text-rose-400")}>{e.summary}</span>
+              {e.ip && <span className="shrink-0 font-mono text-[var(--text-muted)]">{e.ip}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+interface WebhookCheck { checked: boolean; subscribed?: boolean; apps?: string[]; reason?: string }
 
 interface Contacts {
   ceo: { user_id: number; name: string; phone: string }[];
@@ -45,7 +100,7 @@ interface Template {
   params: { name: string; sample: string }[];
   body: string;
   buttons: { type: "quick_reply" | "url" | "flow"; text: string; url?: string; sample?: string; optional?: boolean }[];
-  meta: { status: string; language: string; category: string }[];
+  meta: { status: string; language: string; category: string; buttons?: { type: string; text: string; dynamic: boolean }[] }[];
 }
 
 interface WaMessage {
@@ -119,6 +174,20 @@ function SetupTab() {
       qc.setQueryData(["whatsapp", "config"], data);
       toast.success("New verify token made. Paste it into Meta and verify again.");
     },
+  });
+
+  const check = useQuery({
+    queryKey: ["whatsapp", "webhook-check"],
+    queryFn: () => api.get<WebhookCheck>("/whatsapp/webhook-check"),
+    enabled: !!cfg?.configured,
+  });
+  const subscribe = useMutation({
+    mutationFn: () => api.post<WebhookCheck>("/whatsapp/webhook-subscribe"),
+    onSuccess: (data) => {
+      qc.setQueryData(["whatsapp", "webhook-check"], data);
+      toast.success("Subscribed. Delivery updates will start coming in for new messages.");
+    },
+    onError: (e) => toast.error(errMsg(e)),
   });
 
   const toggle = useMutation({
@@ -207,13 +276,32 @@ function SetupTab() {
                 <li>Meta app → WhatsApp → Configuration → Webhook → Edit.</li>
                 <li>Paste the Callback URL and Verify token above, then Verify and save.</li>
                 <li>Under Webhook fields, subscribe to <b>messages</b>.</li>
+                <li>Make sure the check below says <b>Yes</b>, and the Meta app is <b>Live</b> (not in Development mode).</li>
               </ol>
               {/^https:\/\//.test(cfg.webhook_url) ? null : (
                 <InfoNote>This link is not HTTPS, so Meta can't reach it. It works once the app runs on dash.breakprotection.com.</InfoNote>
               )}
+              <div className="rounded-xl border border-[var(--border-subtle)] px-3 py-2.5 text-xs space-y-1">
+                <p className="font-semibold text-[var(--text-primary)]">WhatsApp account subscribed to the app?</p>
+                {!check.data ? <p className="text-[var(--text-muted)]">Checking…</p>
+                  : !check.data.checked ? <p className="text-[var(--text-muted)]">{check.data.reason}</p>
+                    : check.data.subscribed ? (
+                      <p className="text-emerald-400">Yes{check.data.apps?.length ? ` · ${check.data.apps.join(", ")}` : ""}</p>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-rose-400 flex-1 min-w-48">No. Meta sends no delivery updates until it is, even when the webhook verified.</p>
+                        {canEdit && <Button size="sm" variant="primary" onClick={() => subscribe.mutate()} loading={subscribe.isPending}>Subscribe now</Button>}
+                      </div>
+                    )}
+              </div>
               <p className="text-xs text-[var(--text-muted)]">
-                Last webhook call: {cfg.last_webhook_at ? <span className="text-emerald-400">{fmtDateTime(cfg.last_webhook_at + "Z")}</span> : "none yet"}
+                Last webhook call received: {cfg.last_webhook_at ? <span className="text-emerald-400">{fmtDateTime(cfg.last_webhook_at + "Z")}</span> : "none yet"}
               </p>
+              {cfg.last_webhook_error && (!cfg.last_webhook_at || cfg.last_webhook_error.at > cfg.last_webhook_at) && (
+                <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
+                  <b>Last webhook call was refused</b> ({fmtDateTime(cfg.last_webhook_error.at + "Z")}): {cfg.last_webhook_error.reason}
+                </div>
+              )}
               {canEdit && (
                 <Button size="sm" variant="ghost" onClick={() => rotate.mutate()} loading={rotate.isPending}>Make a new verify token</Button>
               )}
@@ -221,6 +309,7 @@ function SetupTab() {
           )}
         </Card>
       </div>
+      {cfg.configured && <WebhookActivity />}
     </div>
   );
 }
@@ -386,6 +475,17 @@ const STATUS_LOOK: Record<WaMessage["status"], { label: string; cls: string; ico
   failed: { label: "Failed", cls: "text-rose-400", icon: <X size={13} /> },
 };
 
+/** Does the approved template have our button i? undefined = Meta not checked. */
+function onMeta(t: Template, i: number): boolean | undefined {
+  const mb = t.meta[0]?.buttons;
+  if (!mb) return undefined;
+  const ours = t.buttons[i];
+  const theirs = mb[i];
+  if (!ours || !theirs) return false;
+  if (ours.type === "url") return theirs.type === "URL" && theirs.dynamic;
+  return theirs.type === (ours.type === "flow" ? "FLOW" : "QUICK_REPLY");
+}
+
 function metaChip(t: Template, checked: boolean) {
   if (!checked) return null;
   const s = t.meta[0]?.status;
@@ -422,7 +522,7 @@ function TestTab() {
     if (!tpl) return;
     setValues(Object.fromEntries(tpl.params.map((p) => [p.name, p.sample])));
     setButtonValues(Object.fromEntries(tpl.buttons.map((b, i) => [i, b.sample || ""])));
-    setInclude(new Set(tpl.buttons.map((_, i) => i)));
+    setInclude(new Set(tpl.buttons.map((_, i) => i).filter((i) => onMeta(tpl, i) !== false)));
     if (tpl.meta[0]?.language) setLanguage(tpl.meta[0].language);
   }, [tpl?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -499,6 +599,7 @@ function TestTab() {
                         }} />
                         <b className="text-[var(--text-primary)]">{b.text}</b>
                         <span>({b.type === "url" ? "link" : b.type === "flow" ? "WhatsApp Flow" : "quick reply"}{b.optional ? ", optional" : ""})</span>
+                        {onMeta(tpl, i) === false && <span className="text-amber-400">· not on the approved template</span>}
                       </label>
                       {b.type === "url" && include.has(i) && (
                         <Field label={b.url || "Link value"} hint="Fills the {{1}} at the end of the link">
@@ -507,7 +608,9 @@ function TestTab() {
                       )}
                     </div>
                   ))}
-                  <p className="text-[11px] text-[var(--text-muted)]">Untick a button the approved template doesn't have, or Meta refuses the message.</p>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    {tpl.meta[0]?.buttons ? "Ticked to match the approved template on Meta." : "Untick a button the approved template doesn't have, or Meta refuses the message."}
+                  </p>
                 </>
               )}
               <ErrorText error={send.error} />
@@ -537,13 +640,13 @@ function TestTab() {
       </div>
 
       <Card>
-        <CardHeader title="Sent messages" subtitle="Status comes back from Meta through the webhook" />
+        <CardHeader title="Sent messages" subtitle="Accepted = Meta took it. Sent, Delivered and Read times come back from Meta through the webhook." />
         {!messages.data ? <div className="p-5"><TableSkeleton /></div> : messages.data.items.length === 0 ? <Empty>No messages sent yet.</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
-                  {["Sent", "To", "Template", "Status", "Delivered", "Read", "By"].map((h) => <th key={h} className="py-2.5 px-4 text-left font-semibold whitespace-nowrap">{h}</th>)}
+                  {["Time", "To", "Template", "Status", "Sent", "Delivered", "Read", "By"].map((h) => <th key={h} className="py-2.5 px-4 text-left font-semibold whitespace-nowrap">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -556,8 +659,10 @@ function TestTab() {
                       <td className="py-2.5 px-4 font-mono text-[var(--text-secondary)]">{m.template}</td>
                       <td className="py-2.5 px-4">
                         <span className={cn("inline-flex items-center gap-1 font-semibold", look.cls)}>{look.icon}{look.label}</span>
+                        {m.failed_at && <p className="text-rose-400 whitespace-nowrap">at {fmtDateTime(m.failed_at)}</p>}
                         {m.error && <p className="text-rose-400 max-w-xs mt-0.5">{m.error_code ? `#${m.error_code} · ` : ""}{m.error}</p>}
                       </td>
+                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.sent_at ? fmtDateTime(m.sent_at) : "—"}</td>
                       <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.delivered_at ? fmtDateTime(m.delivered_at) : "—"}</td>
                       <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.read_at ? fmtDateTime(m.read_at) : "—"}</td>
                       <td className="py-2.5 px-4 text-[var(--text-secondary)]">{m.sent_by || "—"}</td>
