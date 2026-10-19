@@ -70,15 +70,27 @@ async def env(monkeypatch):
             return await s.get(User, state["user"])
 
     calls = []
+    subscribed = []
 
     async def fake_call(cfg, method, path, **kw):
         calls.append((method, path, kw))
+        if path.endswith("subscribed_apps"):
+            if method == "POST":
+                subscribed.append({"whatsapp_business_api_data": {"id": "77", "name": "BP leads store"}})
+                return {"success": True}
+            return {"data": subscribed}
         if path.endswith("/messages"):
             if kw["json"]["to"] == "910000000000":
                 raise wa_client.WhatsAppError("Template name does not exist in the translation", "132001")
             return {"messages": [{"id": "wamid.TEST1"}]}
         if path.endswith("message_templates"):
-            return {"data": [{"name": "booking_received", "status": "APPROVED", "language": "en", "category": "UTILITY"}]}
+            return {"data": [
+                {"name": "booking_received", "status": "APPROVED", "language": "en", "category": "UTILITY",
+                 "components": [{"type": "BODY", "text": "Hi {{customer_name}}"}]},
+                {"name": "lead_not_attended", "status": "APPROVED", "language": "en", "category": "UTILITY",
+                 "components": [{"type": "BODY", "text": "x"}, {"type": "BUTTONS", "buttons": [
+                     {"type": "URL", "text": "View Lead", "url": "https://dash.breakprotection.com/leads/{{1}}"}]}]},
+            ]}
         if cfg.access_token == "bad":
             raise wa_client.WhatsAppError("Invalid OAuth access token", "190")
         return {"display_phone_number": "+91 80000 00000", "verified_name": "Break Protection"}
@@ -162,6 +174,15 @@ async def test_test_send_and_delivery_statuses(env):
     templates = (await c.get("/api/v1/whatsapp/templates")).json()
     assert len(templates["templates"]) == 7 and templates["meta_checked"]
     assert templates["templates"][0]["meta"][0]["status"] == "APPROVED"
+    assert templates["templates"][0]["meta"][0]["buttons"] == []
+    b2 = next(t for t in templates["templates"] if t["name"] == "lead_not_attended")
+    assert b2["meta"][0]["buttons"] == [{"type": "URL", "text": "View Lead", "dynamic": True}]
+
+    # subscription check: not subscribed → subscribe → subscribed
+    r = await c.get("/api/v1/whatsapp/webhook-check")
+    assert r.json() == {"checked": True, "subscribed": False, "apps": []}
+    r = await c.post("/api/v1/whatsapp/webhook-subscribe")
+    assert r.status_code == 200 and r.json()["subscribed"] and r.json()["apps"] == ["BP leads store"]
 
     values = {"lead_name": "Priya", "lead_source": "PM", "received_time": "18 Oct 2026, 7:30 PM"}
     r = await c.post("/api/v1/whatsapp/test-send", json={
@@ -209,6 +230,8 @@ async def test_test_send_and_delivery_statuses(env):
 
     r = await c.post("/api/v1/public/whatsapp/webhook", content=b"{}", headers={"x-hub-signature-256": "sha256=bad"})
     assert r.status_code == 403
+    err = (await c.get("/api/v1/whatsapp/config")).json()["last_webhook_error"]
+    assert err["at"] and "App secret" in err["reason"]
     assert (await post([{"id": "wamid.TEST1", "status": "sent", "timestamp": "1792330000"}])).json()["updated"] == 1
     await post([{"id": "wamid.TEST1", "status": "read", "timestamp": "1792330060"}])
     await post([{"id": "wamid.TEST1", "status": "delivered", "timestamp": "1792330030"}])  # late: never undoes read
@@ -218,6 +241,12 @@ async def test_test_send_and_delivery_statuses(env):
     failed = next(m for m in items if m["to"] == "910000000000")
     assert failed["status"] == "failed" and failed["error_code"] == "132001"
     assert (await c.get("/api/v1/whatsapp/config")).json()["last_webhook_at"]
+
+    log = (await c.get("/api/v1/whatsapp/webhook-log")).json()["items"]
+    kinds = [(e["kind"], e["ok"]) for e in log]
+    assert ("verify", True) in kinds and ("verify", False) in kinds and ("update", False) in kinds
+    assert "1 status update (read 1) · 1 matched" in log[1]["summary"]  # newest first: delivered, read, sent
+    assert "Refused" in next(e for e in log if e["kind"] == "update" and not e["ok"])["summary"]
 
     await post([{"id": "wamid.TEST1", "status": "failed", "timestamp": "1792330090",
                  "errors": [{"code": 131026, "title": "Message undeliverable"}]}])

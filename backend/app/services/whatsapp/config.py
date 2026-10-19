@@ -17,6 +17,9 @@ from ...models.models import Setting
 
 CONFIG_KEY = "whatsapp.config"
 LAST_WEBHOOK_KEY = "whatsapp.last_webhook_at"
+LAST_WEBHOOK_ERROR_KEY = "whatsapp.last_webhook_error"
+WEBHOOK_LOG_KEY = "whatsapp.webhook_log"
+WEBHOOK_LOG_SIZE = 50
 WEBHOOK_PATH = "/api/v1/public/whatsapp/webhook"
 
 
@@ -51,6 +54,12 @@ class WhatsAppConfig:
     def signing_secret(self) -> str:
         # The WhatsApp app may be the same Meta app as the lead forms.
         return self.app_secret or settings.META_APP_SECRET
+
+    @property
+    def signing_secrets(self) -> list[str]:
+        """Every secret a webhook call may be signed with: the one saved on
+        the Setup tab and the lead-forms app's, in case they differ."""
+        return [s for s in dict.fromkeys([self.app_secret, settings.META_APP_SECRET]) if s]
 
 
 def _decrypt(value: str) -> str:
@@ -121,6 +130,48 @@ async def mark_webhook_received(db: AsyncSession) -> None:
 
 async def last_webhook_at(db: AsyncSession) -> str | None:
     return await _raw(db, LAST_WEBHOOK_KEY) or None
+
+
+async def mark_webhook_rejected(db: AsyncSession, reason: str) -> None:
+    """Remember why the last webhook call was refused, for the Setup tab."""
+    value = json.dumps({"at": datetime.utcnow().isoformat(), "reason": reason})
+    row = await db.get(Setting, LAST_WEBHOOK_ERROR_KEY)
+    if row:
+        row.value = value
+    else:
+        db.add(Setting(key=LAST_WEBHOOK_ERROR_KEY, value=value))
+
+
+async def log_webhook(db: AsyncSession, *, kind: str, ok: bool, status: int, summary: str,
+                      ip: str | None = None, test: bool = False) -> None:
+    """Keep the last few webhook calls (newest first) for the Setup tab, so
+    an admin can see whether Meta calls the webhook at all, and what happened."""
+    try:
+        log = json.loads(await _raw(db, WEBHOOK_LOG_KEY) or "[]")
+    except ValueError:
+        log = []
+    log.insert(0, {"at": datetime.utcnow().isoformat(), "kind": kind, "ok": ok, "status": status,
+                   "summary": summary[:300], "ip": ip, "test": test})
+    value = json.dumps(log[:WEBHOOK_LOG_SIZE])
+    row = await db.get(Setting, WEBHOOK_LOG_KEY)
+    if row:
+        row.value = value
+    else:
+        db.add(Setting(key=WEBHOOK_LOG_KEY, value=value))
+
+
+async def webhook_log(db: AsyncSession) -> list[dict]:
+    try:
+        return json.loads(await _raw(db, WEBHOOK_LOG_KEY) or "[]")
+    except ValueError:
+        return []
+
+
+async def last_webhook_error(db: AsyncSession) -> dict | None:
+    try:
+        return json.loads(await _raw(db, LAST_WEBHOOK_ERROR_KEY) or "null")
+    except ValueError:
+        return None
 
 
 def webhook_url() -> str:

@@ -57,8 +57,30 @@ async def check_phone_number(cfg: WhatsAppConfig) -> dict:
 async def list_templates(cfg: WhatsAppConfig) -> list[dict]:
     """Templates on the WhatsApp Business Account with their approval status."""
     data = await _call(cfg, "GET", f"{cfg.waba_id}/message_templates",
-                       params={"fields": "name,status,language,category", "limit": 200})
+                       params={"fields": "name,status,language,category,components", "limit": 200})
     return data.get("data", [])
+
+
+def meta_buttons(template: dict) -> list[dict]:
+    """The buttons on an approved template, in order: type (QUICK_REPLY,
+    URL, FLOW, PHONE_NUMBER…), text, and whether a link takes a {{1}}."""
+    for c in template.get("components") or []:
+        if c.get("type") == "BUTTONS":
+            return [{"type": (b.get("type") or "").upper(), "text": b.get("text", ""),
+                     "dynamic": "{{" in (b.get("url") or "")} for b in c.get("buttons") or []]
+    return []
+
+
+async def subscribed_apps(cfg: WhatsAppConfig) -> list[dict]:
+    """Apps that receive this WhatsApp Business Account's webhooks. Without
+    a subscription Meta sends no message statuses at all."""
+    data = await _call(cfg, "GET", f"{cfg.waba_id}/subscribed_apps")
+    return [(a.get("whatsapp_business_api_data") or a) for a in data.get("data", [])]
+
+
+async def subscribe_app(cfg: WhatsAppConfig) -> bool:
+    data = await _call(cfg, "POST", f"{cfg.waba_id}/subscribed_apps")
+    return bool(data.get("success"))
 
 
 async def send_template(db: AsyncSession, cfg: WhatsAppConfig, *, to: str, template: str, language: str,
@@ -83,11 +105,15 @@ async def send_template(db: AsyncSession, cfg: WhatsAppConfig, *, to: str, templ
     return msg
 
 
-def signature_ok(secret: str, body: bytes, header: str) -> bool:
-    if not secret or not header.startswith("sha256="):
+def signature_ok(secrets: str | list[str], body: bytes, header: str) -> bool:
+    if isinstance(secrets, str):
+        secrets = [secrets]
+    if not header.startswith("sha256="):
         return False
-    digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(header[7:], digest)
+    return any(
+        hmac.compare_digest(header[7:], hmac.new(s.encode(), body, hashlib.sha256).hexdigest())
+        for s in secrets if s
+    )
 
 
 def _ts(value) -> datetime:
@@ -95,6 +121,31 @@ def _ts(value) -> datetime:
         return datetime.fromtimestamp(int(value), tz=timezone.utc).replace(tzinfo=None)
     except (TypeError, ValueError):
         return datetime.utcnow()
+
+
+def summarize(payload: dict, matched: int) -> str:
+    """One line for the webhook log: what Meta sent in this call."""
+    counts: dict[str, int] = {}
+    incoming = 0
+    fields: set[str] = set()
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            fields.add(change.get("field") or "?")
+            value = change.get("value") or {}
+            for st in value.get("statuses", []) or []:
+                counts[st.get("status") or "?"] = counts.get(st.get("status") or "?", 0) + 1
+            incoming += len(value.get("messages", []) or [])
+    parts = []
+    total = sum(counts.values())
+    if total:
+        detail = ", ".join(f"{k} {v}" for k, v in counts.items())
+        parts.append(f"{total} status update{'s' if total > 1 else ''} ({detail}) · "
+                     f"{matched} matched a sent message" + ("" if matched == total else f", {total - matched} unknown"))
+    if incoming:
+        parts.append(f"{incoming} incoming message{'s' if incoming > 1 else ''}")
+    if not parts:
+        parts.append(f"nothing to record (field: {', '.join(sorted(fields)) or 'none'})")
+    return " · ".join(parts)
 
 
 async def apply_statuses(db: AsyncSession, payload: dict) -> int:
