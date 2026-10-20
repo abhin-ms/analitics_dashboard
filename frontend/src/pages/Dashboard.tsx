@@ -19,6 +19,7 @@ import { useSocketRefresh } from "../hooks/useSocketRefresh";
 import { AISummary } from "@/components/dashboard/AISummary";
 import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { DashboardInbox } from "@/features/crm/components/DashboardInbox";
+import { TodayCalling } from "@/features/crm/components/TodayCalling";
 import TeamLeaderRanking from "@/components/dashboard/TeamLeaderRanking";
 import {
   CardFilterPopover,
@@ -1407,6 +1408,7 @@ export default function Dashboard() {
             <h3 className="text-sm font-semibold text-white">Telecalling · today</h3>
             <Link to="/leads" className="text-xs text-blue-400 hover:underline">Open Leads →</Link>
           </div>
+          <TodayCalling />
           <DashboardInbox mine={false} showTiles />
         </div>
           </div>

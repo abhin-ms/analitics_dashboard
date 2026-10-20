@@ -236,7 +236,10 @@ function CallReport() {
   };
 
   const save = async () => {
-    const body: ActivityBody = { outcome, notes: notes.trim() || undefined, call_seconds: secs };
+    const body: ActivityBody = {
+      outcome, notes: notes.trim() || undefined, call_seconds: secs,
+      call_started_at: new Date(call.startedAt).toISOString(),
+    };
     if (outcome === "callback_requested") body.callback_at = localInputToISO(when);
     if (outcome === "appointment_booked") {
       body.appointment_at = localInputToISO(when);

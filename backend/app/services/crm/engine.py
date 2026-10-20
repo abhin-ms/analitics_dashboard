@@ -18,7 +18,7 @@ from .status import (
     OUTCOMES, derive_priority, derive_stage, normalize_status,
 )
 from .timeutil import (
-    add_working_minutes, ist_day_bounds_utc, ist_today, next_working_day_opening,
+    add_working_minutes, ist_day_bounds_utc, ist_today, iso_utc, next_working_day_opening,
     to_ist, utcnow,
 )
 
@@ -135,11 +135,15 @@ def create_followup(db: AsyncSession, lead: TeleCallLead, *, kind: str, due_at: 
 
 
 async def close_open_followups(db: AsyncSession, lead: TeleCallLead, *, status: str,
-                               user_id: int | None, outcome: str | None, now: datetime) -> list[int]:
+                               user_id: int | None, outcome: str | None, now: datetime,
+                               done_at: datetime | None = None) -> list[int]:
+    """Close the lead's open follow-ups. `done_at` is when the work really
+    happened (a call's start time) if earlier than `now`; never before the
+    follow-up itself was created."""
     fus = await open_followups(db, lead.id)
     for fu in fus:
         fu.status = status
-        fu.completed_at = now
+        fu.completed_at = max(done_at, fu.created_at) if done_at and fu.created_at else (done_at or now)
         fu.completed_by = user_id
         fu.outcome = outcome
     lead.next_follow_up_at = None
@@ -402,12 +406,21 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
                       callback_at: datetime | None = None, next_follow_up_at: datetime | None = None,
                       appointment_at: datetime | None = None, appointment_purpose: str | None = None,
                       store_id: int | None = None, sale_amount=None, actor_role: str = "",
-                      call_seconds: int | None = None, now: datetime | None = None) -> dict:
-    """Record what happened on a lead and schedule the next step."""
+                      call_seconds: int | None = None, call_started_at: datetime | None = None,
+                      now: datetime | None = None) -> dict:
+    """Record what happened on a lead and schedule the next step.
+
+    `call_started_at` (when the telecaller tapped Call on the mobile view) is
+    the call's time: it decides whether a first call / follow-up was on time
+    and when the lead was contacted. The next step is still scheduled from
+    `now`, when the outcome was saved."""
     if outcome not in OUTCOMES:
         raise ValueError(f"Unknown outcome: {outcome}")
     spec = OUTCOMES[outcome]
     now = now or utcnow()
+    # A start time from the phone is trusted only if it is plausible.
+    call_at = (call_started_at if call_started_at and now - timedelta(hours=6) <= call_started_at <= now
+               else now)
     is_note = bool(spec.get("is_note"))
     old_status = lead.status or ""
     old_stage = lead.stage
@@ -429,10 +442,10 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
         mark_edited(lead, "sale_amount")
 
     if not is_note:
-        lead.last_contact_at = now
+        lead.last_contact_at = call_at
         if lead.first_contact_at is None:
-            lead.first_contact_at = now
-        lead.call_date = ist_today(now).isoformat()
+            lead.first_contact_at = call_at
+        lead.call_date = ist_today(call_at).isoformat()
         mark_edited(lead, "call_date")
         lead.is_urgent = False
     lead.edited_by_user = True
@@ -441,16 +454,19 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
     meta = {"stage_from": old_stage, "stage_to": lead.stage}
     if call_seconds is not None and not is_note:
         meta["call_seconds"] = int(call_seconds)
+    if call_at != now and not is_note:
+        meta["call_started_at"] = iso_utc(call_at)
     add_activity(
         db, lead, "note" if is_note else "call", user_id=actor.id, outcome=outcome,
         old_value=(old_status or "No Status") if new_status and new_status != old_status else None,
         new_value=new_status if new_status and new_status != old_status else None,
-        notes=notes, meta=meta, at=now,
+        notes=notes, meta=meta, at=call_at if not is_note else now,
     )
 
     closed: list[int] = []
     if not is_note:
-        closed = await close_open_followups(db, lead, status="done", user_id=actor.id, outcome=outcome, now=now)
+        closed = await close_open_followups(db, lead, status="done", user_id=actor.id, outcome=outcome, now=now,
+                                            done_at=call_at)
         await resolve_alerts_for_lead(db, lead.id, ["first_call_overdue", "first_call_escalated",
                                                     "followup_overdue", "unassigned"], now)
 
