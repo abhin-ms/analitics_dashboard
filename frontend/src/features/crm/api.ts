@@ -84,6 +84,8 @@ export interface ActivityBody {
   sale_amount?: string;
   /** Call length timed by the mobile call screen (call button → End call). */
   call_seconds?: number;
+  /** When Call was tapped (ISO): decides whether the call was on time. */
+  call_started_at?: string;
 }
 
 export function useLogActivity() {
@@ -138,6 +140,43 @@ export interface OverviewResponse {
     missing_model: number;
     unknown_status: number;
   };
+}
+
+export interface TodayCallingAgent {
+  user_id: number;
+  name: string;
+  role: string | null;
+  available: boolean;
+  calls: number;
+  connected: number;
+  first_calls_total: number;
+  first_calls_on_time: number;
+  avg_first_call_minutes: number | null;
+  talk_seconds: number;
+  timed_calls: number;
+  last_call_at: string | null;
+}
+
+export interface TodayCalling {
+  date: string;
+  first_call_minutes: number;
+  summary: {
+    calls: number; connected: number; first_calls_total: number; first_calls_on_time: number;
+    talk_seconds: number; telecallers: number; calling: number; late: number; waiting: number;
+  };
+  agents: TodayCallingAgent[];
+  late: {
+    lead_id: number; lead_name: string; owner: string | null; received_at: string; due_at: string;
+    called_at: string | null; minutes_to_call: number | null; late_by_minutes: number; still_waiting: boolean;
+  }[];
+}
+
+export function useTodayCalling() {
+  return useQuery({
+    queryKey: [CRM_KEY, "today-calling"],
+    queryFn: () => api.get<TodayCalling>("/crm/reports/today"),
+    refetchInterval: 60_000,
+  });
 }
 
 export function useOverview(mine?: boolean) {

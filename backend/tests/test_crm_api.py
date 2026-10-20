@@ -327,3 +327,28 @@ async def test_team_overview_shows_team_leaders_with_their_telecallers(env):
     tl_view = (await as_user("tl").get("/api/v1/crm/team-overview")).json()
     assert len(tl_view["teams"]) == 1 and tl_view["unattached_telecallers"] == []
     assert (await as_user("sureka").get("/api/v1/crm/team-overview")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_call_start_time_and_todays_calling(env):
+    as_user, ids = env
+    c = as_user("sureka")
+    lead_id = (await c.get("/api/v1/crm/leads", params={"q": "Leena"})).json()["items"][0]["id"]
+    started = utcnow() - timedelta(minutes=4)
+    r = await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={
+        "outcome": "callback_requested", "callback_at": (utcnow() + timedelta(days=1)).isoformat() + "Z",
+        "call_seconds": 95, "call_started_at": started.isoformat() + "Z"})
+    assert r.status_code == 200, r.text
+    call = next(t for t in (await c.get(f"/api/v1/crm/leads/{lead_id}")).json()["timeline"] if t["type"] == "call")
+    assert call["meta"]["call_started_at"] and call["at"].startswith(started.isoformat()[:16])  # the call's time, not the save time
+    # a start time in the future is ignored (save time is used)
+    r = await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={
+        "outcome": "busy", "call_seconds": 10, "call_started_at": (utcnow() + timedelta(hours=2)).isoformat() + "Z"})
+    assert r.status_code == 200
+
+    assert (await c.get("/api/v1/crm/reports/today")).status_code == 403   # telecallers don't get the team view
+    data = (await as_user("tl").get("/api/v1/crm/reports/today")).json()
+    row = next(a for a in data["agents"] if a["user_id"] == ids["sureka"])
+    assert row["calls"] == 2 and row["connected"] == 1 and row["talk_seconds"] == 105 and row["last_call_at"]
+    assert data["summary"]["calls"] >= 2 and data["summary"]["calling"] >= 1
+    assert "first_call_minutes" in data and isinstance(data["late"], list)

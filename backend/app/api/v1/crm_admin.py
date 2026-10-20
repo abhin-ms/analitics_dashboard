@@ -29,7 +29,7 @@ from ...services.crm.engine import (
 )
 from ...services.crm.scope import CrmScope, get_scope, lead_filter, sheet_members, visible_agents
 from ...services.crm.status import CLOSED_STAGES, NO_STATUS, STAGE_LABELS, STATUSES
-from ...services.crm.timeutil import ist_today, iso_utc, to_ist, utcnow
+from ...services.crm.timeutil import ist_day_bounds_utc, ist_today, iso_utc, to_ist, utcnow, working_minutes_between
 from ...services.tele_call_sync import LAST_SYNC, TELE_CALL_SHEETS
 
 router = APIRouter(prefix="/crm", tags=["Telecalling CRM"])
@@ -87,6 +87,91 @@ async def agents_report(start: str = Query(""), end: str = Query(""), sheet: str
         "can_coach": scope.can_reassign,
         "sheets": scope.sheets if not scope.is_admin else [s["tl_name"] for s in TELE_CALL_SHEETS],
         "go_live": iso_utc(await get_go_live(db)),
+    }
+
+
+@router.get("/reports/today")
+async def today_calling(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Today's calling at a glance, for admins and team leaders: per
+    telecaller whether they're calling (last call), calls, connected,
+    first calls on time and talk time, plus the first calls that were late
+    or are still waiting."""
+    scope = await _scope(db, user)
+    if not scope.can_reassign:
+        raise HTTPException(status_code=403, detail="Only team leaders and admins can see the team's calling")
+    automation = await get_automation(db)
+    targets = await get_targets(db)
+    wh = automation["working_hours"]
+    now = utcnow()
+    day_start, day_end = ist_day_bounds_utc(ist_today(now))
+    agents = await visible_agents(db, scope)
+    ids = [a["id"] for a in agents]
+    sla = await crm_metrics.sla_metrics(db, ids, day_start, day_end, now=now, automation=automation, targets=targets)
+
+    # talk time and last call, from today's logged calls
+    talk: dict[int, int] = defaultdict(int)
+    timed: dict[int, int] = defaultdict(int)
+    last_call: dict[int, object] = {}
+    for uid, at, meta in (await db.execute(
+        select(TeleLeadActivity.user_id, TeleLeadActivity.created_at, TeleLeadActivity.meta)
+        .where(TeleLeadActivity.user_id.in_(ids or [-1]), TeleLeadActivity.type == "call",
+               TeleLeadActivity.created_at >= day_start, TeleLeadActivity.created_at < day_end)
+    )).all():
+        secs = (meta or {}).get("call_seconds") if isinstance(meta, dict) else None
+        if isinstance(secs, (int, float)):
+            talk[uid] += int(secs)
+            timed[uid] += 1
+        if uid not in last_call or at > last_call[uid]:
+            last_call[uid] = at
+
+    rows = []
+    for a in agents:
+        m = sla.get(a["id"], {})
+        calls = m.get("calls_logged", 0)
+        if a.get("role") == "Team Leader" and not calls and not m.get("first_calls_total"):
+            continue  # team leaders only when they called today
+        rows.append({
+            "user_id": a["id"], "name": a["name"], "role": a.get("role"), "available": a.get("available", True),
+            "calls": calls, "connected": m.get("calls_connected_logged", 0),
+            "first_calls_total": m.get("first_calls_total", 0), "first_calls_on_time": m.get("first_calls_on_time", 0),
+            "avg_first_call_minutes": m.get("avg_first_call_minutes"),
+            "talk_seconds": talk.get(a["id"], 0), "timed_calls": timed.get(a["id"], 0),
+            "last_call_at": iso_utc(last_call.get(a["id"])),
+        })
+    rows.sort(key=lambda r: (-r["calls"], r["name"].lower()))
+
+    # first calls due today that were late, or are overdue and still open
+    names = {a["id"]: a["name"] for a in agents}
+    late = []
+    for fu, lead_name in (await db.execute(
+        select(TeleLeadFollowup, TeleCallLead.full_name)
+        .join(TeleCallLead, TeleCallLead.id == TeleLeadFollowup.lead_id)
+        .where(TeleLeadFollowup.owner_user_id.in_(ids or [-1]), TeleLeadFollowup.kind == "first_call",
+               TeleLeadFollowup.due_at >= day_start, TeleLeadFollowup.due_at < day_end)
+    )).all():
+        done = fu.status == "done" and fu.completed_at is not None
+        waiting = fu.status == "open" and fu.due_at < now
+        if not ((done and fu.completed_at > fu.due_at) or waiting):
+            continue
+        end = fu.completed_at if done else now
+        late.append({
+            "lead_id": fu.lead_id, "lead_name": lead_name or "Unknown", "owner": names.get(fu.owner_user_id),
+            "received_at": iso_utc(fu.created_at), "due_at": iso_utc(fu.due_at),
+            "called_at": iso_utc(fu.completed_at) if done else None,
+            "minutes_to_call": round(working_minutes_between(fu.created_at, end, wh)) if fu.created_at else None,
+            "late_by_minutes": round(working_minutes_between(fu.due_at, end, wh)),
+            "still_waiting": waiting,
+        })
+    late.sort(key=lambda r: (not r["still_waiting"], -(r["late_by_minutes"] or 0)))
+
+    total = {k: sum(r[k] for r in rows) for k in ("calls", "connected", "first_calls_total", "first_calls_on_time", "talk_seconds")}
+    return {
+        "date": ist_today(now).isoformat(),
+        "first_call_minutes": automation["first_call_minutes"],
+        "summary": {**total, "telecallers": len(rows), "calling": sum(1 for r in rows if r["calls"]),
+                    "late": len(late), "waiting": sum(1 for r in late if r["still_waiting"])},
+        "agents": rows,
+        "late": late[:50],
     }
 
 
