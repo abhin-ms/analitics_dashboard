@@ -42,7 +42,12 @@ async def mcp_sync_status(
     from ...services.mcp_sync_service import LAST_SYNC_SETTING_KEY
     result = await db.execute(select(Setting).where(Setting.key == LAST_SYNC_SETTING_KEY))
     setting = result.scalar_one_or_none()
-    return {"last_synced_at": setting.value if setting else None}
+    value = setting.value if setting else None
+    # Stored as naive UTC (datetime.utcnow()); mark it as UTC or the browser
+    # reads it as local time and the badge shows a sync 5½ hours too early.
+    if value and not value.endswith("Z") and "+" not in value[10:]:
+        value += "Z"
+    return {"last_synced_at": value}
 
 
 async def _daily_tracker_source(db: AsyncSession) -> SheetSource | None:
