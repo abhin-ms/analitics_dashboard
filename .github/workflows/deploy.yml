@@ -43,6 +43,10 @@ jobs:
         working-directory: backend
         env:
           JWT_SECRET_KEY: ci-only-not-a-real-secret
+          # Same clock as production (docker-compose sets TZ: Asia/Kolkata):
+          # the app's date.today() means the IST day, and on the runner's
+          # UTC clock "today" is the day before from midnight to 5:30 AM IST.
+          TZ: Asia/Kolkata
         run: |
           pip install -r requirements.txt aiosqlite
           python -m pytest tests -q
