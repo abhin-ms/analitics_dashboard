@@ -9,7 +9,9 @@ retry, not a new lead).
 
 Routing: preferred store → that store's team leader → one of that team
 leader's telecallers (fewest leads assigned today first). No store match or
-no team leader → the lead stays unassigned and admins are alerted.
+no team leader → the team leader of the customer's area / country gets it
+to assign by hand (fallback_team_leader); failing that it stays unassigned
+and admins are alerted.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from ...models.models import (
     LeadSubmission, Role, Store, StoreMcpAlias, TeleAppointment, TeleCallLead, TeleSheetAssignment, User,
 )
 from .config import ensure_go_live, get_automation
+from .night_queue import queue_lead, should_queue
 from .engine import (
     add_activity, admin_ids, create_alert, create_followup, norm_phone, refresh_derived,
     team_leader_ids, transfer_ownership,
@@ -148,9 +151,34 @@ async def _real_team_leader(db: AsyncSession, store: Store | None) -> User | Non
     return tl
 
 
+async def fallback_team_leader(db: AsyncSession, texts: list[str | None], country: str | None = None) -> User | None:
+    """Team leader for a lead no store could be found for, who then assigns
+    it by hand: the TL with the most shops in the area the texts name
+    ("Nearest store (Tamil Nadu)", a state or city), else the one TL of the
+    customer's country if a single TL covers it (UAE). None when unclear."""
+    from ..store_portfolio import area_of_store
+    stores = (await db.execute(select(Store).where(Store.is_active == True))).scalars().all()  # noqa: E712
+    area = next((a for a in (area_of_store(t) for t in texts if t) if a), None)
+    if area:
+        counts: dict[int, int] = {}
+        for st in stores:
+            if area_of_store(st.name, st.region or "") == area and await _real_team_leader(db, st):
+                counts[st.team_leader_id] = counts.get(st.team_leader_id, 0) + 1
+        if counts:
+            tl_id = sorted(counts, key=lambda i: (-counts[i], i))[0]
+            return (await db.execute(select(User).where(User.id == tl_id))).scalar_one()
+    if country:
+        tls = {st.team_leader_id for st in stores
+               if _norm(st.country) == _norm(country) and await _real_team_leader(db, st)}
+        if len(tls) == 1:
+            return (await db.execute(select(User).where(User.id == tls.pop()))).scalar_one()
+    return None
+
+
 async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
     """Available telecaller on this team leader's team with the fewest leads
-    assigned today."""
+    assigned today (leads waiting for them in the night queue count too)."""
+    from .night_queue import queued_counts
     team = [u for u in await team_telecallers(db, tl) if u.available_for_leads is not False]
     if not team:
         return None
@@ -160,7 +188,8 @@ async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
         .where(TeleCallLead.owner_user_id.in_([u.id for u in team]),
                TeleCallLead.assigned_at >= start, TeleCallLead.assigned_at < end)
         .group_by(TeleCallLead.owner_user_id))).all())
-    return sorted(team, key=lambda u: (counts.get(u.id, 0), u.id))[0]
+    queued = await queued_counts(db, [u.id for u in team])
+    return sorted(team, key=lambda u: (counts.get(u.id, 0) + queued.get(u.id, 0), u.id))[0]
 
 
 async def team_telecallers(db: AsyncSession, tl: User) -> list[User]:
@@ -280,10 +309,18 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
     alerts: list = []
     owner = await pick_telecaller(db, tl) if tl else None
     owner_id = owner.id if owner else (tl.id if tl else None)
-    if owner_id:
+    fallback_tl = None if owner_id else await fallback_team_leader(
+        db, [store.name if store else None, store_text, pick(payload, "state")], pick(payload, "country"))
+    if fallback_tl:
+        tl, owner_id = fallback_tl, fallback_tl.id
+    queued = bool(owner_id) and should_queue(now, automation)
+    if queued:
+        queue_lead(db, lead, owner or tl, now=now, automation=automation)
+    elif owner_id:
         await transfer_ownership(db, lead, owner_id, source="auto", actor_id=None, now=now, automation=automation,
                                  reason=f"Website booking for {store.name if store else 'store'}"
-                                        f"{'' if owner else ' — no telecaller on the team, given to the team leader'}")
+                                        f"{' — store not matched, team leader of the area to assign' if fallback_tl else ''}"
+                                        f"{'' if owner or fallback_tl else ' — no telecaller on the team, given to the team leader'}")
         create_followup(db, lead, kind="first_call", owner_id=owner_id, at=now, reason="Call the premium website lead",
                         due_at=add_working_minutes(now, automation["first_call_minutes"], automation["working_hours"]))
     recipients = set(await team_leader_ids(db, None, owner_id)) | ({tl.id} if tl else set())
@@ -291,7 +328,7 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
         recipients.add(owner_id)
     if not owner_id:
         recipients |= set(await admin_ids(db))
-    for rid in recipients:
+    for rid in (set() if queued else recipients):  # a queued lead is announced when handed over
         await create_alert(db, recipient_id=rid, kind="premium_lead", level=1 if owner_id else 3, lead=lead,
                            title="New premium website lead (₹99 paid)" if owner_id else "Premium website lead needs an owner",
                            body=f"{lead.full_name} · {store.name if store else (store_text or 'no store')} · "
@@ -307,8 +344,8 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
                                purpose=lead.phone_model or "Store visit", attendance="scheduled", created_at=now))
 
     from .notify import emit_notifications, notify_new_lead
-    notes = await notify_new_lead(db, lead)
-    log("created", f"Lead created{'' if store else ' (store not matched)'}", lead.id)
+    notes = [] if queued else await notify_new_lead(db, lead)
+    log("created", f"Lead created{'' if store else ' (store not matched)'}{' — night queue' if queued else ''}", lead.id)
     await db.commit()
     from .engine import emit_alerts
     await emit_notifications(notes)  # first, so the browser skips a second popup for the same lead

@@ -789,6 +789,11 @@ class TeleCallLead(Base):
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     assigned_at = Column(DateTime, nullable=True)
     assignment_source = Column(String(20), nullable=True)  # sheet | auto | manual
+    # Night queue (crm/night_queue.py): a lead arriving outside working hours
+    # waits here for queued_owner_id and is handed over next morning.
+    queued_at = Column(DateTime, nullable=True)
+    queued_owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    queue_released_at = Column(DateTime, nullable=True)
     reassign_count = Column(Integer, default=0, nullable=True)
     submitted_at = Column(DateTime, nullable=True)  # parsed Meta "Created Time" (UTC)
     first_contact_at = Column(DateTime, nullable=True)

@@ -3,12 +3,12 @@ import { SourceIcon } from "@/components/shared/BrandIcon";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
-import { Plus, Search, Columns3, Bookmark, Download, UserCog, ChevronLeft, ChevronRight, Trash2, Flame, Store as StoreIcon } from "lucide-react";
+import { Plus, Search, Columns3, Bookmark, Download, UserCog, ChevronLeft, ChevronRight, Trash2, Flame, RefreshCw, Store as StoreIcon } from "lucide-react";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
 import {
-  downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews,
+  downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews, useStoreRematch,
 } from "../api";
 import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, accentStyle, rowAccent, sourceColor, stageMeta } from "../statusConfig";
 import type { CrmLead } from "../types";
@@ -89,6 +89,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const { data: views } = useSavedViews("leads");
   const saveView = useSaveView();
   const deleteView = useDeleteView();
+  const rematch = useStoreRematch();
 
   useEffect(() => setSearch(params.q), [params.q]);
   useEffect(() => {
@@ -161,7 +162,9 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
         </td>
         {show("owner") && (
           <td className="py-3 pr-3 text-xs">
-            <span className={l.owner_name ? "text-white" : "text-amber-400"}>{l.owner_name || "Unassigned"}</span>
+            {l.in_night_queue
+              ? <span className="text-sky-400" title="Came in after working hours — handed over from 10:30 AM, one every 15 minutes">Night queue{l.queued_for ? ` → ${l.queued_for}` : ""}</span>
+              : <span className={l.owner_name ? "text-white" : "text-amber-400"}>{l.owner_name || "Unassigned"}</span>}
             {l.first_call_pending && <p className="text-[11px] text-blue-400">Call within {meta?.automation.first_call_minutes ?? 5} minutes</p>}
           </td>
         )}
@@ -207,7 +210,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
               <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
             </div>
-            <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
+            <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.in_night_queue ? `Night queue${l.queued_for ? ` → ${l.queued_for}` : ""}` : l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
           <PriorityBadge priority={l.priority} />
         </div>
@@ -295,6 +298,15 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             <span>{data?.total ?? 0} leads · {selected.size} selected{isFetching ? " · updating…" : ""}</span>
             {selected.size > 0 && meta?.can.reassign && (
               <Button size="sm" onClick={() => setDialog("assign")}><UserCog size={13} />Assign selected</Button>
+            )}
+            {meta?.can.edit_settings && (
+              <Button size="sm" loading={rematch.isPending} onClick={async () => {
+                try {
+                  const r = await rematch.mutateAsync(true);
+                  const assigned = r.leads.length + r.forms.reduce((n, f) => n + f.waiting_leads, 0);
+                  toast.success(`${assigned} lead${assigned === 1 ? "" : "s"} assigned · ${r.merged.length} duplicate${r.merged.length === 1 ? "" : "s"} merged`);
+                } catch (e) { toast.error(e instanceof Error ? e.message : "Could not assign leads"); }
+              }}><RefreshCw size={13} />Assign unassigned leads</Button>
             )}
             {(views?.views.length ?? 0) > 0 && (
               <span className="flex flex-wrap items-center gap-1">

@@ -93,7 +93,11 @@ interface Contacts {
 
 interface Template {
   key: string;
+  /** the name it has on Meta now (changeable here); default_name is the one in the code */
   name: string;
+  default_name: string;
+  language: string;
+  header?: "document";
   label: string;
   recipient: string;
   trigger: string;
@@ -500,7 +504,7 @@ function TestTab() {
   const { data: cfg } = useQuery({ queryKey: ["whatsapp", "config"], queryFn: () => api.get<WaConfig>("/whatsapp/config") });
   const { data, isLoading } = useQuery({
     queryKey: ["whatsapp", "templates"],
-    queryFn: () => api.get<{ templates: Template[]; meta_checked: boolean; meta_error: string | null }>("/whatsapp/templates"),
+    queryFn: () => api.get<{ templates: Template[]; meta_checked: boolean; meta_error: string | null; meta_names: string[] }>("/whatsapp/templates"),
   });
   const messages = useQuery({
     queryKey: ["whatsapp", "messages"],
@@ -510,8 +514,18 @@ function TestTab() {
       && m.created_at && Date.now() - new Date(m.created_at).getTime() < 10 * 60_000) ? 4000 : false),
   });
 
-  const [selected, setSelected] = useState("");
-  const tpl = data?.templates.find((t) => t.name === selected) ?? data?.templates[0];
+  const [selected, setSelected] = useState("");  // template key — stays put when its name changes
+  const tpl = data?.templates.find((t) => t.key === selected) ?? data?.templates[0];
+  const [newName, setNewName] = useState("");
+  const [newLang, setNewLang] = useState("en");
+  const rename = useMutation({
+    mutationFn: () => api.put<Template>(`/whatsapp/templates/${tpl!.key}`, { name: newName.trim(), language: newLang.trim() || "en" }),
+    onSuccess: (t) => {
+      toast.success(`${t.key} now sends as ${t.name} (${t.language}) everywhere`);
+      qc.invalidateQueries({ queryKey: ["whatsapp", "templates"] });
+      qc.invalidateQueries({ queryKey: ["crm"] });
+    },
+  });
   const [to, setTo] = useState("");
   const [language, setLanguage] = useState("en");
   const [values, setValues] = useState<Record<string, string>>({});
@@ -523,8 +537,10 @@ function TestTab() {
     setValues(Object.fromEntries(tpl.params.map((p) => [p.name, p.sample])));
     setButtonValues(Object.fromEntries(tpl.buttons.map((b, i) => [i, b.sample || ""])));
     setInclude(new Set(tpl.buttons.map((_, i) => i).filter((i) => onMeta(tpl, i) !== false)));
-    if (tpl.meta[0]?.language) setLanguage(tpl.meta[0].language);
-  }, [tpl?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+    setLanguage(tpl.meta.find((m) => m.language === tpl.language)?.language || tpl.meta[0]?.language || tpl.language);
+    setNewName(tpl.name);
+    setNewLang(tpl.language);
+  }, [tpl?.key, tpl?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const preview = useMemo(() => (tpl ? tpl.body.replace(/\{\{(\w+)\}\}/g, (_, n) => values[n] || `{{${n}}}`) : ""), [tpl, values]);
 
@@ -555,8 +571,8 @@ function TestTab() {
           <CardHeader title="Templates" />
           <div className="divide-y divide-[var(--border-subtle)]">
             {data.templates.map((t) => (
-              <button key={t.name} onClick={() => setSelected(t.name)}
-                className={cn("w-full text-left px-4 py-2.5 cursor-pointer", t.name === tpl.name ? "bg-blue-500/10" : "hover:bg-[var(--bg-card-hover)]")}>
+              <button key={t.key} onClick={() => setSelected(t.key)}
+                className={cn("w-full text-left px-4 py-2.5 cursor-pointer", t.key === tpl.key ? "bg-blue-500/10" : "hover:bg-[var(--bg-card-hover)]")}>
                 <span className="flex items-center gap-2">
                   <span className="text-[11px] font-bold text-blue-400 w-6">{t.key}</span>
                   <span className="text-sm text-[var(--text-primary)] flex-1 min-w-0 truncate">{t.label}</span>
@@ -570,6 +586,35 @@ function TestTab() {
 
         <Card>
           <CardHeader title={`${tpl.key} · ${tpl.label}`} subtitle={`To ${tpl.recipient} · when: ${tpl.trigger}`} />
+          <div className="px-5 pt-4 pb-1 space-y-2 border-b border-[var(--border-subtle)]">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Template name on Meta</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Name">
+                <input className={cn(inputCls, "font-mono min-w-[220px]")} value={newName} list="wa-meta-names"
+                  disabled={!canEdit} onChange={(e) => setNewName(e.target.value)} />
+              </Field>
+              <datalist id="wa-meta-names">{data.meta_names.map((n) => <option key={n} value={n} />)}</datalist>
+              <Field label="Language">
+                <input className={cn(inputCls, "w-24")} value={newLang} disabled={!canEdit} onChange={(e) => setNewLang(e.target.value)} />
+              </Field>
+              {canEdit && (
+                <Button onClick={() => rename.mutate()} loading={rename.isPending}
+                  disabled={!newName.trim() || (newName.trim() === tpl.name && (newLang.trim() || "en") === tpl.language)}>
+                  Save name
+                </Button>
+              )}
+            </div>
+            <ErrorText error={rename.error} />
+            <p className="text-[11px] text-[var(--text-muted)] pb-2">
+              Renamed or re-created the template on Meta? Enter its new name — the variables
+              ({tpl.params.map((p) => `{{${p.name}}}`).join(", ") || "none"}) and buttons must stay the same.
+              Every message of this kind is sent under the new name from then on.
+              {tpl.name !== tpl.default_name && <> Original name: <code>{tpl.default_name}</code>.</>}
+              {data.meta_checked && !data.meta_names.includes(tpl.name) && (
+                <span className="text-amber-400"> No template named {tpl.name} on the account yet.</span>
+              )}
+            </p>
+          </div>
           <div className="px-5 py-4 grid grid-cols-1 xl:grid-cols-2 gap-5">
             <div className="space-y-3">
               <div className="grid grid-cols-[1fr_90px] gap-2">
@@ -614,7 +659,9 @@ function TestTab() {
                 </>
               )}
               <ErrorText error={send.error} />
-              {canEdit && (
+              {tpl.header === "document" ? (
+                <p className="text-xs text-[var(--text-muted)]">This one carries the report PDF — test it with <b>Send now</b> in CRM Settings → Integrations → CEO lead report.</p>
+              ) : canEdit && (
                 <Button variant="primary" onClick={() => send.mutate()} loading={send.isPending} disabled={!to.trim() || !cfg?.enabled}>
                   <Send size={14} />Send test message
                 </Button>

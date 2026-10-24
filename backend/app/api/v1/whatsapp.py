@@ -331,10 +331,42 @@ async def read_templates(db: AsyncSession = Depends(get_db), _u: User = require_
             meta_error = str(e)
     return {
         "templates": [{**wa_templates.public_view(t), "meta": meta_status.get(t["name"], [])}
-                      for t in wa_templates.TEMPLATES],
+                      for t in await wa_templates.effective_templates(db)],
         "meta_checked": bool(cfg.ready and cfg.waba_id and not meta_error),
         "meta_error": meta_error,
+        # every template name on the account, to pick a renamed one from
+        "meta_names": sorted(meta_status),
     }
+
+
+class TemplateNameIn(BaseModel):
+    name: str
+    language: str = "en"
+
+
+@router.put("/templates/{key}")
+async def rename_template(key: str, body: TemplateNameIn, db: AsyncSession = Depends(get_db),
+                          user: User = require_permission("settings", "edit")):
+    """Use another Meta template name for this template (same variables and
+    buttons). Every place that sends it picks the new name up."""
+    import re
+    if key not in wa_templates.BY_KEY:
+        raise HTTPException(status_code=404, detail="Unknown template")
+    name, language = body.name.strip(), body.language.strip() or "en"
+    if not re.fullmatch(wa_templates.NAME_RE, name):
+        raise HTTPException(status_code=400, detail="Template names use only lower-case letters, digits and _")
+    if not re.fullmatch(r"[A-Za-z]{2,3}(_[A-Za-z]{2})?", language):
+        raise HTTPException(status_code=400, detail="Language is a code like en or en_US")
+    clash = next((t for t in await wa_templates.effective_templates(db) if t["name"] == name and t["key"] != key), None)
+    if clash:
+        raise HTTPException(status_code=400, detail=f"{clash['key']} · {clash['label']} already uses {name}")
+    before = await wa_templates.get_template(db, key)
+    await wa_templates.save_name(db, key, name, language, user.id)
+    record_audit(db, user.id, "whatsapp_template_name", "settings", None,
+                 before={"key": key, "name": before["name"], "language": before["language"]},
+                 after={"key": key, "name": name, "language": language})
+    await db.commit()
+    return wa_templates.public_view(await wa_templates.get_template(db, key))
 
 
 class TestSendIn(BaseModel):
@@ -365,9 +397,12 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
         raise HTTPException(status_code=400, detail="Finish the Setup tab first")
     if not cfg.enabled:
         raise HTTPException(status_code=400, detail="WhatsApp is turned off. Turn it on in the Setup tab to send messages.")
-    t = wa_templates.BY_NAME.get(body.template)
+    t = await wa_templates.by_name(db, body.template)
     if not t:
         raise HTTPException(status_code=400, detail="Unknown template")
+    if t.get("header") == "document":
+        raise HTTPException(status_code=400, detail="This template carries the report PDF — test it with "
+                                                    "Send now in CRM Settings → CEO lead report")
     to = normalize_phone(body.to)
     if not valid_phone(to):
         raise HTTPException(status_code=400, detail="Enter the number with country code, e.g. 919876543210")

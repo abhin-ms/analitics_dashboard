@@ -20,6 +20,7 @@ from .engine import (
     RoundRobin, apply_sheet_status_change, create_alert, create_followup,
     match_user_by_name, refresh_derived, team_leader_ids, transfer_ownership,
 )
+from .night_queue import queue_lead, should_queue
 from .scope import sheet_members
 from .status import CLOSED_STATUSES
 from .timeutil import add_working_minutes, ist_day_bounds_utc, ist_today, parse_sheet_datetime, utcnow
@@ -155,7 +156,8 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
     #    login): the store's team leader, passed on to a telecaller on their
     #    team when there is one. A team leader holding such a lead hands it on
     #    once their team gets a telecaller, while it's still open.
-    if ctx.automation.get("auto_assign", True) and lead.assignment_source != "manual":
+    waiting = lead.queued_at is not None and lead.queue_released_at is None  # night queue
+    if ctx.automation.get("auto_assign", True) and lead.assignment_source != "manual" and not waiting:
         reroute = (lead.assignment_source == STORE_ROUTED and lead.owner_user_id is not None
                    and (lead.status or "") not in CLOSED_STATUSES)
         tl = await ctx.team_leader_for(lead) if lead.owner_user_id is None or reroute else None
@@ -163,7 +165,11 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
         if tl and (lead.owner_user_id is None or lead.owner_user_id == tl.id):
             agent = await ctx.telecaller_for(tl)
             owner = agent or (tl if lead.owner_user_id is None else None)
-            if owner and owner.id != lead.owner_user_id:
+            if owner and tracked_new and lead.owner_user_id is None and should_queue(ctx.now, ctx.automation):
+                queue_lead(db, lead, owner, now=ctx.now, automation=ctx.automation)
+                waiting = True
+                ctx.stats["queued"] = ctx.stats.get("queued", 0) + 1
+            elif owner and owner.id != lead.owner_user_id:
                 quiet = historic and lead.owner_user_id is None
                 await transfer_ownership(
                     db, lead, owner.id, source=STORE_ROUTED, actor_id=None, now=ctx.now, automation=ctx.automation,
@@ -175,12 +181,13 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
     # New-lead notifications (owner and branch, or everyone if unassigned).
     # A sheet row that attached to a lead the Meta webhook already created
     # is not new (is_new is False), so nobody is told twice.
-    if tracked_new:
+    # A lead waiting in the night queue is announced when it is handed over.
+    if tracked_new and not waiting:
         from .notify import notify_new_lead
         ctx.new_notifications += await notify_new_lead(db, lead)
 
     # 3. First-call task (due N working minutes after the app received it).
-    if tracked_new and not lead.status:
+    if tracked_new and not lead.status and not waiting:
         if lead.owner_user_id:
             due = add_working_minutes(lead.created_at or ctx.now, ctx.automation["first_call_minutes"],
                                       ctx.automation["working_hours"])

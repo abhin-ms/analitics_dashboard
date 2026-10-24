@@ -270,7 +270,8 @@ class AutomationUpdate(BaseModel):
 
 def _validate_automation(a: dict) -> None:
     ints = ["first_call_minutes", "reassign_minutes", "escalate_minutes", "no_answer_retry_minutes",
-            "busy_retry_minutes", "max_calls_per_day", "overdue_tl_minutes", "overdue_admin_minutes"]
+            "busy_retry_minutes", "max_calls_per_day", "overdue_tl_minutes", "overdue_admin_minutes",
+            "queue_gap_minutes"]
     for k in ints:
         v = a.get(k)
         if not isinstance(v, int) or v < 1 or v > 10080:
@@ -719,8 +720,9 @@ class StoreRematch(BaseModel):
 @router.post("/store-rematch")
 async def store_rematch(body: StoreRematch, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """Leads and lead forms that came in without a store, matched again with
-    the current rules. apply=false only previews; apply=true routes them to
-    the store's team (forms an admin set by hand and owned leads untouched)."""
+    the current rules, and Meta leads merged with their sheet copy.
+    apply=false only previews; apply=true routes them to the store's team, or
+    the area's team leader (forms an admin set by hand and owned leads untouched)."""
     from ...services.crm.store_rematch import rematch_stores
     scope = await _scope(db, user)
     if not scope.can_edit_settings:
@@ -730,7 +732,8 @@ async def store_rematch(body: StoreRematch, db: AsyncSession = Depends(get_db), 
     result = await rematch_stores(db, user, apply=body.apply, days=body.days)
     if body.apply:
         record_audit(db, user.id, "store_rematch", "tele_call_leads", None,
-                     after={"forms": len(result["forms"]), "leads": len(result["leads"])})
+                     after={"merged": len(result["merged"]), "forms": len(result["forms"]),
+                            "leads": len(result["leads"])})
         await db.commit()
         try:
             from ...socket import sio
@@ -738,6 +741,67 @@ async def store_rematch(body: StoreRematch, db: AsyncSession = Depends(get_db), 
         except Exception:
             pass
     return result
+
+
+# ── CEO lead report (1 PM / 8 PM PDF by email and WhatsApp) ────────
+class CeoReportSettings(BaseModel):
+    enabled: Optional[bool] = None
+    emails: Optional[list[str]] = None
+    whatsapp: Optional[bool] = None  # template name: Settings → WhatsApp → Templates (C1)
+
+
+async def _admin(db: AsyncSession, user: User) -> None:
+    if not (await _scope(db, user)).can_edit_settings:
+        raise HTTPException(status_code=403, detail="Only Admin can manage the CEO report")
+
+
+@router.get("/ceo-report/settings")
+async def ceo_report_settings(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    from ...services.crm.ceo_report import LAST_KEY, ceo_numbers, email_ready, get_report_settings
+    from ...services.crm.config import _get_json
+    from ...services.whatsapp.config import get_config
+    await _admin(db, user)
+    return {**await get_report_settings(db), "smtp_ready": email_ready(),
+            "whatsapp_ready": (await get_config(db)).active, "ceo_numbers": len(await ceo_numbers(db)),
+            "last": await _get_json(db, LAST_KEY)}
+
+
+@router.put("/ceo-report/settings")
+async def update_ceo_report_settings(body: CeoReportSettings, db: AsyncSession = Depends(get_db),
+                                     user=Depends(get_current_user)):
+    from ...services.crm.ceo_report import save_report_settings
+    await _admin(db, user)
+    saved = await save_report_settings(db, body.model_dump(exclude_none=True), user.id)
+    record_audit(db, user.id, "ceo_report_settings", "settings", None, after=saved)
+    await db.commit()
+    return saved
+
+
+@router.get("/ceo-report/template")
+async def ceo_report_template(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """The report's WhatsApp template under its current name, checked on Meta."""
+    from ...services.crm.ceo_report import report_template_status
+    await _admin(db, user)
+    return await report_template_status(db)
+
+
+@router.get("/ceo-report/pdf")
+async def ceo_report_pdf(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """The report as it would be sent right now (nothing is sent)."""
+    from fastapi.responses import Response
+    from ...services.crm.ceo_report import build_report, render_pdf
+    await _admin(db, user)
+    pdf = render_pdf(await build_report(db))
+    name = f"lead-report-{to_ist(utcnow()).strftime('%Y-%m-%d-%H%M')}.pdf"
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.post("/ceo-report/send")
+async def ceo_report_send(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Send the report now on every configured channel (a test, or an extra one)."""
+    from ...services.crm.ceo_report import send_ceo_report
+    await _admin(db, user)
+    return await send_ceo_report(db, sent_by=user.id)
 
 
 # ── Team view (Leads → Team tab) ───────────────────────────────────

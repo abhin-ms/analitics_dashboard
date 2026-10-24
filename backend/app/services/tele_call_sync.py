@@ -215,13 +215,15 @@ async def _sync_tele_call_leads(db: AsyncSession) -> dict:
 
     # Meta leads the webhook already created (not yet tied to a sheet row):
     # the sheet copy of the same lead attaches to them instead of becoming
-    # a second lead. Matched on phone + submission time within a day.
+    # a second lead. Matched on phone + submission time within a day. Looks
+    # back 90 days, not 7: a city sheet added later brings weeks-old rows,
+    # and those copies became second leads (135 of them).
     from .crm.meta_leads import MERGE_WINDOW
     from .crm.timeutil import parse_sheet_datetime
     webhook_leads: dict[str, list[TeleCallLead]] = {}
     for row in (await db.execute(select(TeleCallLead).where(
         TeleCallLead.external_ref.like("meta:%"), TeleCallLead.spreadsheet_id == "",
-        TeleCallLead.created_at >= datetime.utcnow() - timedelta(days=7),
+        TeleCallLead.created_at >= datetime.utcnow() - timedelta(days=90),
     ))).scalars().all():
         webhook_leads.setdefault(_norm_phone(row.phone), []).append(row)
 

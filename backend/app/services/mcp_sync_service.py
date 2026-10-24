@@ -279,8 +279,13 @@ async def sync_mcp_sales(
 
         # Keep the bills themselves too (same fetch, cached): a bill number
         # noted on a lead is checked against these — see crm/bill_verify.py.
+        # In a savepoint: a concurrent sync can insert the same bill first
+        # (duplicate key on flush), and without one that failed flush would
+        # leave the whole session unusable and fail the sales sync below too.
         try:
-            await store_bills(db, country["id"], await fetch_bills(country["id"], from_date, to_date))
+            bills = await fetch_bills(country["id"], from_date, to_date)
+            async with db.begin_nested():
+                await store_bills(db, country["id"], bills)
         except Exception as e:
             logger.warning("Storing MCP bills failed for %s: %s", country["name"], e)
 

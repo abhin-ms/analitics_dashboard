@@ -120,6 +120,9 @@ def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | 
         "stage_manual": bool(l.stage_manual),
         "owner_user_id": l.owner_user_id,
         "owner_name": names.get(l.owner_user_id) if l.owner_user_id else None,
+        # waiting in the night queue for this telecaller (handed over next morning)
+        "in_night_queue": bool(l.queued_at and not l.queue_released_at and not l.owner_user_id),
+        "queued_for": names.get(l.queued_owner_id) if l.queued_owner_id else None,
         "assignment_source": l.assignment_source,
         "reassign_count": l.reassign_count or 0,
         "person_calling": l.person_calling,
@@ -344,7 +347,7 @@ async def list_leads(
         .offset((page - 1) * page_size).limit(page_size)
     )).scalars().all()
 
-    names = await user_names(db, {l.owner_user_id for l in leads})
+    names = await user_names(db, {l.owner_user_id for l in leads} | {l.queued_owner_id for l in leads})
     fc = await pending_first_calls(db, [l.id for l in leads])
 
     groups = None
@@ -1102,7 +1105,7 @@ async def pipeline(mine: str = Query("0"), sheet: str = Query(""), owner: str = 
             value = sum(parse_amount(sa) or float(pv or 0) for pv, sa in all_vals)
         else:
             value = sum(float(pv or 0) for pv, _ in all_vals)
-        names = await user_names(db, {l.owner_user_id for l in leads})
+        names = await user_names(db, {l.owner_user_id for l in leads} | {l.queued_owner_id for l in leads})
         columns.append({
             "stage": st["key"], "label": st["label"], "count": count_by.get(st["key"], 0), "value": value,
             "cards": [lead_row(l, names) for l in leads],

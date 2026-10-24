@@ -10,7 +10,8 @@ from datetime import date, datetime, time, timedelta, timezone
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-DEFAULT_WORKING_HOURS = {"start": "09:00", "end": "18:00", "days": [0, 1, 2, 3, 4, 5]}  # Mon–Sat
+# Mon–Sat, 10:30 AM – 8 PM; a lead arriving outside it waits in the night queue.
+DEFAULT_WORKING_HOURS = {"start": "10:30", "end": "20:00", "days": [0, 1, 2, 3, 4, 5]}
 
 
 def utcnow() -> datetime:
