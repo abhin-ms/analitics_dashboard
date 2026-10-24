@@ -135,11 +135,24 @@ async def test_paid_booking_becomes_premium_lead_for_store_team(env):
 
 
 @pytest.mark.asyncio
-async def test_form_post_and_unmatched_store_goes_to_admins(env):
+async def test_form_post_and_store_without_team_goes_to_area_team_leader(env):
+    """The store has no team leader, but the customer's state (Kerala) has
+    one: that team leader gets the lead to assign by hand."""
     client, Session, ids, _ = env
     form = {**BOOKING, "preferred_store": "Mumbai Bandra", "entry_id": "WEB-2"}
     r = await client.post(f"/api/v1/public/website-leads?key={KEY}", data=form)   # form-encoded
     body = r.json()
+    assert body["status"] == "created" and body["team_leader"] == "Michael" and body["owner_user_id"] == ids["tl"]
+    async with Session() as db:
+        alerts = (await db.execute(select(CrmAlert).where(CrmAlert.kind == "premium_lead"))).scalars().all()
+        assert {a.recipient_user_id for a in alerts} == {ids["tl"]} and all(a.level == 1 for a in alerts)
+
+
+@pytest.mark.asyncio
+async def test_unknown_store_and_area_goes_to_admins(env):
+    client, Session, ids, _ = env
+    form = {**BOOKING, "preferred_store": "Kuala Lumpur", "state": "", "country": "Malaysia", "entry_id": "WEB-3"}
+    body = (await client.post(f"/api/v1/public/website-leads?key={KEY}", data=form)).json()
     assert body["status"] == "created" and body["team_leader"] is None and body["owner_user_id"] is None
     async with Session() as db:
         alert = (await db.execute(select(CrmAlert).where(CrmAlert.kind == "premium_lead"))).scalar_one()
