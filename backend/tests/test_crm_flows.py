@@ -639,3 +639,95 @@ async def test_person_calling_takes_over_once_they_have_a_login(db, thane_sheet)
     await tele_call_sync.sync_tele_call_leads(db)
     await db.refresh(lead)
     assert lead.owner_user_id == sameer.id and lead.assignment_source == "sheet"
+
+
+# ── 15-minute rule, night queue, Meta / sheet duplicates ───────────
+@pytest.mark.asyncio
+async def test_one_telecaller_team_escalates_to_team_leader_at_15_minutes(db, team):
+    """Nobody else to give it to: the lead stays with its telecaller and the
+    team leader is escalated to at 15 minutes (not 60)."""
+    team["riya"].available_for_leads = False
+    received = ist(2026, 9, 24, 10, 0)
+    lead = await _tracked_lead(db, team, received)
+    await crm_automation.run_automation_tick(db, now=received + timedelta(minutes=14))
+    await db.refresh(lead)
+    assert lead.escalated_at is None
+    await crm_automation.run_automation_tick(db, now=received + timedelta(minutes=16))
+    await db.refresh(lead)
+    assert lead.owner_user_id == team["sureka"].id and lead.reassign_count == 0
+    assert lead.escalated_at is not None
+    assert await count(db, CrmAlert, CrmAlert.kind == "first_call_escalated",
+                       CrmAlert.recipient_user_id == team["tl"].id) == 1
+    assert await count(db, CrmAlert, CrmAlert.kind == "no_agent_available") == 0
+    await crm_automation.run_automation_tick(db, now=received + timedelta(minutes=61))
+    assert await count(db, CrmAlert, CrmAlert.kind == "first_call_escalated") == 1  # once only
+
+
+@pytest.mark.asyncio
+async def test_night_leads_wait_and_are_handed_over_one_every_15_minutes(db, team, monkeypatch):
+    from app.services.crm.night_queue import queue_lead, should_queue
+    monkeypatch.setitem(DEFAULT_AUTOMATION, "night_queue", True)
+    automation = await get_automation(db)
+    night = ist(2026, 9, 24, 21, 0)  # Thursday 9 PM — hours are 09:00–18:00 in tests
+    assert should_queue(night, automation) and not should_queue(ist(2026, 9, 25, 9, 0), automation)
+    db.add(Setting(key="crm.go_live_at", value='"2026-01-01T00:00:00"'))
+    leads = []
+    for i, prio in enumerate(("warm", "hot")):
+        lead = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="", full_name=f"Night {i}", phone=f"98765011{i}0",
+                            status="", stage="new", priority=prio, created_at=night + timedelta(minutes=i),
+                            submitted_at=night + timedelta(minutes=i), source_channel="instagram")
+        db.add(lead)
+        await db.flush()
+        queue_lead(db, lead, team["sureka"], now=night, automation=automation)
+        leads.append(lead)
+    await db.commit()
+    warm, hot = leads
+
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 8, 59))   # still closed
+    assert await count(db, TeleCallLead, TeleCallLead.owner_user_id.isnot(None)) == 0
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 0))    # opening: one, hot first
+    await db.refresh(hot)
+    await db.refresh(warm)
+    assert hot.owner_user_id == team["sureka"].id and warm.owner_user_id is None
+    fu = (await db.execute(select(TeleLeadFollowup).where(TeleLeadFollowup.lead_id == hot.id))).scalar_one()
+    assert fu.kind == "first_call" and fu.created_at == ist(2026, 9, 25, 9, 0)  # clock starts at hand-over
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 10))
+    await db.refresh(warm)
+    assert warm.owner_user_id is None                                            # 15-minute gap
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 15))
+    await db.refresh(warm)
+    assert warm.owner_user_id == team["sureka"].id
+    # arrived 12 working hours "ago", but escalation counts from the hand-over
+    await db.refresh(hot)
+    assert hot.escalated_at is None
+
+
+@pytest.mark.asyncio
+async def test_meta_lead_and_its_sheet_copy_are_merged_into_one(db, team):
+    from app.services.crm.store_rematch import rematch_stores
+    at = ist(2026, 10, 9, 22, 55)
+    webhook = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="", full_name="Asha", phone="+91 98765 02222",
+                           external_ref="meta:555", source_channel="instagram", status="", stage="new",
+                           created_at=at, submitted_at=at)
+    copy = TeleCallLead(sheet_tl_name="Trivandrum", spreadsheet_id="sheet-tvm", full_name="Asha K", phone="9876502222",
+                        created_time="2026-10-09T12:25:15-05:00", source_channel="meta_sheet", status="Call back later",
+                        stage="follow_up", created_at=at + timedelta(days=8), submitted_at=at + timedelta(minutes=1),
+                        owner_user_id=team["riya"].id, assignment_source="sheet", person_calling="Riya")
+    db.add_all([webhook, copy])
+    await db.flush()
+    db.add(TeleLeadActivity(lead_id=copy.id, type="call", user_id=team["riya"].id, notes="called", created_at=at))
+    await db.commit()
+
+    preview = await rematch_stores(db, team["admin"], apply=False)
+    assert [(m["lead_id"], m["copy_id"]) for m in preview["merged"]] == [(webhook.id, copy.id)]
+    assert await count(db, TeleCallLead) == 2  # preview writes nothing
+
+    await rematch_stores(db, team["admin"], apply=True)
+    leads = (await db.execute(select(TeleCallLead))).scalars().all()
+    assert len(leads) == 1
+    lead = leads[0]
+    assert lead.id == webhook.id and lead.external_ref == "meta:555"
+    # it is now the sheet row (the next sync updates it) and keeps the work done on the copy
+    assert (lead.spreadsheet_id, lead.created_time, lead.full_name) == ("sheet-tvm", copy.created_time, "Asha K")
+    assert lead.status == "Call back later" and lead.owner_user_id == team["riya"].id
+    assert await count(db, TeleLeadActivity, TeleLeadActivity.lead_id == lead.id, TeleLeadActivity.notes == "called") == 1

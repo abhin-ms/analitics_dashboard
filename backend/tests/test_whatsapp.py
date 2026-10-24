@@ -172,7 +172,7 @@ async def test_test_send_and_delivery_statuses(env):
     assert r.status_code == 400 and "Setup" in r.json()["detail"]
     await _setup(c)
     templates = (await c.get("/api/v1/whatsapp/templates")).json()
-    assert len(templates["templates"]) == 7 and templates["meta_checked"]
+    assert len(templates["templates"]) == 8 and templates["meta_checked"]  # A1–A5, B1, B2, C1 (CEO report)
     assert templates["templates"][0]["meta"][0]["status"] == "APPROVED"
     assert templates["templates"][0]["meta"][0]["buttons"] == []
     b2 = next(t for t in templates["templates"] if t["name"] == "lead_not_attended")
@@ -253,3 +253,38 @@ async def test_test_send_and_delivery_statuses(env):
     async with Session() as s:
         m = (await s.execute(select(WhatsAppMessage).where(WhatsAppMessage.wa_message_id == "wamid.TEST1"))).scalar_one()
         assert m.status == "failed" and m.error_code == "131026"
+
+
+@pytest.mark.asyncio
+async def test_renamed_template_is_sent_under_its_new_name(env):
+    """A template re-created on Meta under a new name: renamed in the
+    dashboard, every send uses the new name with the same variables."""
+    as_user, _, calls, _ = env
+    c = as_user("admin")
+    await _setup(c)
+    r = await c.put("/api/v1/whatsapp/templates/B1", json={"name": "telecaller_lead_new", "language": "en"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "telecaller_lead_new" and r.json()["default_name"] == "telecaller_new_lead"
+    templates = (await c.get("/api/v1/whatsapp/templates")).json()["templates"]
+    assert next(t for t in templates if t["key"] == "B1")["name"] == "telecaller_lead_new"
+    assert next(t for t in templates if t["key"] == "B2")["name"] == "lead_not_attended"  # others untouched
+
+    values = {"lead_name": "Priya", "lead_source": "PM", "received_time": "18 Oct 2026, 7:30 PM"}
+    r = await c.post("/api/v1/whatsapp/test-send", json={
+        "template": "telecaller_lead_new", "to": "9876543210", "values": values,
+        "button_values": {"0": "1024"}, "include_buttons": [0]})
+    assert r.status_code == 200, r.text
+    sent = calls[-1][2]["json"]["template"]
+    assert sent["name"] == "telecaller_lead_new"
+    assert {"type": "text", "parameter_name": "lead_name", "text": "Priya"} in sent["components"][0]["parameters"]
+    r = await c.post("/api/v1/whatsapp/test-send", json={"template": "telecaller_new_lead", "to": "9876543210",
+                                                         "values": values})
+    assert r.status_code == 400 and "Unknown" in r.json()["detail"]  # the old name is gone
+
+    # two purposes can't share a name, and names must be valid Meta names
+    r = await c.put("/api/v1/whatsapp/templates/B2", json={"name": "telecaller_lead_new"})
+    assert r.status_code == 400 and "B1" in r.json()["detail"]
+    r = await c.put("/api/v1/whatsapp/templates/B2", json={"name": "Lead Not Attended!"})
+    assert r.status_code == 400
+    # a telecaller can't rename
+    assert (await as_user("tc").put("/api/v1/whatsapp/templates/B2", json={"name": "x_y"})).status_code == 403
