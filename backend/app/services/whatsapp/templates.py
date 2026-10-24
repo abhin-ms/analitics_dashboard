@@ -76,9 +76,57 @@ TEMPLATES: list[dict] = [
                 "Received at: {{received_time}}\n\nThis lead has not been called within 15 minutes. Please follow up.",
         "buttons": [{"type": "url", "text": "View Lead", "url": "https://dash.breakprotection.com/leads/{{1}}", "sample": "1024"}],
     },
+    {
+        "key": "C1", "name": "lead_report", "label": "CEO lead report (PDF)", "recipient": "CEO",
+        "trigger": "Every day at 1 PM and 8 PM",
+        "header": "document",  # the report PDF; sent from CRM Settings → CEO lead report, not the test tab
+        "params": [("period", "23 Oct 08:00 PM – 24 Oct 01:00 PM"), ("received", "570"), ("attended", "128"),
+                   ("not_attended", "442")],
+        "body": "Lead report for {{period}}\n\nLeads received: {{received}}\nAttended: {{attended}}\n"
+                "Not attended: {{not_attended}}\n\nThe full report is attached as a PDF.",
+        "buttons": [],
+    },
 ]
 
-BY_NAME = {t["name"]: t for t in TEMPLATES}
+BY_KEY = {t["key"]: t for t in TEMPLATES}
+
+# Meta template names can be changed from Settings → WhatsApp → Templates
+# (a template re-created on Meta under a new name, same variables). The
+# key (A1, B1…) is what the code sends by; the name is looked up here.
+NAMES_KEY = "whatsapp.template_names"
+NAME_RE = r"[a-z0-9_]{1,512}"
+
+
+async def name_overrides(db) -> dict[str, dict]:
+    from ..crm.config import _get_json
+    return await _get_json(db, NAMES_KEY) or {}
+
+
+async def save_name(db, key: str, name: str, language: str, user_id: int | None) -> None:
+    from ..crm.config import _set_json
+    data = await name_overrides(db)
+    data[key] = {"name": name, "language": language}
+    await _set_json(db, NAMES_KEY, data, user_id)
+
+
+def _apply(t: dict, override: dict | None) -> dict:
+    o = override or {}
+    return {**t, "default_name": t["name"], "name": o.get("name") or t["name"], "language": o.get("language") or "en"}
+
+
+async def effective_templates(db) -> list[dict]:
+    """The templates with the names (and languages) they currently have on Meta."""
+    overrides = await name_overrides(db)
+    return [_apply(t, overrides.get(t["key"])) for t in TEMPLATES]
+
+
+async def get_template(db, key: str) -> dict:
+    """One template by key, with its current name — use this to send."""
+    return _apply(BY_KEY[key], (await name_overrides(db)).get(key))
+
+
+async def by_name(db, name: str) -> dict | None:
+    return next((t for t in await effective_templates(db) if t["name"] == name), None)
 
 
 def public_view(t: dict) -> dict:

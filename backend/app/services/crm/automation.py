@@ -1,9 +1,14 @@
 """Automation tick (every minute) and weekly performance notifications.
 
+Night queue: leads that came in outside working hours are handed to their
+telecaller one at a time from the next opening (night_queue.py); their
+clock starts then.
+
 First contact for a new Meta lead (working minutes, CRM receipt time):
   * after first_call_minutes (5): alert the owner, mark the lead urgent
   * after reassign_minutes (15): reassign ONCE to another available
-    telecaller of the city; if nobody is available, alert the team leader
+    telecaller of the city; with nobody else (a one-telecaller store, or
+    already reassigned / assigned by hand) escalate to the team leader
   * after escalate_minutes (60): escalate to the team leader
 Overdue follow-ups: owner first, then team leader, then admin.
 Alerts resolve themselves when the underlying follow-up is handled.
@@ -22,6 +27,7 @@ from .engine import (
     RoundRobin, add_activity, admin_ids, create_alert, emit_alerts,
     team_leader_ids, transfer_ownership, user_names,
 )
+from .night_queue import release_queue
 from .timeutil import ist_today, to_ist, utcnow, working_minutes_between
 
 logger = logging.getLogger(__name__)
@@ -61,6 +67,24 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
             tl_cache[key] = await team_leader_ids(db, sheet, owner)
         return tl_cache[key]
 
+    async def _escalate(lead: TeleCallLead, fu: TeleLeadFollowup, minutes: int) -> None:
+        lead.escalated_at = now
+        add_activity(db, lead, "system", notes=f"Escalated to team leader — no first call within "
+                                               f"{minutes} minutes", at=now)
+        for tl_id in await tls(lead.sheet_tl_name, fu.owner_user_id):
+            await create_alert(
+                db, recipient_id=tl_id, kind="first_call_escalated", level=2, lead=lead, followup_id=fu.id,
+                title="Escalation: first call still pending",
+                body=f"{lead.full_name} ({lead.sheet_tl_name}) — no call after "
+                     f"{minutes} minutes. One owner stays accountable.",
+                dedupe_key=f"esc:{lead.id}:{tl_id}", out=new_alerts,
+            )
+
+    # ── 0. night queue: hand over the next waiting lead per telecaller ──
+    queue_notes, stats["released"] = await release_queue(db, now, automation)
+    if stats["released"]:
+        await db.flush()
+
     # ── A. first calls ──
     rows = (await db.execute(
         select(TeleLeadFollowup, TeleCallLead)
@@ -69,7 +93,9 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
     )).all()
     for fu, lead in rows:
         elapsed = working_minutes_between(fu.created_at or now, now, wh)
-        since_receipt = working_minutes_between(lead.created_at or fu.created_at or now, now, wh)
+        # a night-queue lead's clock starts when it was handed over, not when it arrived
+        received = lead.queue_released_at or lead.created_at or fu.created_at or now
+        since_receipt = working_minutes_between(received, now, wh)
         n = automation["first_call_minutes"]
 
         if elapsed >= n and fu.owner_user_id:
@@ -82,9 +108,13 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
             ):
                 stats["alerts"] += 1
 
-        if (elapsed >= automation["reassign_minutes"] and (lead.reassign_count or 0) == 0
-                and lead.assignment_source != "manual"):
-            chosen = await rr.pick(lead.sheet_tl_name, exclude={fu.owner_user_id} if fu.owner_user_id else None)
+        # 15 minutes: another telecaller of the team takes it (once); with
+        # nobody else to give it to (a one-telecaller store, a lead already
+        # reassigned or assigned by hand) the team leader is escalated to.
+        if elapsed >= automation["reassign_minutes"]:
+            chosen = None
+            if (lead.reassign_count or 0) == 0 and lead.assignment_source != "manual":
+                chosen = await rr.pick(lead.sheet_tl_name, exclude={fu.owner_user_id} if fu.owner_user_id else None)
             if chosen:
                 names = await user_names(db, [fu.owner_user_id])
                 await transfer_ownership(
@@ -100,26 +130,13 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
                 )
                 stats["reassigned"] += 1
                 continue
-            for tl_id in await tls(lead.sheet_tl_name, fu.owner_user_id):
-                await create_alert(
-                    db, recipient_id=tl_id, kind="no_agent_available", level=2, lead=lead, followup_id=fu.id,
-                    title="No available agent to reassign",
-                    body=f"{lead.full_name} ({lead.sheet_tl_name}) still has no first call and no other agent is available.",
-                    dedupe_key=f"noagent:{fu.id}:{tl_id}", out=new_alerts,
-                )
+            if lead.escalated_at is None:
+                await _escalate(lead, fu, automation["reassign_minutes"])
+                stats["escalated"] += 1
+            continue
 
         if since_receipt >= automation["escalate_minutes"] and lead.escalated_at is None:
-            lead.escalated_at = now
-            add_activity(db, lead, "system", notes=f"Escalated to team leader — no first call within "
-                                                   f"{automation['escalate_minutes']} minutes", at=now)
-            for tl_id in await tls(lead.sheet_tl_name, fu.owner_user_id):
-                await create_alert(
-                    db, recipient_id=tl_id, kind="first_call_escalated", level=2, lead=lead, followup_id=fu.id,
-                    title="Escalation: first call still pending",
-                    body=f"{lead.full_name} ({lead.sheet_tl_name}) — no call after "
-                         f"{automation['escalate_minutes']} minutes. One owner stays accountable.",
-                    dedupe_key=f"esc:{lead.id}:{tl_id}", out=new_alerts,
-                )
+            await _escalate(lead, fu, automation["escalate_minutes"])
             stats["escalated"] += 1
 
     # ── B. overdue follow-ups: owner → team leader → admin ──
@@ -179,6 +196,9 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
 
     await resolve_stale_alerts(db, now)
     await db.commit()
+    if queue_notes:
+        from .notify import emit_notifications
+        await emit_notifications(queue_notes)
     await emit_alerts(new_alerts)
     stats["alerts"] = len(new_alerts)
     return stats

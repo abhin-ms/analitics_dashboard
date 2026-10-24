@@ -39,7 +39,8 @@ from .engine import (
     add_activity, admin_ids, create_alert, create_followup, emit_alerts, norm_phone, refresh_derived,
     transfer_ownership,
 )
-from .intake import _real_team_leader, match_store, pick_sheet, pick_telecaller
+from .intake import _real_team_leader, fallback_team_leader, match_store, pick_sheet, pick_telecaller
+from .night_queue import not_waiting, queue_lead, should_queue
 from .notify import emit_notifications, notify_new_lead
 from .timeutil import add_working_minutes, parse_sheet_datetime, to_ist, utcnow
 
@@ -157,19 +158,26 @@ def candidate_names(name: str | None) -> list[str]:
 
 async def resolve_store(db: AsyncSession, form_id: str, page_id: str, adset_name: str) -> tuple[Store | None, str]:
     """(store, form name). Uses the saved form mapping; a new form is
-    matched once by name and the result saved (store or none) for admins."""
+    matched by name and the result saved (store or none) for admins. A form
+    saved with no store is matched again on every lead (unless an admin set
+    that by hand) — the matching rules grow, and a form that missed once
+    (e.g. "Thane-New-Final" before "thane" meant Korum Mall) must not stay
+    unassigned for good."""
     mapping = (await db.execute(select(MetaFormStore).where(MetaFormStore.form_id == form_id))).scalar_one_or_none() \
         if form_id else None
-    if mapping:
+    if mapping and (mapping.store_id or mapping.match_source == "manual"):
         store = await db.get(Store, mapping.store_id) if mapping.store_id else None
         return (store if store and store.is_active else None), mapping.form_name or ""
-    form_name = await fetch_form_name(form_id, page_id) if form_id else ""
+    form_name = (mapping.form_name or "") if mapping else (await fetch_form_name(form_id, page_id) if form_id else "")
     store = None
     for cand in candidate_names(adset_name) + candidate_names(form_name):
         store = await match_store(db, cand, "")
         if store:
             break
-    if form_id:
+    if mapping:
+        if store:
+            mapping.store_id, mapping.match_source, mapping.updated_at = store.id, "auto", utcnow()
+    elif form_id:
         db.add(MetaFormStore(form_id=form_id, form_name=(form_name or adset_name or "")[:200],
                              store_id=store.id if store else None, match_source="auto" if store else None,
                              updated_at=utcnow()))
@@ -194,6 +202,74 @@ async def find_sheet_twin(db: AsyncSession, phone: str, at: datetime | None) -> 
         MetaLead.lead_id.in_([r.id for r in rows])))).scalars().all())
     free = [r for r in rows if r.id not in linked]
     return min(free, key=lambda r: abs((r.submitted_at - at).total_seconds())) if free else None
+
+
+# What the telecallers did on the sheet copy, kept when the webhook lead lacks it.
+_SHEET_WORK_FIELDS = ("status", "sheet_status_raw", "call_date", "appointment_date", "sale_amount", "product",
+                      "salesperson", "bill_no", "person_calling", "first_contact_at", "last_contact_at",
+                      "phone_model", "service_type", "coverage", "next_follow_up_at")
+
+
+async def unmerged_sheet_twins(db: AsyncSession) -> list[tuple[TeleCallLead, TeleCallLead]]:
+    """(webhook lead, sheet copy) pairs of one Meta lead that were never
+    merged — e.g. the sheet copy came in after the sync's look-back, when a
+    city sheet was added later. Matched like the sync does: phone + time."""
+    webhook = (await db.execute(select(TeleCallLead).where(
+        TeleCallLead.external_ref.like("meta:%"),
+        (TeleCallLead.spreadsheet_id == "") | TeleCallLead.spreadsheet_id.is_(None),
+        TeleCallLead.submitted_at.isnot(None),
+    ))).scalars().all()
+    pairs, used = [], set()
+    for w in sorted(webhook, key=lambda r: r.id):
+        twin = await find_sheet_twin(db, w.phone, w.submitted_at)
+        if twin and twin.id not in used and not (twin.external_ref or "").startswith("meta:"):
+            used.add(twin.id)
+            pairs.append((w, twin))
+    return pairs
+
+
+async def merge_sheet_twin(db: AsyncSession, keep: TeleCallLead, drop: TeleCallLead, *, now: datetime,
+                           automation: dict, actor_id: int | None) -> None:
+    """Make one lead of a webhook lead (`keep`) and its sheet copy (`drop`):
+    `keep` becomes the sheet row (so the next sync updates it, as the sync
+    does for twins it finds itself), takes over the calls made on the copy,
+    and everything attached to the copy moves to it before it is deleted."""
+    from sqlalchemy import delete, update
+    from ...models.models import (
+        CrmAlert, CrmNotification, LeadSubmission, TeleAppointment, TeleLeadActivity, TeleLeadFollowup,
+        WhatsAppMessage,
+    )
+    for model in (TeleLeadActivity, TeleLeadFollowup, TeleAppointment, CrmAlert, CrmNotification,
+                  LeadSubmission, MetaLead, WhatsAppMessage):
+        await db.execute(update(model).where(model.lead_id == drop.id).values(lead_id=keep.id))
+    keep.spreadsheet_id, keep.sheet_tl_name = drop.spreadsheet_id, drop.sheet_tl_name
+    keep.full_name, keep.phone, keep.created_time = drop.full_name, drop.phone, drop.created_time
+    keep.last_synced_at = drop.last_synced_at
+    for f in _SHEET_WORK_FIELDS:
+        if getattr(keep, f) in (None, "") and getattr(drop, f) not in (None, ""):
+            setattr(keep, f, getattr(drop, f))
+    if drop.remarks:
+        keep.remarks = drop.remarks
+    keep.edited_fields = sorted(set(keep.edited_fields or []) | set(drop.edited_fields or [])) or None
+    worked_on_copy = bool(drop.status or drop.first_contact_at)
+    new_owner = drop.owner_user_id if drop.owner_user_id and (worked_on_copy or not keep.owner_user_id) \
+        else keep.owner_user_id
+    add_activity(db, keep, "system", user_id=actor_id, at=now, meta={"merged_lead": drop.id},
+                 notes=f"Merged with the Google Sheet copy of the same lead ({drop.sheet_tl_name} sheet)")
+    await db.flush()
+    db.expunge(drop)
+    await db.execute(delete(TeleCallLead).where(TeleCallLead.id == drop.id))
+    await transfer_ownership(db, keep, new_owner, source="manual", actor_id=actor_id, now=now,
+                             automation=automation, reason="Same lead as the Google Sheet copy")
+    # Both copies may have had a first call open; one lead needs one.
+    seen: set[str] = set()
+    for fu in (await db.execute(select(TeleLeadFollowup).where(
+            TeleLeadFollowup.lead_id == keep.id, TeleLeadFollowup.status == "open")
+            .order_by(TeleLeadFollowup.due_at))).scalars().all():
+        if fu.kind in seen:
+            fu.status, fu.completed_at = "cancelled", now
+        seen.add(fu.kind)
+    refresh_derived(keep)
 
 
 def _source_label(platform: str) -> str:
@@ -295,10 +371,18 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
     alerts: list = []
     owner = await pick_telecaller(db, tl) if tl else None
     owner_id = owner.id if owner else (tl.id if tl else None)
-    if owner_id:
+    fallback_tl = None if owner_id else await fallback_team_leader(
+        db, [store.name if store else None, branch_text, ans["city"]])
+    if fallback_tl:
+        owner_id = fallback_tl.id
+    queued = bool(owner_id) and should_queue(now, automation)
+    if queued:
+        queue_lead(db, lead, owner or fallback_tl or tl, now=now, automation=automation)
+    elif owner_id:
         await transfer_ownership(db, lead, owner_id, source="auto", actor_id=None, now=now, automation=automation,
-                                 reason=f"{source} lead for {store.name}"
-                                        f"{'' if owner else ' — no telecaller on the team, given to the team leader'}")
+                                 reason=f"{source} lead for {store.name if store else branch_text or 'unknown form'}"
+                                        f"{' — store not matched, team leader of the area to assign' if fallback_tl else ''}"
+                                        f"{'' if owner or fallback_tl else ' — no telecaller on the team, given to the team leader'}")
         create_followup(db, lead, kind="first_call", owner_id=owner_id, at=now,
                         reason=f"Call the new {'HOT ' if row.is_hot else ''}{source} lead",
                         due_at=add_working_minutes(now, automation["first_call_minutes"], automation["working_hours"]))
@@ -311,7 +395,8 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
                                     f"Map the form in CRM Settings → Integrations, or assign from Leads.",
                                dedupe_key=f"meta_unassigned:{lead.id}:{rid}", out=alerts)
 
-    notes = await notify_new_lead(db, lead)  # owner / branch team, or everyone if unassigned
+    # owner / branch team, or everyone if unassigned; a queued lead is announced when handed over
+    notes = [] if queued else await notify_new_lead(db, lead)
     row.status, row.lead_id = "created", lead.id
     return await _finish(db, row, alerts, notes, {"ok": True, "status": "created", "lead_id": lead.id,
                                            "store": store.name if store else None,
@@ -347,7 +432,8 @@ async def route_unassigned_for_form(db: AsyncSession, form_id: str, actor: User)
     now, automation = utcnow(), await get_automation(db)
     leads = (await db.execute(
         select(TeleCallLead).join(MetaLead, MetaLead.lead_id == TeleCallLead.id)
-        .where(MetaLead.form_id == form_id, MetaLead.status == "created", TeleCallLead.owner_user_id.is_(None))
+        .where(MetaLead.form_id == form_id, MetaLead.status == "created", TeleCallLead.owner_user_id.is_(None),
+               not_waiting())
     )).scalars().all()
     for lead in leads:
         lead.store_id = store.id

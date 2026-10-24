@@ -367,6 +367,60 @@ export async function downloadExport(params: Record<string, string>) {
   URL.revokeObjectURL(url);
 }
 
+export interface CeoReportSettings {
+  enabled: boolean;
+  emails: string[];
+  /** also send on WhatsApp (template C1 — its name is set in Settings → WhatsApp → Templates) */
+  whatsapp: boolean;
+  smtp_ready?: boolean;
+  whatsapp_ready?: boolean;
+  ceo_numbers?: number;
+  last?: { at: string; period: string; email: any; whatsapp: any } | null;
+}
+
+/** The 1 PM / 8 PM CEO lead report: where it goes. Admin only. */
+export function useCeoReportSettings(enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "ceo-report"],
+    queryFn: () => api.get<CeoReportSettings>(`/crm/ceo-report/settings`),
+    enabled,
+  });
+}
+
+/** The report's WhatsApp template under its current name, checked on Meta. */
+export function useCeoReportTemplate(enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "ceo-report", "template"],
+    queryFn: () => api.get<{ name: string; language: string; problems: string[]; error: string | null }>(`/crm/ceo-report/template`),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useSaveCeoReport() {
+  return useCrmMutation((body: Partial<CeoReportSettings>) =>
+    api.put<CeoReportSettings>(`/crm/ceo-report/settings`, body));
+}
+
+export function useSendCeoReport() {
+  return useCrmMutation((_: void) => api.post<{ email: any; whatsapp: any; period: string }>(`/crm/ceo-report/send`, {}));
+}
+
+/** The report as it would be sent now, as a PDF download (nothing is sent). */
+export async function downloadCeoReport() {
+  const res = await api.fetchRaw(`/crm/ceo-report/pdf`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Report failed (${res.status})`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `lead-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export interface AutomationSettings {
   enabled: boolean;
   auto_assign: boolean;
@@ -522,14 +576,16 @@ export function useMetaBackfill() {
 
 export interface StoreRematchResult {
   applied: boolean;
+  merged: { lead_id: number; copy_id: number; name: string; sheet: string }[];
   forms: { form: string; from: string | null; to: string; team_leader: string; waiting_leads: number }[];
   leads: { lead_id: number; name: string; source: string; said: string; to: string; team_leader: string }[];
 }
 
-/** Re-match leads / lead forms that came in without a store. apply=false previews only. */
+/** Merge Meta leads with their sheet copy, then re-match / assign leads and
+ * lead forms that came in without a store or owner. apply=false previews only. */
 export function useStoreRematch() {
   return useCrmMutation((apply: boolean) =>
-    api.post<StoreRematchResult>(`/crm/store-rematch`, { apply, days: 30 }));
+    api.post<StoreRematchResult>(`/crm/store-rematch`, { apply, days: 90 }));
 }
 
 export function useAliases(enabled = true) {

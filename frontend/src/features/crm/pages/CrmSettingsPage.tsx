@@ -5,7 +5,7 @@ import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
-import { useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useMapMetaForm, useMetaBackfill, useMetaForms, useStoreRematch, type StoreRematchResult, useSetAlias, useSetAvailability, useTeam } from "../api";
+import { downloadCeoReport, useCeoReportSettings, useCeoReportTemplate, useSaveCeoReport, useSendCeoReport, useAliases, useAudit, useCrmMeta, useDataQuality, useIntegrations, useMapMetaForm, useMetaBackfill, useMetaForms, useStoreRematch, type StoreRematchResult, useSetAlias, useSetAvailability, useTeam } from "../api";
 import { HOT_COLOR } from "../statusConfig";
 import { fmtDateTime, fmtRelative } from "../format";
 import { openLead } from "../components/LeadDrawer";
@@ -60,7 +60,9 @@ function StoreMatchFix() {
   const toast = useToast();
   const rematch = useStoreRematch();
   const [preview, setPreview] = useState<StoreRematchResult | null>(null);
-  const waiting = (preview?.forms.reduce((n, f) => n + f.waiting_leads, 0) ?? 0) + (preview?.leads.length ?? 0);
+  const waiting = (preview?.forms.reduce((n, f) => n + f.waiting_leads, 0) ?? 0) + (preview?.leads.length ?? 0)
+    + (preview?.merged.length ?? 0);
+  const changes = preview ? preview.merged.length + preview.forms.length + preview.leads.length : 0;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <span className="text-[var(--text-secondary)]">Leads or forms without a store?</span>
@@ -70,22 +72,28 @@ function StoreMatchFix() {
       }}>Check store matching</Button>
       <Modal open={!!preview} onClose={() => setPreview(null)} wide
         title="Store matching — preview (nothing changed yet)"
-        footer={preview && (preview.forms.length + preview.leads.length > 0) ? (
+        footer={changes > 0 ? (
           <div className="flex justify-end gap-2">
             <Button onClick={() => setPreview(null)}>Cancel</Button>
             <Button variant="primary" loading={rematch.isPending} onClick={async () => {
               try {
                 const r = await rematch.mutateAsync(true);
-                toast.success(`${r.forms.length} form${r.forms.length === 1 ? "" : "s"} and ${r.leads.length} lead${r.leads.length === 1 ? "" : "s"} sent to their store teams`);
+                toast.success(`${r.merged.length} duplicate${r.merged.length === 1 ? "" : "s"} merged, ${r.forms.length} form${r.forms.length === 1 ? "" : "s"} and ${r.leads.length} lead${r.leads.length === 1 ? "" : "s"} sent to their teams`);
                 setPreview(null);
               } catch (e) { toast.error(e instanceof Error ? e.message : "Could not apply"); }
             }}>Apply — send {waiting} lead{waiting === 1 ? "" : "s"} to their teams</Button>
           </div>
         ) : undefined}>
-        {preview && (preview.forms.length + preview.leads.length === 0 ? (
+        {preview && (changes === 0 ? (
           <p className="text-sm text-[var(--text-secondary)]">Nothing to fix: every form and recent lead that names a known store already has it.</p>
         ) : (
           <div className="space-y-4 text-xs">
+            {preview.merged.length > 0 && (
+              <p className="text-white">
+                <b>{preview.merged.length}</b> Meta lead{preview.merged.length === 1 ? "" : "s"} also came in from a Google Sheet
+                as a second lead — each pair becomes one lead.
+              </p>
+            )}
             {preview.forms.length > 0 && (
               <div>
                 <p className="font-semibold text-white mb-1.5">Lead forms</p>
@@ -101,7 +109,7 @@ function StoreMatchFix() {
             )}
             {preview.leads.length > 0 && (
               <div>
-                <p className="font-semibold text-white mb-1.5">Leads without a store (last 30 days)</p>
+                <p className="font-semibold text-white mb-1.5">Unassigned leads (last 90 days)</p>
                 {preview.leads.map((l) => (
                   <p key={l.lead_id} className="py-1 border-b border-[var(--border-subtle)]">
                     <span className="text-white">{l.name}</span>
@@ -112,7 +120,7 @@ function StoreMatchFix() {
                 ))}
               </div>
             )}
-            <p className="text-[var(--text-muted)]">Forms you mapped by hand and leads someone already owns are never changed. Anything vague (“Nearest store”, a city with several shops) stays for you to assign.</p>
+            <p className="text-[var(--text-muted)]">Forms you mapped by hand and leads someone already owns are never changed. Anything vague (“Nearest store”, a city with several shops) goes to the area's team leader to assign; if even the area is unknown it stays for you.</p>
           </div>
         ))}
       </Modal>
@@ -268,11 +276,111 @@ function IntegrationsTab() {
           ))}
         </div>
       </Card>
-      <Card>
-        <CardHeader title="Messaging" />
-        <div className="px-5 py-4 text-xs text-[var(--text-muted)]">WhatsApp messaging is planned for a later phase. No messages are sent from the app today.</div>
-      </Card>
+      <CeoReportCard />
     </div>
+  );
+}
+
+function channelLine(v: any): string {
+  if (!v) return "—";
+  if (Array.isArray(v)) {
+    const ok = v.filter((x) => x.ok).length;
+    return `${ok}/${v.length} sent${v.some((x) => !x.ok) ? ` · ${v.find((x) => !x.ok)?.error || "failed"}` : ""}`;
+  }
+  return v.ok ? `sent to ${(v.to || []).join(", ")}` : v.skipped ? `skipped (${v.skipped})` : `failed: ${v.error}`;
+}
+
+/** Admin: where the 1 PM / 8 PM lead report PDF goes (email and/or WhatsApp). */
+function CeoReportCard() {
+  const toast = useToast();
+  const { data: meta } = useCrmMeta();
+  const canEdit = !!meta?.can.edit_settings;
+  const { data } = useCeoReportSettings(canEdit);
+  const save = useSaveCeoReport();
+  const send = useSendCeoReport();
+  const [emails, setEmails] = useState<string | null>(null);
+  const { data: tpl, refetch: refetchTpl, isFetching: tplFetching } =
+    useCeoReportTemplate(canEdit && !!data?.whatsapp_ready && !!data?.whatsapp);
+  if (!canEdit || !data) return null;
+  const emailText = emails ?? data.emails.join(", ");
+  return (
+    <Card>
+      <CardHeader title="CEO lead report (1 PM and 8 PM)"
+        subtitle="Leads since 8 PM the evening before: received, attended, not attended — as a PDF. Sent by every channel that is set up." />
+      <div className="px-5 py-4 space-y-3 text-sm">
+        <label className="flex items-center gap-2 text-white">
+          <input type="checkbox" checked={data.enabled}
+            onChange={(e) => save.mutate({ enabled: e.target.checked })} />
+          Send the report automatically
+        </label>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs text-[var(--text-secondary)] mb-1">
+              Email to (comma separated) · {data.smtp_ready ? <span className="text-emerald-400">mail server set</span>
+                : <span className="text-amber-400">mail server (SMTP) not set on the server — email is skipped</span>}
+            </p>
+            <input className={inputCls} value={emailText} placeholder="ceo@breakprotection.com"
+              onChange={(e) => setEmails(e.target.value)} />
+          </div>
+          <div>
+            <p className="text-xs text-[var(--text-secondary)] mb-1">
+              WhatsApp · {data.whatsapp_ready
+                ? <span className="text-emerald-400">active · {data.ceo_numbers} CEO number{data.ceo_numbers === 1 ? "" : "s"}</span>
+                : <span className="text-amber-400">not active — skipped</span>}
+            </p>
+            <label className="flex items-center gap-2 text-white">
+              <input type="checkbox" checked={data.whatsapp} onChange={(e) => save.mutate({ whatsapp: e.target.checked })} />
+              Also send on WhatsApp
+            </label>
+            {data.whatsapp && tpl && (
+              <p className="text-[11px] mt-1">
+                <span className="text-[var(--text-muted)]">Template </span>
+                <code className="text-white">{tpl.name}</code>
+                <span className="text-[var(--text-muted)]"> ({tpl.language}) · </span>
+                {tpl.error ? <span className="text-amber-400">{tpl.error}</span>
+                  : tpl.problems.length ? <span className="text-rose-400">won't work: {tpl.problems.join("; ")}</span>
+                  : <span className="text-emerald-400">approved and fits the report</span>}
+                {" · "}
+                <Link to="/settings/whatsapp?tab=test" className="text-blue-400 hover:underline">change name</Link>
+                {" · "}
+                <button className="text-blue-400 hover:underline cursor-pointer" disabled={tplFetching} onClick={() => refetchTpl()}>
+                  {tplFetching ? "checking…" : "check again"}
+                </button>
+              </p>
+            )}
+          </div>
+        </div>
+        <InfoNote>
+          The WhatsApp template (C1) has to be approved by Meta first: header type <b>Document</b>, and a body using the
+          variables <code>{"{{period}}"}</code>, <code>{"{{received}}"}</code>, <code>{"{{attended}}"}</code> and{" "}
+          <code>{"{{not_attended}}"}</code>. Its name and the CEO numbers are set in Settings → WhatsApp.
+        </InfoNote>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" size="sm" loading={save.isPending} onClick={async () => {
+            try {
+              await save.mutateAsync({ emails: emailText.split(/[,\s]+/).filter(Boolean) });
+              setEmails(null);
+              toast.success("Report settings saved");
+            } catch (e) { toast.error(e instanceof Error ? e.message : "Could not save"); }
+          }}>Save</Button>
+          <Button size="sm" onClick={async () => {
+            try { await downloadCeoReport(); } catch (e) { toast.error(e instanceof Error ? e.message : "Report failed"); }
+          }}>Download PDF now</Button>
+          <Button size="sm" loading={send.isPending} onClick={async () => {
+            try {
+              const r = await send.mutateAsync();
+              toast.success(`Email: ${channelLine(r.email)} · WhatsApp: ${channelLine(r.whatsapp)}`);
+            } catch (e) { toast.error(e instanceof Error ? e.message : "Send failed"); }
+          }}>Send now</Button>
+        </div>
+        {data.last && (
+          <p className="text-[11px] text-[var(--text-muted)]">
+            Last sent {fmtRelative(data.last.at)} ({data.last.period}) · Email: {channelLine(data.last.email)} ·
+            WhatsApp: {channelLine(data.last.whatsapp)}
+          </p>
+        )}
+      </div>
+    </Card>
   );
 }
 

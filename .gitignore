@@ -24,6 +24,9 @@ logs/
 # Node
 node_modules/
 frontend/dist/
+# the backend is Python — an npm lockfile there is only ever left by running npm in the wrong folder
+backend/package-lock.json
+backend/package.json
 
 # Scratch / dev-only files (not part of the repo)
 _scratch/

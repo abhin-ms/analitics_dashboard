@@ -81,6 +81,20 @@ async def crm_automation_tick():
         logger.error("CRM automation tick error: %s", e)
 
 
+async def crm_ceo_report():
+    # 1 PM and 8 PM IST: the lead report PDF to the CEO by email and/or
+    # WhatsApp — see app/services/crm/ceo_report.py.
+    from ..db.session import AsyncSessionLocal
+    from ..services.crm.ceo_report import get_report_settings, send_ceo_report
+
+    try:
+        async with AsyncSessionLocal() as db:
+            if (await get_report_settings(db)).get("enabled", True):
+                await send_ceo_report(db)
+    except Exception as e:
+        logger.error("CEO lead report error: %s", e)
+
+
 async def crm_weekly_notifications():
     from ..db.session import AsyncSessionLocal
     from ..services.crm.automation import generate_weekly_notifications
@@ -251,6 +265,18 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
+    )
+    scheduler.add_job(
+        crm_ceo_report,
+        "cron",
+        hour="13,20",
+        minute=0,
+        timezone="Asia/Kolkata",
+        id="crm_ceo_report",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
     )
     scheduler.add_job(
         crm_weekly_notifications,

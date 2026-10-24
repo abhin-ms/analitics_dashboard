@@ -13,7 +13,10 @@ from app.services.crm.timeutil import (
     parse_sheet_datetime, to_ist, working_minutes_between,
 )
 
-WH = DEFAULT_AUTOMATION["working_hours"]  # Mon–Sat 09:00–18:00 IST
+# The rules are tested on fixed hours (Mon–Sat 09:00–18:00 IST), not the
+# configurable default, so changing the default hours doesn't move these dates.
+WH = {"start": "09:00", "end": "18:00", "days": [0, 1, 2, 3, 4, 5]}
+AUTOMATION = {**DEFAULT_AUTOMATION, "working_hours": WH}
 
 
 def ist(y, m, d, h=0, mi=0):
@@ -138,7 +141,7 @@ class TestOutcomeRules:
     now = ist(2026, 9, 24, 11, 0)  # Thursday 11:00 IST
 
     def step(self, outcome, **kw):
-        return next_step_for_outcome(outcome, self.now, DEFAULT_AUTOMATION, **kw)
+        return next_step_for_outcome(outcome, self.now, AUTOMATION, **kw)
 
     def test_no_answer_retries_in_three_and_half_hours(self):
         due, kind, _ = self.step("no_answer")

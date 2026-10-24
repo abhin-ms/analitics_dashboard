@@ -29,6 +29,9 @@ export interface CrmLead {
   stage_manual: boolean;
   owner_user_id: number | null;
   owner_name: string | null;
+  /** Came in outside working hours; handed to `queued_for` next morning. */
+  in_night_queue?: boolean;
+  queued_for?: string | null;
   assignment_source: string | null;
   reassign_count: number;
   person_calling: string;
