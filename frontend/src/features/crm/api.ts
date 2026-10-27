@@ -521,7 +521,8 @@ export function useIntegrations(enabled = true) {
 export interface LeadNotification {
   id: number;
   lead_id: number | null;
-  kind: "lead_assigned" | "lead_branch" | "lead_unassigned";
+  /** lead_admin: an admin told of a new lead that went to someone (or waits in the night queue) */
+  kind: "lead_assigned" | "lead_branch" | "lead_unassigned" | "lead_admin";
   title: string;
   body: string | null;
   is_hot: boolean;

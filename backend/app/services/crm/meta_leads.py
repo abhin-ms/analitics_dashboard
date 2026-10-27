@@ -41,7 +41,7 @@ from .engine import (
 )
 from .intake import _real_team_leader, fallback_team_leader, match_store, pick_sheet, pick_telecaller
 from .night_queue import not_waiting, queue_lead, should_queue
-from .notify import emit_notifications, notify_new_lead
+from .notify import emit_notifications, notify_lead_queued, notify_new_lead
 from .timeutil import add_working_minutes, parse_sheet_datetime, to_ist, utcnow
 
 logger = logging.getLogger(__name__)
@@ -395,8 +395,9 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
                                     f"Map the form in CRM Settings → Integrations, or assign from Leads.",
                                dedupe_key=f"meta_unassigned:{lead.id}:{rid}", out=alerts)
 
-    # owner / branch team, or everyone if unassigned; a queued lead is announced when handed over
-    notes = [] if queued else await notify_new_lead(db, lead)
+    # owner, branch team and admins, or everyone if unassigned; a queued lead:
+    # admins now, its telecaller when handed over
+    notes = await notify_lead_queued(db, lead) if queued else await notify_new_lead(db, lead)
     row.status, row.lead_id = "created", lead.id
     return await _finish(db, row, alerts, notes, {"ok": True, "status": "created", "lead_id": lead.id,
                                            "store": store.name if store else None,

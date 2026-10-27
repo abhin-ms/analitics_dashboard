@@ -181,10 +181,11 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
     # New-lead notifications (owner and branch, or everyone if unassigned).
     # A sheet row that attached to a lead the Meta webhook already created
     # is not new (is_new is False), so nobody is told twice.
-    # A lead waiting in the night queue is announced when it is handed over.
-    if tracked_new and not waiting:
-        from .notify import notify_new_lead
-        ctx.new_notifications += await notify_new_lead(db, lead)
+    # A lead waiting in the night queue: admins are told now, its telecaller
+    # when it is handed over.
+    if tracked_new:
+        from .notify import notify_lead_queued, notify_new_lead
+        ctx.new_notifications += await (notify_lead_queued(db, lead) if waiting else notify_new_lead(db, lead))
 
     # 3. First-call task (due N working minutes after the app received it).
     if tracked_new and not lead.status and not waiting:

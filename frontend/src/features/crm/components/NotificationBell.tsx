@@ -19,7 +19,7 @@ export function wasJustNotified(leadId: number | null | undefined): boolean {
 
 interface Popup { key: number; title: string; body: string; leadId: number | null; hot: boolean; ids: number[] }
 
-const KIND_COLOR: Record<string, string> = { lead_assigned: "#3b82f6", lead_branch: "#94a3b8", lead_unassigned: "#f59e0b" };
+const KIND_COLOR: Record<string, string> = { lead_assigned: "#3b82f6", lead_branch: "#94a3b8", lead_unassigned: "#f59e0b", lead_admin: "#10b981" };
 
 function desktopPermission(): NotificationPermission | "unsupported" {
   return typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported";

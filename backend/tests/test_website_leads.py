@@ -171,3 +171,27 @@ async def test_store_list_for_website(env):
     client, *_ = env
     stores = (await client.get(f"/api/v1/public/stores?key={KEY}")).json()["stores"]
     assert {s["name"] for s in stores} == {"Kochi", "Mumbai Bandra"}
+
+
+@pytest.mark.asyncio
+async def test_night_booking_tells_admins_now_and_telecaller_at_handover(env, monkeypatch):
+    from app.models.models import CrmNotification
+    from app.services.crm import intake
+    from app.services.crm.night_queue import release_queue
+    from app.services.crm.config import get_automation
+    from app.services.crm.timeutil import from_ist
+    from datetime import datetime
+    client, Session, ids, _ = env
+    monkeypatch.setattr(intake, "should_queue", lambda now, automation: True)
+    body = (await client.post(f"/api/v1/public/website-leads?key={KEY}", json={**BOOKING, "entry_id": "WEB-NIGHT"})).json()
+    assert body["status"] == "created"
+    async with Session() as db:
+        notes = {(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()}
+        assert notes == {(ids["admin"], "lead_admin")}                # admins only, at arrival
+        lead = await db.get(TeleCallLead, body["lead_id"])
+        assert lead.owner_user_id is None and lead.queued_owner_id is not None
+        await release_queue(db, from_ist(datetime(2026, 10, 26, 10, 0)), await get_automation(db))  # Monday, open
+        await db.commit()
+        notes = [(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()]
+        assert (lead.owner_user_id, "lead_assigned") in notes          # telecaller at hand-over
+        assert notes.count((ids["admin"], "lead_admin")) == 1          # admin not told twice
