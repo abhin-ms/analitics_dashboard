@@ -358,3 +358,37 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
     assert len(sends()) == n
     assert (await c.get("/api/v1/whatsapp/templates")).json()["auto"]["B2"] is False
     assert (await as_user("tc").put("/api/v1/whatsapp/auto", json={"auto": {"A1": False}})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_failed_message_can_be_sent_again_once(env):
+    """A message Meta refused (here: a value for a button the approved
+    template doesn't have, #132018) is sent again with the Resend button,
+    without that button; once only, and only by someone who may edit."""
+    from app.services.whatsapp import auto
+    as_user, ids, calls, Session = env
+    auto._meta_cache["at"] = None
+    c = as_user("admin")
+    await _setup(c)
+    async with Session() as db:
+        failed = WhatsAppMessage(to_phone="919000000002", template="telecaller_new_lead", language="en",
+                                 purpose="auto:B1", status="failed", error_code="132018",
+                                 params={"values": {"lead_name": "Priya", "lead_source": "Website",
+                                                    "received_time": "27 Oct 2026, 04:28 PM"},
+                                         "buttons": {"0": "1024"}})
+        db.add(failed)
+        await db.commit()
+        failed_id = failed.id
+
+    assert (await as_user("tc").post(f"/api/v1/whatsapp/messages/{failed_id}/resend")).status_code == 403
+    c = as_user("admin")
+    r = await c.post(f"/api/v1/whatsapp/messages/{failed_id}/resend")
+    assert r.status_code == 200, r.text
+    assert r.json()["message"]["status"] == "accepted"
+    sent = calls[-1][2]["json"]["template"]
+    assert sent["name"] == "telecaller_new_lead" and len(sent["components"]) == 1  # no button this time
+    r = await c.post(f"/api/v1/whatsapp/messages/{failed_id}/resend")
+    assert r.status_code == 400 and "Already sent again" in r.json()["detail"]
+    new_id = (await c.get("/api/v1/whatsapp/messages")).json()["items"][0]["id"]
+    r = await c.post(f"/api/v1/whatsapp/messages/{new_id}/resend")
+    assert r.status_code == 400 and "Only a failed" in r.json()["detail"]

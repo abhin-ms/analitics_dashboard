@@ -448,6 +448,50 @@ async def read_messages(limit: int = Query(30, ge=1, le=200), db: AsyncSession =
     return {"items": [_message_row(r, names) for r in rows]}
 
 
+@router.post("/messages/{message_id}/resend")
+async def resend_message(message_id: int, db: AsyncSession = Depends(get_db),
+                         user: User = require_permission("settings", "edit")):
+    """Send a failed message again: same template (under its current name),
+    values and number, with only the buttons the approved template has."""
+    msg = await db.get(WhatsAppMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.status != "failed":
+        raise HTTPException(status_code=400, detail="Only a failed message can be sent again")
+    cfg = await get_config(db)
+    if not cfg.active:
+        raise HTTPException(status_code=400, detail="WhatsApp is not set up or turned off (Setup tab)")
+    t = await wa_templates.by_name(db, msg.template)
+    if t is None and msg.purpose.startswith("auto:"):  # renamed since: find it by its key
+        key = msg.purpose.split(":", 1)[1]
+        t = await wa_templates.get_template(db, key) if key in wa_templates.BY_KEY else None
+    if t is None:
+        raise HTTPException(status_code=400, detail=f"Template {msg.template} is no longer one the app sends")
+    params = msg.params or {}
+    if t.get("header") == "document" or "values" not in params:
+        raise HTTPException(status_code=400, detail="Send the CEO report again with Send now in CRM Settings")
+    again = (await db.execute(select(WhatsAppMessage.id).where(
+        WhatsAppMessage.id > msg.id, WhatsAppMessage.to_phone == msg.to_phone, WhatsAppMessage.template == t["name"],
+        WhatsAppMessage.lead_id == msg.lead_id, WhatsAppMessage.status != "failed"))).first()
+    if again:
+        raise HTTPException(status_code=400, detail="Already sent again — see the newer message above")
+    buttons = {int(k): str(v) for k, v in (params.get("buttons") or {}).items() if str(k).isdigit()}
+    include = wa_auto._buttons_to_send(t, await wa_auto._approved_buttons(cfg, t["name"], t["language"]))
+    try:
+        components = wa_templates.build_components(
+            t, params["values"], buttons, include_buttons=include,
+            payload_prefix=f"lead{msg.lead_id}" if msg.lead_id else "test")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        new = await send_template(db, cfg, to=msg.to_phone, template=t["name"], language=t["language"],
+                                  components=components, params={"values": params["values"], "buttons": buttons},
+                                  purpose=msg.purpose, sent_by=user.id, lead_id=msg.lead_id)
+    except WhatsAppError as e:
+        raise HTTPException(status_code=400, detail=f"Meta refused it again: {e}")
+    return {"ok": True, "message": _message_row(new, {user.id: user.name})}
+
+
 # ── Public webhook (Meta) ───────────────────────────────────────────
 
 def _ip(request: Request) -> str | None:
