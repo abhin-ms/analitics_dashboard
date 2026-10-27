@@ -304,7 +304,7 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
     from app.models.models import TeleCallLead
     from app.services.whatsapp import auto
     as_user, ids, calls, Session = env
-    auto._meta_cache["at"] = 0.0  # read this test's (fake) Meta templates
+    auto._meta_cache["at"] = None  # read this test's (fake) Meta templates
     c = as_user("admin")
     await _setup(c)
     r = await c.put("/api/v1/whatsapp/contacts", json={
