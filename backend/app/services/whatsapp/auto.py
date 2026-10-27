@@ -70,7 +70,7 @@ def _date(text: str | None) -> tuple[str, str]:
     return ist.strftime("%d %b %Y"), (ist.strftime("%I:%M %p").lstrip("0") if has_time else "To be confirmed")
 
 
-_meta_cache: dict = {"at": 0.0, "buttons": {}}
+_meta_cache: dict = {"at": None, "buttons": {}}  # at: time.monotonic() of the last read, None = never
 
 
 async def _approved_buttons(cfg, name: str, language: str) -> list[dict] | None:
@@ -82,7 +82,8 @@ async def _approved_buttons(cfg, name: str, language: str) -> list[dict] | None:
     from .client import WhatsAppError, list_templates, meta_buttons
     if not cfg.waba_id:
         return None
-    if time.monotonic() - _meta_cache["at"] > 600:
+    # not "now - 0 > 600": the monotonic clock starts near 0 on a fresh machine
+    if _meta_cache["at"] is None or time.monotonic() - _meta_cache["at"] > 600:
         try:
             rows = await list_templates(cfg)
         except WhatsAppError as e:
