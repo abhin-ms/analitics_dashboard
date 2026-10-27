@@ -71,6 +71,7 @@ async def env(monkeypatch):
 
     calls = []
     subscribed = []
+    sent_ok = []
 
     async def fake_call(cfg, method, path, **kw):
         calls.append((method, path, kw))
@@ -82,7 +83,8 @@ async def env(monkeypatch):
         if path.endswith("/messages"):
             if kw["json"]["to"] == "910000000000":
                 raise wa_client.WhatsAppError("Template name does not exist in the translation", "132001")
-            return {"messages": [{"id": "wamid.TEST1"}]}
+            sent_ok.append(1)  # Meta gives every message its own id; the first one is wamid.TEST1
+            return {"messages": [{"id": f"wamid.TEST{len(sent_ok)}"}]}
         if path.endswith("message_templates"):
             return {"data": [
                 {"name": "booking_received", "status": "APPROVED", "language": "en", "category": "UTILITY",
@@ -288,3 +290,65 @@ async def test_renamed_template_is_sent_under_its_new_name(env):
     assert r.status_code == 400
     # a telecaller can't rename
     assert (await as_user("tc").put("/api/v1/whatsapp/templates/B2", json={"name": "x_y"})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_automatic_messages_go_to_the_right_numbers_once(env):
+    """B1 to the telecaller (their number for that store), B2 to the team
+    leader, A1 to the customer and A2 to the store; each once per lead, and
+    a switched-off template sends nothing."""
+    from datetime import datetime
+    from app.models.models import TeleCallLead
+    from app.services.whatsapp import auto
+    as_user, ids, calls, Session = env
+    c = as_user("admin")
+    await _setup(c)
+    r = await c.put("/api/v1/whatsapp/contacts", json={
+        "team_leaders": [{"user_id": ids["tl"], "phone": "9000000001"}],
+        "telecallers": [{"user_id": ids["tc"], "store_id": None, "phone": "9000000002"},
+                        {"user_id": ids["tc"], "store_id": ids["store"], "phone": "9000000003"}],
+        "stores": [{"store_id": ids["store"], "phone": "9000000004"}]})
+    assert r.status_code == 200, r.text
+    async with Session() as db:
+        lead = TeleCallLead(sheet_tl_name="Website", spreadsheet_id="", full_name="Anita Das", phone="9876543210",
+                            source_channel="website", is_premium=True, store_id=ids["store"], owner_user_id=ids["tc"],
+                            phone_model="iPhone 15", preferred_date="2026-10-29", customer_country="India",
+                            created_at=datetime(2026, 10, 27, 8, 0), submitted_at=datetime(2026, 10, 27, 8, 0))
+        db.add(lead)
+        await db.commit()
+        lead_id = lead.id
+
+    def sends():
+        return [(kw["json"]["to"], kw["json"]["template"]["name"], kw["json"]["template"]["components"])
+                for m, p, kw in calls if p.endswith("/messages")]
+
+    async with Session() as db:
+        assert await auto._run(db, "new_lead", lead_id, ids["tc"]) == ["B1:919000000003"]  # the store's row
+    to, name, comps = sends()[-1]
+    assert (to, name) == ("919000000003", "telecaller_new_lead")
+    assert {"type": "text", "parameter_name": "lead_source", "text": "Website"} in comps[0]["parameters"]
+    assert comps[1]["parameters"] == [{"type": "text", "text": str(lead_id)}]  # View Lead link
+    async with Session() as db:
+        assert await auto._run(db, "new_lead", lead_id, ids["tc"]) == []  # never twice
+
+    async with Session() as db:
+        assert await auto._run(db, "not_attended", lead_id, ids["tl"]) == ["B2:919000000001"]
+    assert sends()[-1][1] == "lead_not_attended"
+
+    async with Session() as db:
+        sent = await auto._run(db, "booking", lead_id)
+    assert sent == ["A1:919876543210", "A2:919000000004"]
+    a1, a2 = sends()[-2:]
+    assert a1[1] == "booking_received" and {"type": "text", "parameter_name": "booking_date",
+                                            "text": "29 Oct 2026"} in a1[2][0]["parameters"]
+    assert a2[1] == "store_priority_booking" and [b["sub_type"] for b in a2[2][1:]] == ["quick_reply", "quick_reply"]
+
+    # switched off: nothing goes out
+    r = await c.put("/api/v1/whatsapp/auto", json={"auto": {"B2": False}})
+    assert r.json()["auto"] == {"A1": True, "A2": True, "B1": True, "B2": False}
+    n = len(sends())
+    async with Session() as db:
+        assert await auto._run(db, "not_attended", lead_id, ids["tl"]) == []
+    assert len(sends()) == n
+    assert (await c.get("/api/v1/whatsapp/templates")).json()["auto"]["B2"] is False
+    assert (await as_user("tc").put("/api/v1/whatsapp/auto", json={"auto": {"A1": False}})).status_code == 403

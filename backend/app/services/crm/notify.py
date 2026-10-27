@@ -111,6 +111,10 @@ async def emit_notifications(rows: list[CrmNotification]) -> None:
     """Push to each recipient's socket room (after commit, so ids exist)."""
     if not rows:
         return
+    from ..whatsapp import auto as wa_auto
+    for n in rows:  # the telecaller it was given to also gets WhatsApp B1
+        if n.kind == "lead_assigned" and n.lead_id:
+            wa_auto.schedule("new_lead", n.lead_id, n.user_id)
     try:
         from ...socket import sio
         for n in rows:

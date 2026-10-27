@@ -61,15 +61,15 @@ TEMPLATES: list[dict] = [
     },
     {
         "key": "B1", "name": "telecaller_new_lead", "label": "New lead alert", "recipient": "Telecaller",
-        "trigger": "New lead from PM, GM or WhatsApp",
+        "trigger": "When a lead is given to them (a night lead: at hand-over)",
         "params": [("lead_name", "Priya"), ("lead_source", "PM"), ("received_time", "18 Oct 2026, 7:30 PM")],
         "body": "New Lead Received\n\nName: {{lead_name}}\nSource: {{lead_source}}\nReceived at: {{received_time}}\n\n"
                 "Please call this customer within 15 minutes.",
         "buttons": [{"type": "url", "text": "View Lead", "url": "https://dash.breakprotection.com/leads/{{1}}", "sample": "1024"}],
     },
     {
-        "key": "B2", "name": "lead_not_attended", "label": "Lead not attended", "recipient": "TL and CEO",
-        "trigger": "Lead not called within 15 minutes",
+        "key": "B2", "name": "lead_not_attended", "label": "Lead not attended", "recipient": "Team leader",
+        "trigger": "When a lead isn't called in time and is escalated",
         "params": [("lead_name", "Priya"), ("lead_source", "PM"), ("telecaller_name", "Anil"),
                    ("received_time", "18 Oct 2026, 7:30 PM")],
         "body": "Lead Not Attended\n\nName: {{lead_name}}\nSource: {{lead_source}}\nAssigned to: {{telecaller_name}}\n"

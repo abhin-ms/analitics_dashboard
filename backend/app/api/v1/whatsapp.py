@@ -27,6 +27,7 @@ from ...db.session import get_db
 from ...models.models import Role, Store, User, WhatsAppContact, WhatsAppMessage
 from ...services.crm.engine import record_audit
 from ...services.crm.timeutil import iso_utc
+from ...services.whatsapp import auto as wa_auto
 from ...services.whatsapp import templates as wa_templates
 from ...services.whatsapp.client import (
     WhatsAppError, apply_statuses, check_phone_number, list_templates, meta_buttons, send_template, signature_ok,
@@ -336,7 +337,23 @@ async def read_templates(db: AsyncSession = Depends(get_db), _u: User = require_
         "meta_error": meta_error,
         # every template name on the account, to pick a renamed one from
         "meta_names": sorted(meta_status),
+        # which templates the app sends by itself, and whether each is on
+        "auto": await wa_auto.auto_settings(db),
     }
+
+
+class AutoIn(BaseModel):
+    auto: dict[str, bool]
+
+
+@router.put("/auto")
+async def update_auto(body: AutoIn, db: AsyncSession = Depends(get_db),
+                      user: User = require_permission("settings", "edit")):
+    """Switch the automatic messages (A1, A2, B1, B2) on or off."""
+    saved = await wa_auto.save_auto_settings(db, body.auto, user.id)
+    record_audit(db, user.id, "whatsapp_auto", "settings", None, after=saved)
+    await db.commit()
+    return {"auto": saved}
 
 
 class TemplateNameIn(BaseModel):

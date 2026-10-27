@@ -350,5 +350,7 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
     from .engine import emit_alerts
     await emit_notifications(notes)  # first, so the browser skips a second popup for the same lead
     await emit_alerts(alerts)
+    from ..whatsapp import auto as wa_auto
+    wa_auto.schedule("booking", lead.id)  # WhatsApp A1 to the customer, A2 to the store
     return {"ok": True, "status": "created", "lead_id": lead.id, "store": store.name if store else None,
             "team_leader": tl.name if tl else None, "owner_user_id": owner_id}

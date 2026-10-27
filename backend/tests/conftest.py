@@ -12,3 +12,11 @@ def fixed_crm_hours(monkeypatch):
     monkeypatch.setitem(DEFAULT_AUTOMATION, "working_hours",
                         {"start": "09:00", "end": "18:00", "days": [0, 1, 2, 3, 4, 5]})
     monkeypatch.setitem(DEFAULT_AUTOMATION, "night_queue", False)
+
+
+@pytest.fixture(autouse=True)
+def no_background_whatsapp(monkeypatch):
+    """Automatic WhatsApp sends run in their own session against the real
+    database; tests call services.whatsapp.auto._run directly instead."""
+    from app.services.whatsapp import auto
+    monkeypatch.setattr(auto, "ENABLED", False)

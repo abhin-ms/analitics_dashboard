@@ -195,3 +195,18 @@ async def test_night_booking_tells_admins_now_and_telecaller_at_handover(env, mo
         notes = [(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()]
         assert (lead.owner_user_id, "lead_assigned") in notes          # telecaller at hand-over
         assert notes.count((ids["admin"], "lead_admin")) == 1          # admin not told twice
+
+
+@pytest.mark.asyncio
+async def test_paid_booking_schedules_customer_store_and_telecaller_whatsapp(env, monkeypatch):
+    from app.services.whatsapp import auto
+    client, Session, ids, _ = env
+    jobs = []
+    monkeypatch.setattr(auto, "schedule", lambda job, lead_id, user_id=None: jobs.append((job, lead_id, user_id)))
+    body = (await client.post(f"/api/v1/public/website-leads?key={KEY}", json={**BOOKING, "entry_id": "WEB-WA"})).json()
+    assert body["status"] == "created"
+    assert ("booking", body["lead_id"], None) in jobs                            # A1 customer + A2 store
+    assert ("new_lead", body["lead_id"], body["owner_user_id"]) in jobs          # B1 telecaller
+    jobs.clear()
+    await client.post(f"/api/v1/public/website-leads?key={KEY}", json={**BOOKING, "entry_id": "WEB-WA"})
+    assert jobs == []                                                            # a repeat sends nothing
