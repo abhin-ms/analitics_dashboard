@@ -559,6 +559,13 @@ function TestTab() {
     },
     onError: () => qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] }),
   });
+  // a failed message, sent again (same template, values and number)
+  const resend = useMutation({
+    mutationFn: (id: number) => api.post<{ message: WaMessage }>(`/whatsapp/messages/${id}/resend`, {}),
+    onSuccess: () => toast.success("Sent again. Watch its status above."),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not send it again"),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] }),
+  });
 
   if (isLoading || !data || !tpl) return <TableSkeleton />;
 
@@ -712,7 +719,7 @@ function TestTab() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
-                  {["Time", "To", "Template", "Status", "Sent", "Delivered", "Read", "By"].map((h) => <th key={h} className="py-2.5 px-4 text-left font-semibold whitespace-nowrap">{h}</th>)}
+                  {["Time", "To", "Template", "Status", "Sent", "Delivered", "Read", "By", ""].map((h) => <th key={h} className="py-2.5 px-4 text-left font-semibold whitespace-nowrap">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
@@ -732,6 +739,14 @@ function TestTab() {
                       <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.delivered_at ? fmtDateTime(m.delivered_at) : "—"}</td>
                       <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.read_at ? fmtDateTime(m.read_at) : "—"}</td>
                       <td className="py-2.5 px-4 text-[var(--text-secondary)]">{m.sent_by || "—"}</td>
+                      <td className="py-2.5 px-4">
+                        {m.status === "failed" && canEdit && (
+                          <Button size="sm" loading={resend.isPending && resend.variables === m.id}
+                            disabled={resend.isPending} onClick={() => resend.mutate(m.id)}>
+                            <Send size={12} />Resend
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
