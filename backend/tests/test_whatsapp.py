@@ -89,6 +89,9 @@ async def env(monkeypatch):
             return {"data": [
                 {"name": "booking_received", "status": "APPROVED", "language": "en", "category": "UTILITY",
                  "components": [{"type": "BODY", "text": "Hi {{customer_name}}"}]},
+                # approved without its "View Lead" button, like the live account
+                {"name": "telecaller_new_lead", "status": "APPROVED", "language": "en", "category": "UTILITY",
+                 "components": [{"type": "BODY", "text": "New Lead {{lead_name}}"}]},
                 {"name": "lead_not_attended", "status": "APPROVED", "language": "en", "category": "UTILITY",
                  "components": [{"type": "BODY", "text": "x"}, {"type": "BUTTONS", "buttons": [
                      {"type": "URL", "text": "View Lead", "url": "https://dash.breakprotection.com/leads/{{1}}"}]}]},
@@ -301,6 +304,7 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
     from app.models.models import TeleCallLead
     from app.services.whatsapp import auto
     as_user, ids, calls, Session = env
+    auto._meta_cache["at"] = 0.0  # read this test's (fake) Meta templates
     c = as_user("admin")
     await _setup(c)
     r = await c.put("/api/v1/whatsapp/contacts", json={
@@ -327,13 +331,15 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
     to, name, comps = sends()[-1]
     assert (to, name) == ("919000000003", "telecaller_new_lead")
     assert {"type": "text", "parameter_name": "lead_source", "text": "Website"} in comps[0]["parameters"]
-    assert comps[1]["parameters"] == [{"type": "text", "text": str(lead_id)}]  # View Lead link
+    assert len(comps) == 1  # B1 was approved without the View Lead button: none sent (Meta error 132018)
     async with Session() as db:
         assert await auto._run(db, "new_lead", lead_id, ids["tc"]) == []  # never twice
 
     async with Session() as db:
         assert await auto._run(db, "not_attended", lead_id, ids["tl"]) == ["B2:919000000001"]
-    assert sends()[-1][1] == "lead_not_attended"
+    to, name, comps = sends()[-1]
+    assert name == "lead_not_attended"
+    assert comps[1]["parameters"] == [{"type": "text", "text": str(lead_id)}]  # B2 has its View Lead link
 
     async with Session() as db:
         sent = await auto._run(db, "booking", lead_id)

@@ -30,10 +30,16 @@ export function openLead(id: number) {
   useLeadDrawer.getState().open(id);
 }
 
-/** Mounted once in AppLayout; renders nothing until a lead is opened. */
+/** Mounted once in AppLayout; renders nothing until a lead is opened.
+ * A link with ?lead=<id> (the "View Lead" button in WhatsApp alerts:
+ * /leads?lead={{1}}) opens that lead. */
 export function LeadDrawerHost() {
   const leadId = useLeadDrawer((s) => s.leadId);
   const close = useLeadDrawer((s) => s.close);
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get("lead"));
+    if (id > 0) openLead(id);
+  }, []);
   if (!leadId) return null;
   return <LeadDrawer leadId={leadId} onClose={close} />;
 }

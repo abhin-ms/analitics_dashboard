@@ -70,6 +70,40 @@ def _date(text: str | None) -> tuple[str, str]:
     return ist.strftime("%d %b %Y"), (ist.strftime("%I:%M %p").lstrip("0") if has_time else "To be confirmed")
 
 
+_meta_cache: dict = {"at": 0.0, "buttons": {}}
+
+
+async def _approved_buttons(cfg, name: str, language: str) -> list[dict] | None:
+    """The buttons the template really has on Meta (cached 10 minutes), or
+    None when that can't be read. A template approved without the button the
+    app knows about (e.g. B1 without its "View Lead" link) must be sent
+    without it — Meta refuses a value for a button it doesn't have."""
+    import time
+    from .client import WhatsAppError, list_templates, meta_buttons
+    if not cfg.waba_id:
+        return None
+    if time.monotonic() - _meta_cache["at"] > 600:
+        try:
+            rows = await list_templates(cfg)
+        except WhatsAppError as e:
+            logger.warning("Could not read WhatsApp templates from Meta: %s", e)
+            return None
+        _meta_cache.update(at=time.monotonic(),
+                           buttons={(t.get("name"), t.get("language")): meta_buttons(t) for t in rows})
+    return _meta_cache["buttons"].get((name, language))
+
+
+def _buttons_to_send(tpl: dict, approved: list[dict] | None) -> set[int] | None:
+    """Indexes of the app's buttons that the approved template has (a link
+    only when it takes a value); None = unknown, send the usual ones."""
+    if approved is None:
+        return None
+    kinds = {"url": "URL", "quick_reply": "QUICK_REPLY", "flow": "FLOW"}
+    return {i for i, b in enumerate(tpl["buttons"])
+            if i < len(approved) and approved[i]["type"] == kinds.get(b["type"])
+            and (b["type"] != "url" or approved[i]["dynamic"])}
+
+
 def schedule(job: str, lead_id: int, user_id: int | None = None) -> None:
     """Send in the background (call after the lead is committed)."""
     if not ENABLED:
@@ -125,8 +159,9 @@ async def _run(db, job: str, lead_id: int, user_id: int | None = None) -> list[s
         if dup:
             return
         try:
+            include = _buttons_to_send(tpl, await _approved_buttons(cfg, tpl["name"], tpl["language"]))
             components = build_components(tpl, {k: str(v) for k, v in values.items()}, buttons,
-                                          payload_prefix=f"lead{lead.id}")
+                                          include_buttons=include, payload_prefix=f"lead{lead.id}")
             await send_template(db, cfg, to=to, template=tpl["name"], language=tpl["language"],
                                 components=components, params={"values": values, "buttons": buttons or {}},
                                 purpose=purpose, sent_by=None, lead_id=lead.id)
