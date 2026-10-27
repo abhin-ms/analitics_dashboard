@@ -504,7 +504,12 @@ function TestTab() {
   const { data: cfg } = useQuery({ queryKey: ["whatsapp", "config"], queryFn: () => api.get<WaConfig>("/whatsapp/config") });
   const { data, isLoading } = useQuery({
     queryKey: ["whatsapp", "templates"],
-    queryFn: () => api.get<{ templates: Template[]; meta_checked: boolean; meta_error: string | null; meta_names: string[] }>("/whatsapp/templates"),
+    queryFn: () => api.get<{ templates: Template[]; meta_checked: boolean; meta_error: string | null; meta_names: string[];
+      auto: Record<string, boolean> }>("/whatsapp/templates"),
+  });
+  const setAuto = useMutation({
+    mutationFn: (auto: Record<string, boolean>) => api.put<{ auto: Record<string, boolean> }>("/whatsapp/auto", { auto }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["whatsapp", "templates"] }),
   });
   const messages = useQuery({
     queryKey: ["whatsapp", "messages"],
@@ -586,6 +591,20 @@ function TestTab() {
 
         <Card>
           <CardHeader title={`${tpl.key} · ${tpl.label}`} subtitle={`To ${tpl.recipient} · when: ${tpl.trigger}`} />
+          {tpl.key in (data.auto || {}) && (
+            <div className="px-5 pt-4 pb-3 border-b border-[var(--border-subtle)]">
+              <label className={cn("flex items-center gap-2 text-sm", canEdit ? "cursor-pointer" : "")}>
+                <input type="checkbox" checked={!!data.auto[tpl.key]} disabled={!canEdit || setAuto.isPending}
+                  onChange={(e) => setAuto.mutate({ [tpl.key]: e.target.checked })} />
+                <b className="text-[var(--text-primary)]">Send automatically</b>
+                <span className="text-[var(--text-muted)]">— to the {tpl.recipient.toLowerCase()}, {tpl.trigger.toLowerCase()}</span>
+              </label>
+              <p className="text-[11px] text-[var(--text-muted)] pl-6">
+                Numbers come from the Numbers tab. Each send appears under Sent messages below, with Meta's reason if it is refused.
+              </p>
+              <ErrorText error={setAuto.error} />
+            </div>
+          )}
           <div className="px-5 pt-4 pb-1 space-y-2 border-b border-[var(--border-subtle)]">
             <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Template name on Meta</p>
             <div className="flex flex-wrap items-end gap-2">

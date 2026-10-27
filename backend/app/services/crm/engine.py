@@ -237,6 +237,12 @@ async def emit_alerts(alerts: list[CrmAlert]) -> None:
     """Push new alerts to each recipient's socket room (after commit)."""
     if not alerts:
         return
+    from ..whatsapp import auto as wa_auto
+    for a in alerts:  # WhatsApp: B1 to whoever a lead was moved to, B2 to the team leader on escalation
+        if a.lead_id and a.kind == "reassigned_to_you":
+            wa_auto.schedule("new_lead", a.lead_id, a.recipient_user_id)
+        elif a.lead_id and a.kind == "first_call_escalated":
+            wa_auto.schedule("not_attended", a.lead_id, a.recipient_user_id)
     try:
         from ...socket import sio
         for a in alerts:
