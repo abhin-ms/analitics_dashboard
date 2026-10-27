@@ -107,6 +107,6 @@ async def release_queue(db: AsyncSession, now: datetime, automation: dict) -> tu
                             due_at=add_working_minutes(now, automation["first_call_minutes"],
                                                        automation["working_hours"]))
         await db.flush()
-        notes += await notify_new_lead(db, lead)
+        notes += await notify_new_lead(db, lead, admins=False)  # admins were told when it arrived
         released += 1
     return notes, released

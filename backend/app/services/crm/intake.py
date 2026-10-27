@@ -343,8 +343,8 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
                                scheduled_at=appt_dt if (to_ist(appt_dt).hour or to_ist(appt_dt).minute) else from_ist(datetime.combine(d, time(0, 0))),
                                purpose=lead.phone_model or "Store visit", attendance="scheduled", created_at=now))
 
-    from .notify import emit_notifications, notify_new_lead
-    notes = [] if queued else await notify_new_lead(db, lead)
+    from .notify import emit_notifications, notify_lead_queued, notify_new_lead
+    notes = await notify_lead_queued(db, lead) if queued else await notify_new_lead(db, lead)
     log("created", f"Lead created{'' if store else ' (store not matched)'}{' — night queue' if queued else ''}", lead.id)
     await db.commit()
     from .engine import emit_alerts

@@ -2,8 +2,10 @@
 people who should know a lead just arrived.
 
   * assigned lead → its owner ("assigned to you"), plus the rest of the
-    branch team and the branch's team leader ("new lead for <branch>")
+    branch team and the branch's team leader ("new lead for <branch>"),
+    and every admin ("new lead → <owner>")
   * unassigned lead → every telecaller and every admin
+  * night-queue lead → every admin on arrival; owner and branch at hand-over
 
 Branch team: for a store-routed lead (website, Meta webhook) the store's
 team leader and their telecallers; for a city-sheet lead the people on that
@@ -49,14 +51,22 @@ def _source(lead: TeleCallLead) -> str:
             "meta_sheet": "Meta"}.get(lead.source_channel or "", "")
 
 
-async def notify_new_lead(db: AsyncSession, lead: TeleCallLead) -> list[CrmNotification]:
-    """Write the notifications for a brand-new lead (lead must be flushed)."""
-    now = utcnow()
+async def _describe(db: AsyncSession, lead: TeleCallLead) -> tuple[str, set[int], str, str, bool]:
+    """(branch, branch team ids, "🔥 HOT Website lead", one-line detail, hot)."""
     hot = lead.priority == "hot"
     branch, team = await _branch(db, lead)
     src = _source(lead)
     what = f"{'🔥 HOT ' if hot else ''}{src + ' ' if src else ''}lead"
     detail = " · ".join(x for x in (lead.full_name, branch, lead.phone_model or lead.phone_brand) if x)
+    return branch, team, what, detail, hot
+
+
+async def notify_new_lead(db: AsyncSession, lead: TeleCallLead, *, admins: bool = True) -> list[CrmNotification]:
+    """Write the notifications for a brand-new lead (lead must be flushed).
+    Admins hear of every new lead, assigned or not; `admins=False` when they
+    were already told on arrival (a night-queue lead being handed over)."""
+    now = utcnow()
+    branch, team, what, detail, hot = await _describe(db, lead)
     rows: list[CrmNotification] = []
 
     def add(uid: int, kind: str, title: str, body: str) -> None:
@@ -68,9 +78,26 @@ async def notify_new_lead(db: AsyncSession, lead: TeleCallLead) -> list[CrmNotif
         add(lead.owner_user_id, "lead_assigned", f"New {what} assigned to you", detail)
         for uid in team - {lead.owner_user_id}:
             add(uid, "lead_branch", f"New {what} for {branch}", f"{detail} · given to {owner_name}")
+        for uid in (set(await admin_ids(db)) - team - {lead.owner_user_id}) if admins else set():
+            add(uid, "lead_admin", f"New {what} → {owner_name}", detail)
     else:
         for uid in await _all_telecallers(db) | set(await admin_ids(db)) | team:
             add(uid, "lead_unassigned", f"Unassigned {what} — {branch}", f"{detail} · needs an owner")
+    db.add_all(rows)
+    return rows
+
+
+async def notify_lead_queued(db: AsyncSession, lead: TeleCallLead) -> list[CrmNotification]:
+    """A lead that came in outside working hours: admins are told now; its
+    telecaller (and branch) when it is handed over next morning."""
+    now = utcnow()
+    _branch_name, _team, what, detail, hot = await _describe(db, lead)
+    queued_for = (await user_names(db, [lead.queued_owner_id])).get(lead.queued_owner_id, "") \
+        if lead.queued_owner_id else ""
+    rows = [CrmNotification(user_id=uid, lead_id=lead.id, kind="lead_admin", is_hot=hot, created_at=now,
+                            title=f"New {what} — night queue"[:200],
+                            body=f"{detail} · for {queued_for or 'the team'} at opening"[:300])
+            for uid in await admin_ids(db)]
     db.add_all(rows)
     return rows
 

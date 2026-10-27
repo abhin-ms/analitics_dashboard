@@ -160,7 +160,7 @@ async def test_hot_instagram_lead_routed_to_store_team(env):
         assert (await db.execute(select(TeleLeadFollowup.kind))).scalar() == "first_call"
         notes = {(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()}
         assert (ids["sureka"], "lead_assigned") in notes and (ids["tl"], "lead_branch") in notes
-        assert all(n[0] != ids["admin"] for n in notes)  # admins only for unassigned leads
+        assert (ids["admin"], "lead_admin") in notes  # admins hear of every new lead, assigned too
         n = (await db.execute(select(CrmNotification).where(CrmNotification.user_id == ids["sureka"]))).scalar_one()
         assert n.is_hot and n.title.startswith("New 🔥 HOT Instagram lead")
 
@@ -244,12 +244,13 @@ async def test_bell_lists_and_marks_read(env):
     store["L9"] = lead("L9")
     raw, headers = signed(event("L9"))
     await client.post(URL, content=raw, headers=headers)
-    # the signed-in user in this fixture is the admin: assigned lead → nothing for them
-    assert (await client.get("/api/v1/crm/notifications")).json()["unread"] == 0
+    # the signed-in user in this fixture is the admin: an assigned lead is shown too, with its owner
+    body = (await client.get("/api/v1/crm/notifications")).json()
+    assert body["unread"] == 1 and body["items"][0]["kind"] == "lead_admin" and "→" in body["items"][0]["title"]
     store["L10"] = lead("L10", form_id="F2", adset="BNP 1", city="Somewhere")
     raw, headers = signed(event("L10", form_id="F2"))
     await client.post(URL, content=raw, headers=headers)
     body = (await client.get("/api/v1/crm/notifications")).json()
-    assert body["unread"] == 1 and body["items"][0]["kind"] == "lead_unassigned" and body["items"][0]["lead_id"]
+    assert body["unread"] == 2 and body["items"][0]["kind"] == "lead_unassigned" and body["items"][0]["lead_id"]
     await client.post("/api/v1/crm/notifications/read", json={})
     assert (await client.get("/api/v1/crm/notifications")).json()["unread"] == 0

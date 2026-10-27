@@ -1003,7 +1003,7 @@ class CrmNotification(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=True)
-    kind = Column(String(30), nullable=False)  # lead_assigned | lead_branch | lead_unassigned
+    kind = Column(String(30), nullable=False)  # lead_assigned | lead_branch | lead_unassigned | lead_admin
     title = Column(String(200), nullable=False)
     body = Column(String(300), nullable=True)
     is_hot = Column(Boolean, default=False)
