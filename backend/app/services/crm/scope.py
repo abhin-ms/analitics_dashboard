@@ -5,6 +5,9 @@ Mirrors the rules already used by /tele-call-leads:
   * Team Leader / Telecaller: every lead on their assigned city sheets
     ("My leads" for a telecaller = leads they own)
   * Salesperson: leads where person_calling == their name (or they own)
+  * Store Owner (with Leads → View ticked for the role): their stores'
+    leads — tagged with the store, on the store's own city sheet, or with an
+    appointment there; Edit / Manage ticks let them work and reassign them
   * anyone else: nothing
 """
 from __future__ import annotations
@@ -18,6 +21,7 @@ from ...core.deps import ADMIN_TIER_ROLES
 from ...models.models import Role, TeleCallLead, TeleSheetAssignment, User
 
 LEAD_WORKER_ROLES = {"Telecaller", "Team Leader", "Salesperson"}
+STORE_ROLES = {"Store Owner"}
 
 
 @dataclass
@@ -27,8 +31,24 @@ class CrmScope:
     sheets: list[str] = field(default_factory=list)
     # Stores whose leads this person also sees (website leads are routed by
     # store → team leader, not by city sheet): a team leader's own stores; a
-    # telecaller's team leader's stores.
+    # telecaller's team leader's stores; a store owner's own stores.
     store_ids: list[int] = field(default_factory=list)
+    # Store owner: leads booked into their stores, and their role's ticks
+    appointment_lead_ids: set[int] = field(default_factory=set)
+    perms: set[tuple[str, str]] = field(default_factory=set)
+
+    @property
+    def is_store(self) -> bool:
+        return self.role in STORE_ROLES
+
+    def can(self, action: str) -> bool:
+        """A tick on Leads in Roles & Permissions (manage implies the rest)."""
+        return ("leads", action) in self.perms or ("leads", "manage") in self.perms
+
+    @property
+    def can_edit_leads(self) -> bool:
+        """Log calls, change status, book appointments."""
+        return not self.is_store or self.can("edit")
 
     @property
     def is_admin(self) -> bool:
@@ -48,11 +68,11 @@ class CrmScope:
 
     @property
     def has_access(self) -> bool:
-        return self.is_admin or self.role in LEAD_WORKER_ROLES
+        return self.is_admin or self.role in LEAD_WORKER_ROLES or (self.is_store and self.can("view"))
 
     @property
     def can_reassign(self) -> bool:
-        return self.is_admin or self.is_tl
+        return self.is_admin or self.is_tl or (self.is_store and self.can("manage"))
 
     @property
     def can_edit_settings(self) -> bool:
@@ -77,13 +97,49 @@ async def get_scope(db: AsyncSession, user: User) -> CrmScope:
             store_ids = list((await db.execute(
                 select(Store.id).where(Store.team_leader_id == tl_id)
             )).scalars().all())
+    if role in STORE_ROLES:
+        return await _store_scope(db, user, role)
     return CrmScope(user=user, role=role, sheets=sheets, store_ids=store_ids)
+
+
+async def _store_scope(db: AsyncSession, user: User, role: str) -> CrmScope:
+    """A store owner: their stores, the city sheets that are one of those
+    shops' own sheet (a sheet covering several shops, like "Kerala", is not),
+    leads with an appointment at their stores, and their role's Leads ticks."""
+    from ...core.deps import get_user_permissions
+    from ...models.models import Store, TeleAppointment, UserStoreAccess
+    from ..store_portfolio import shop_of, shop_of_sheet
+    store_ids = set((await db.execute(
+        select(UserStoreAccess.store_id).where(UserStoreAccess.user_id == user.id))).scalars().all())
+    if user.store_id:
+        store_ids.add(user.store_id)
+    names = (await db.execute(select(Store.name).where(Store.id.in_(store_ids or {-1})))).scalars().all()
+    shops = {shop_of(n) for n in names} - {None}
+    all_sheets = set((await db.execute(select(TeleSheetAssignment.sheet_tl_name).distinct())).scalars().all())
+    try:
+        from ..tele_call_sync import TELE_CALL_SHEETS
+        all_sheets |= {s["tl_name"] for s in TELE_CALL_SHEETS}
+    except Exception:  # the sheet list is optional here
+        pass
+    sheets = sorted(s for s in all_sheets if s and shop_of_sheet(s) in shops)
+    appt = set((await db.execute(select(TeleAppointment.lead_id).where(
+        TeleAppointment.store_id.in_(store_ids or {-1})))).scalars().all())
+    perms = {(p["resource"], p["action"]) for p in await get_user_permissions(user, db)}
+    return CrmScope(user=user, role=role, sheets=sheets, store_ids=sorted(store_ids),
+                    appointment_lead_ids=appt, perms=perms)
 
 
 def lead_filter(scope: CrmScope):
     """SQLAlchemy boolean clause restricting TeleCallLead rows to the scope."""
     if scope.is_admin:
         return TeleCallLead.id.isnot(None)
+    if scope.is_store:
+        clauses = [TeleCallLead.store_id.in_(scope.store_ids or [-1])]
+        if scope.sheets:  # the store's own city sheet, unless the lead names another store
+            clauses.append(TeleCallLead.sheet_tl_name.in_(scope.sheets) & TeleCallLead.store_id.is_(None))
+        if scope.appointment_lead_ids:
+            clauses.append(TeleCallLead.id.in_(scope.appointment_lead_ids))
+        return or_(*clauses)
     if scope.role in ("Team Leader", "Telecaller"):
         clauses = [TeleCallLead.owner_user_id == scope.user.id]
         if scope.sheets:
@@ -100,6 +156,10 @@ def lead_filter(scope: CrmScope):
 def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
     if scope.is_admin:
         return True
+    if scope.is_store:
+        return (lead.store_id in scope.store_ids
+                or (lead.store_id is None and lead.sheet_tl_name in scope.sheets)
+                or lead.id in scope.appointment_lead_ids)
     if scope.role in ("Team Leader", "Telecaller"):
         return (lead.sheet_tl_name in scope.sheets or lead.owner_user_id == scope.user.id
                 or (lead.store_id is not None and lead.store_id in scope.store_ids))

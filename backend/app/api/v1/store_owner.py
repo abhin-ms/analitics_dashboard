@@ -90,8 +90,9 @@ async def store_owner_overview(
     }
 
     # ── Leads: linked to these stores directly or through an appointment ──
-    appt_lead_ids = select(TeleAppointment.lead_id).where(TeleAppointment.store_id.in_(store_ids))
-    in_stores = or_(TeleCallLead.store_id.in_(store_ids), TeleCallLead.id.in_(appt_lead_ids))
+    # (the same leads the owner sees on the Leads page: also their store's own city sheet)
+    from ...services.crm.scope import get_scope, lead_filter
+    in_stores = lead_filter(await get_scope(db, user))
     p_start, p_end = crm_metrics.period_bounds(start, end)
     leads = await crm_metrics.leads_in_period(db, in_stores, p_start, p_end)
 
