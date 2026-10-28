@@ -170,6 +170,31 @@ async def test_app_edits_are_not_overwritten(db, team, sheet):
 
 
 @pytest.mark.asyncio
+async def test_a_customer_on_two_rows_no_longer_flips_status(db, team, sheet):
+    """The same lead on two rows used to get both rows' statuses every sync
+    (thousands of flips a week) and the row the telecaller updated lost."""
+    sheet += [row("Arjun", "9876500001", "2026-09-20 10:00", status="Call back later"),
+              row("Arjun", "9876500001", "2026-09-20 10:00", status="Not Interested")]
+    await tele_call_sync.sync_tele_call_leads(db)
+    lead = (await db.execute(select(TeleCallLead))).scalar_one()
+    assert lead.status == "Not Interested"  # first run: the last row, as before
+
+    flips = await count(db, TeleLeadActivity, TeleLeadActivity.type == "status_change")
+    for _ in range(3):  # unchanged sheet: nothing moves
+        await tele_call_sync.sync_tele_call_leads(db)
+    await db.refresh(lead)
+    assert lead.status == "Not Interested"
+    assert await count(db, TeleLeadActivity, TeleLeadActivity.type == "status_change") == flips
+
+    sheet[0] = row("Arjun", "9876500001", "2026-09-20 10:00", status="Will Visit")  # the top row is updated
+    for _ in range(3):
+        await tele_call_sync.sync_tele_call_leads(db)
+    await db.refresh(lead)
+    assert lead.status == "Will Visit"  # the update sticks
+    assert tele_call_sync.LAST_SYNC["Kerala"]["duplicate_rows"] == 1
+
+
+@pytest.mark.asyncio
 async def test_status_update_in_sheet_completes_first_call(db, team, sheet):
     await tele_call_sync.sync_tele_call_leads(db)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -702,6 +727,62 @@ async def test_night_leads_wait_and_are_handed_over_one_every_15_minutes(db, tea
     # arrived 12 working hours "ago", but escalation counts from the hand-over
     await db.refresh(hot)
     assert hot.escalated_at is None
+
+
+@pytest.mark.asyncio
+async def test_direct_leads_are_the_main_copy_and_sheet_copies_are_not_added(db, team, sheet):
+    """Website and Meta leads come in directly and are also backed up into the
+    sheets: the sheet row is the same lead, never a second one."""
+    await tele_call_sync.sync_tele_call_leads(db)  # go-live
+    at = datetime.utcnow() - timedelta(hours=2)
+    web = TeleCallLead(sheet_tl_name="Website", spreadsheet_id="", full_name="Asha", phone="+91 98765 03333",
+                       external_ref="website:BNB-7", source_channel="website", is_premium=True, status="",
+                       created_at=at, submitted_at=at)
+    meta = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="sheet-other-city", full_name="Biju",
+                        phone="9876504444", external_ref="meta:777", source_channel="instagram", status="",
+                        created_at=at, submitted_at=at)
+    db.add_all([web, meta])
+    await db.commit()
+    stamp = (at + timedelta(hours=5, minutes=31)).strftime("%Y-%m-%d %H:%M")  # IST, a minute later
+    sheet += [row("Asha K", "9876503333", stamp, status="Call back later"),  # website lead's backup
+              row("Biju", "9876504444", stamp),                              # Meta lead pasted into a 2nd city
+              row("Biju", "9876504444", "sometime yesterday")]               # time the sync can't read
+    result = await tele_call_sync.sync_tele_call_leads(db)
+
+    leads = (await db.execute(select(TeleCallLead).order_by(TeleCallLead.id))).scalars().all()
+    assert [l.id for l in leads] == [web.id, meta.id]  # no second leads
+    await db.refresh(web)
+    assert web.spreadsheet_id == SHEET["spreadsheet_id"] and web.status == "Call back later"  # now its sheet row
+    assert web.external_ref == "website:BNB-7" and web.is_premium
+    assert tele_call_sync.LAST_SYNC["Kerala"]["copies_of_direct_leads"] == 2  # both Biju rows
+    assert result["rows_synced"] == 1
+
+
+@pytest.mark.asyncio
+async def test_check_store_matching_merges_old_copies_of_direct_leads(db, team):
+    from app.services.crm.store_rematch import rematch_stores
+    at = ist(2026, 10, 20, 11, 0)
+    web = TeleCallLead(sheet_tl_name="Website", spreadsheet_id="", full_name="Asha", phone="9876503333",
+                       external_ref="website:BNB-8", source_channel="website", status="", created_at=at, submitted_at=at)
+    meta = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="sheet-a", full_name="Biju", phone="9876504444",
+                        external_ref="meta:778", source_channel="facebook", status="", created_at=at, submitted_at=at)
+    web_copy = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="sheet-a", full_name="Asha", phone="+919876503333",
+                            source_channel="meta_sheet", status="Will Visit", created_at=at + timedelta(days=1),
+                            submitted_at=at + timedelta(hours=30))
+    meta_copy = TeleCallLead(sheet_tl_name="Chennai", spreadsheet_id="sheet-b", full_name="Biju", phone="9876504444",
+                             source_channel="meta_sheet", status="", created_at=at, submitted_at=at)
+    other = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="sheet-a", full_name="Biju", phone="9876504444",
+                         source_channel="meta_sheet", status="", created_at=at + timedelta(days=9),
+                         submitted_at=at + timedelta(days=9))  # a new enquiry 9 days later: kept
+    db.add_all([web, meta, web_copy, meta_copy, other])
+    await db.commit()
+    ids = {"web": web.id, "meta": meta.id, "other": other.id}
+
+    await rematch_stores(db, team["admin"], apply=True)
+    left = {l.id: l for l in (await db.execute(select(TeleCallLead))).scalars().all()}
+    assert set(left) == set(ids.values())
+    assert left[ids["web"]].status == "Will Visit" and left[ids["web"]].spreadsheet_id == "sheet-a"
+    assert left[ids["meta"]].spreadsheet_id == "sheet-a"  # keeps its own sheet row
 
 
 @pytest.mark.asyncio

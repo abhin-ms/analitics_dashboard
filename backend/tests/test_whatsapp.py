@@ -339,10 +339,11 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
         assert await auto._run(db, "not_attended", lead_id, ids["tl"]) == ["B2:919000000001"]
     to, name, comps = sends()[-1]
     assert name == "lead_not_attended"
-    assert comps[1]["parameters"] == [{"type": "text", "text": str(lead_id)}]  # B2 has its View Lead link
+    assert len(comps) == 1  # B2 is message only, no View Lead button
     store_name = next(x["text"] for x in comps[0]["parameters"] if x["parameter_name"] == "store_name")
     async with Session() as db:
         assert store_name == (await db.get(Store, ids["store"])).name  # the customer's store
+    assert {"type": "text", "parameter_name": "customer_number", "text": "9876543210"} in comps[0]["parameters"]
 
     async with Session() as db:
         sent = await auto._run(db, "booking", lead_id)

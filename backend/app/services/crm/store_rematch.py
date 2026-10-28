@@ -18,7 +18,9 @@ from ...models.models import MetaFormStore, MetaLead, Store, TeleCallLead, User
 from .config import get_automation
 from .engine import create_followup, transfer_ownership
 from .intake import _real_team_leader, canonical_store, fallback_team_leader, match_store, pick_telecaller
-from .meta_leads import candidate_names, merge_sheet_twin, route_unassigned_for_form, unmerged_sheet_twins
+from .meta_leads import (
+    candidate_names, direct_lead_copies, merge_sheet_twin, route_unassigned_for_form, unmerged_sheet_twins,
+)
 from .night_queue import not_waiting
 from .status import CLOSED_STAGES
 from .timeutil import add_working_minutes, utcnow
@@ -43,12 +45,17 @@ async def rematch_stores(db: AsyncSession, actor: User, *, apply: bool, days: in
         tl = await _real_team_leader(db, store)
         return tl.name if tl else ""
 
-    # 0. the same Meta lead twice: the webhook lead and its sheet copy
-    for keep, drop in await unmerged_sheet_twins(db):
+    # 0. the same lead twice: the webhook / website lead and its sheet copy
+    #    (a Meta lead also pasted into another city's sheet included)
+    pairs = await unmerged_sheet_twins(db)
+    seen = {d.id for _, d in pairs} | {k.id for k, _ in pairs}
+    pairs += [(k, d) for k, d in await direct_lead_copies(db) if d.id not in seen]
+    for keep, drop in pairs:
         merged_out.append({"lead_id": keep.id, "copy_id": drop.id, "name": keep.full_name,
                            "sheet": drop.sheet_tl_name})
         if apply:
             await merge_sheet_twin(db, keep, drop, now=now, automation=automation, actor_id=actor.id)
+            await db.flush()
     if apply:
         await db.flush()
 

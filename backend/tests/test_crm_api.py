@@ -289,6 +289,10 @@ async def test_old_leads_endpoints(env):
     c = as_user("sureka")
     data = (await c.get("/api/v1/tele-call-leads")).json()
     assert data["total"] == 3 and "Kochi" in data["tl_groups"]
+    by_store = (await c.get("/api/v1/tele-call-leads", params={"group_by": "store"})).json()
+    assert by_store["group_by"] == "store" and by_store["total"] == 3
+    assert list(by_store["tl_groups"]) == ["No store matched"]  # these leads have no store yet
+    assert (await c.get("/api/v1/tele-call-leads", params={"group_by": "city"})).status_code == 422
     lead = next(l for l in data["tl_groups"]["Kochi"]["leads"] if l["full_name"] == "Leena Rao")
     r = await c.put(f"/api/v1/tele-call-leads/{lead['id']}", json={"status": "Will Visit", "person_calling": "Riya Menon"})
     assert r.status_code == 200 and r.json()["lead"]["status"] == "Will Visit"

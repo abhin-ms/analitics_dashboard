@@ -228,12 +228,47 @@ async def unmerged_sheet_twins(db: AsyncSession) -> list[tuple[TeleCallLead, Tel
     return pairs
 
 
+async def direct_lead_copies(db: AsyncSession, days: int = 90) -> list[tuple[TeleCallLead, TeleCallLead]]:
+    """(direct lead, sheet copy) pairs: a website / Meta lead and a lead the
+    sheet sync made of the same customer (same phone, time within the sync's
+    SHEET_COPY_WINDOW) — e.g. a website lead backed up into a sheet, or a Meta
+    lead also pasted into a second city's sheet. The sync stops making these;
+    this finds the ones made before."""
+    from ..tele_call_sync import copy_gap
+    since = utcnow() - timedelta(days=days)
+    direct = (await db.execute(select(TeleCallLead).where(
+        TeleCallLead.external_ref.like("meta:%") | TeleCallLead.external_ref.like("website:%"),
+        TeleCallLead.created_at >= since))).scalars().all()
+    by_phone: dict[str, list[TeleCallLead]] = {}
+    for d in direct:
+        if len(norm_phone(d.phone)) >= 10:
+            by_phone.setdefault(norm_phone(d.phone), []).append(d)
+    if not by_phone:
+        return []
+    copies = (await db.execute(select(TeleCallLead).where(
+        TeleCallLead.spreadsheet_id != "", TeleCallLead.spreadsheet_id.isnot(None),
+        (TeleCallLead.external_ref == "") | TeleCallLead.external_ref.is_(None),
+        TeleCallLead.created_at >= since))).scalars().all()
+    linked = set((await db.execute(select(MetaLead.lead_id).where(MetaLead.lead_id.isnot(None)))).scalars().all())
+    pairs = []
+    for c in sorted(copies, key=lambda r: r.id):
+        if c.id in linked:
+            continue
+        at = c.submitted_at
+        cands = [(gap, d) for d in by_phone.get(norm_phone(c.phone), []) if (gap := copy_gap(d, at)) is not None]
+        if cands:
+            pairs.append((min(cands, key=lambda x: (x[0], x[1].id))[1], c))
+    return pairs
+
+
 async def merge_sheet_twin(db: AsyncSession, keep: TeleCallLead, drop: TeleCallLead, *, now: datetime,
                            automation: dict, actor_id: int | None) -> None:
     """Make one lead of a webhook lead (`keep`) and its sheet copy (`drop`):
     `keep` becomes the sheet row (so the next sync updates it, as the sync
     does for twins it finds itself), takes over the calls made on the copy,
-    and everything attached to the copy moves to it before it is deleted."""
+    and everything attached to the copy moves to it before it is deleted.
+    A `keep` that already is a row of a sheet stays that row (the sync skips
+    the copy's row from then on)."""
     from sqlalchemy import delete, update
     from ...models.models import (
         CrmAlert, CrmNotification, LeadSubmission, TeleAppointment, TeleLeadActivity, TeleLeadFollowup,
@@ -242,9 +277,10 @@ async def merge_sheet_twin(db: AsyncSession, keep: TeleCallLead, drop: TeleCallL
     for model in (TeleLeadActivity, TeleLeadFollowup, TeleAppointment, CrmAlert, CrmNotification,
                   LeadSubmission, MetaLead, WhatsAppMessage):
         await db.execute(update(model).where(model.lead_id == drop.id).values(lead_id=keep.id))
-    keep.spreadsheet_id, keep.sheet_tl_name = drop.spreadsheet_id, drop.sheet_tl_name
-    keep.full_name, keep.phone, keep.created_time = drop.full_name, drop.phone, drop.created_time
-    keep.last_synced_at = drop.last_synced_at
+    if not keep.spreadsheet_id:
+        keep.spreadsheet_id, keep.sheet_tl_name = drop.spreadsheet_id, drop.sheet_tl_name
+        keep.full_name, keep.phone, keep.created_time = drop.full_name, drop.phone, drop.created_time
+        keep.last_synced_at = drop.last_synced_at
     for f in _SHEET_WORK_FIELDS:
         if getattr(keep, f) in (None, "") and getattr(drop, f) not in (None, ""):
             setattr(keep, f, getattr(drop, f))

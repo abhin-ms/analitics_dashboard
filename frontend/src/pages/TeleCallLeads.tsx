@@ -30,6 +30,7 @@ interface Lead {
   product: string;
   salesperson: string;
   sheet_tl_name: string;
+  store_name?: string | null;
 }
 
 interface TlGroup {
@@ -87,6 +88,19 @@ export default function TeleCallLeads() {
   const [newTelecaller, setNewTelecaller] = useState({ name: "", email: "", password: "", sheet_tl_name: "" });
   const [addTelecallerError, setAddTelecallerError] = useState("");
   const [addingTelecaller, setAddingTelecaller] = useState(false);
+  // Leads are shown store by store (a telecaller: their own store); team
+  // leaders and admins can switch to the city-sheet view.
+  const [groupBy, setGroupBy] = useState<"store" | "sheet">(() => {
+    try { const v = localStorage.getItem("bp.leads-update.group"); if (v === "store" || v === "sheet") return v; } catch {}
+    return "store";
+  });
+  const canGroup = ["Team Leader", "SuperAdmin", "Admin", "CEO", "COO", "Regional Manager"].includes(user?.role_name || "");
+  const byStore = !canGroup || groupBy === "store";
+  const chooseGroup = (g: "store" | "sheet") => {
+    setGroupBy(g);
+    setExpandedTl(null);
+    try { localStorage.setItem("bp.leads-update.group", g); } catch {}
+  };
 
   const isTL = role === "Team Leader";
   const isTelecaller = role === "Telecaller";
@@ -98,7 +112,7 @@ export default function TeleCallLeads() {
   const fetchLeads = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.fetchRaw("/tele-call-leads");
+      const res = await api.fetchRaw(`/tele-call-leads?group_by=${byStore ? "store" : "sheet"}`);
       if (res.ok) {
         const d = await res.json();
         setTlGroups(d.tl_groups || {});
@@ -107,7 +121,7 @@ export default function TeleCallLeads() {
       }
     } catch {}
     setLoading(false);
-  }, []);
+  }, [byStore]);
 
   const fetchSalespersons = useCallback(async () => {
     if (!canAssign) return;
@@ -292,9 +306,9 @@ export default function TeleCallLeads() {
               {isTelecaller ? "My Tele Call Leads" : isSalesperson ? "My Assigned Leads" : "Leads Update"}
             </h1>
             <p className="text-sm text-[var(--text-muted)] mt-1">
-              {tlNames.length > 0 && `${tlNames.length} city sheet${tlNames.length > 1 ? "s" : ""} · `}
+              {tlNames.length > 0 && `${tlNames.length} ${byStore ? "store" : "city sheet"}${tlNames.length > 1 ? "s" : ""} · `}
               {total.toLocaleString()} total leads
-              {isTelecaller && " · Your assigned sheet"}
+              {isTelecaller && " · Your store's leads"}
               {isSalesperson && " · Leads assigned to you"}
             </p>
           </div>
@@ -399,6 +413,16 @@ export default function TeleCallLeads() {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+          {canGroup && (
+            <div className="flex rounded-xl border border-[var(--border-subtle)] overflow-hidden text-xs shrink-0" role="group" aria-label="Group leads by">
+              {(["store", "sheet"] as const).map((g) => (
+                <button key={g} onClick={() => chooseGroup(g)} aria-pressed={groupBy === g}
+                  className={`px-3 py-2 font-semibold ${groupBy === g ? "bg-[var(--accent-blue)] text-white" : "bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:text-white"}`}>
+                  {g === "store" ? "By store" : "By sheet"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* TL / City Sheet Sections */}
