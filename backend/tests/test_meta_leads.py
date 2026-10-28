@@ -91,12 +91,14 @@ async def env(monkeypatch):
         admin = User(name="Ada", email="a@x", password_hash="x", role_id=roles["Admin"].id)
         db.add_all([tl, admin])
         await db.flush()
-        sureka = User(name="Sureka", email="s@x", password_hash="x", role_id=roles["Telecaller"].id, team_leader_id=tl.id)
+        kochi = Store(name="Kochi Edappally", team_leader_id=tl.id, region="Kerala", currency_code="INR")
+        db.add_all([kochi, Store(name="Thrissur", team_leader_id=tl.id, region="Kerala", currency_code="INR")])
+        await db.flush()
+        sureka = User(name="Sureka", email="s@x", password_hash="x", role_id=roles["Telecaller"].id,
+                      team_leader_id=tl.id, store_id=kochi.id)  # Kochi's own telecaller
         other = User(name="Other", email="o@x", password_hash="x", role_id=roles["Telecaller"].id)
         db.add_all([sureka, other])
         db.add(TeleSheetAssignment(user_id=tl.id, sheet_tl_name="Kerala"))
-        db.add(Store(name="Kochi Edappally", team_leader_id=tl.id, region="Kerala", currency_code="INR"))
-        db.add(Store(name="Thrissur", team_leader_id=tl.id, region="Kerala", currency_code="INR"))
         db.add(Setting(key="crm.go_live_at", value='"2026-01-01T00:00:00"'))
         await db.commit()
         await db.flush()
@@ -204,10 +206,10 @@ async def test_unmatched_form_alerts_admins_then_mapping_routes_it(env):
     async with Session() as db:
         alert = (await db.execute(select(CrmAlert).where(CrmAlert.kind == "unassigned"))).scalar_one()
         assert alert.recipient_user_id == ids["admin"] and alert.level == 3
-        # unassigned → every telecaller and admin is told
+        # unassigned → admins are told; not every telecaller of every store
         told = set((await db.execute(select(CrmNotification.user_id).where(
             CrmNotification.kind == "lead_unassigned"))).scalars().all())
-        assert {ids["sureka"], ids["other"], ids["admin"]} <= told
+        assert ids["admin"] in told and ids["other"] not in told and ids["sureka"] not in told
         thrissur = (await db.execute(select(Store.id).where(Store.name == "Thrissur"))).scalar()
 
     forms = (await client.get("/api/v1/crm/meta/forms")).json()["forms"]
@@ -216,7 +218,9 @@ async def test_unmatched_form_alerts_admins_then_mapping_routes_it(env):
     assert r.json()["routed_leads"] == 1
     async with Session() as db:
         l = await db.get(TeleCallLead, res["lead_id"])
-        assert l.owner_user_id == ids["sureka"] and l.store_id == thrissur
+        # Thrissur has no telecaller of its own: its team leader keeps it —
+        # never Kochi's telecaller (Sureka)
+        assert l.owner_user_id == ids["tl"] and l.store_id == thrissur
 
 
 @pytest.mark.asyncio

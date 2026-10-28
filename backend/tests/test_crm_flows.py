@@ -580,11 +580,13 @@ async def _korum_team(db, with_telecaller: bool):
     abd = User(name="Abdullah", email="ab@x", password_hash="x", role_id=roles["Team Leader"].id)
     db.add(abd)
     await db.flush()
-    db.add(Store(name="Mumbai - Korum Mall", country="India", is_active=True, team_leader_id=abd.id))
-    team = {"tl": abd, "roles": roles}
-    if with_telecaller:
+    korum = Store(name="Mumbai - Korum Mall", country="India", is_active=True, team_leader_id=abd.id)
+    db.add(korum)
+    await db.flush()
+    team = {"tl": abd, "roles": roles, "store": korum}
+    if with_telecaller:  # the store's own telecaller
         team["dilip"] = User(name="Dilip", email="d@x", password_hash="x", role_id=roles["Telecaller"].id,
-                             team_leader_id=abd.id)
+                             team_leader_id=abd.id, store_id=korum.id)
         db.add(team["dilip"])
     await db.commit()
     return team
@@ -612,7 +614,7 @@ async def test_team_leader_keeps_leads_until_the_team_has_a_telecaller(db, thane
     assert {l.owner_user_id for l in leads.values()} == {team["tl"].id}   # no telecaller: the team leader
 
     dilip = User(name="Dilip", email="d@x", password_hash="x", role_id=team["roles"]["Telecaller"].id,
-                 team_leader_id=team["tl"].id)
+                 team_leader_id=team["tl"].id, store_id=team["store"].id)
     db.add(dilip)
     await db.commit()
     await tele_call_sync.sync_tele_call_leads(db)

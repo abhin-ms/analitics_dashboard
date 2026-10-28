@@ -51,15 +51,17 @@ async def queued_counts(db: AsyncSession, user_ids: list[int]) -> dict[int, int]
 
 
 async def _receiver(db: AsyncSession, user_id: int) -> User | None:
-    """The queued owner if they can still take leads, else someone on
-    their team leader's team, else that team leader."""
+    """The queued owner if they can still take leads, else another
+    telecaller of the same store, else their team leader."""
+    from ...models.models import Store
     from .intake import pick_telecaller
     user = await db.get(User, user_id)
     if user and user.is_active and user.available_for_leads is not False:
         return user
     tl = await db.get(User, user.team_leader_id) if user and user.team_leader_id else None
     if tl and tl.is_active:
-        return await pick_telecaller(db, tl) or tl
+        store = await db.get(Store, user.store_id) if user.store_id else None
+        return await pick_telecaller(db, tl, store) or tl
     return None
 
 

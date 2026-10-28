@@ -369,7 +369,7 @@ async def ingest_meta_lead(db: AsyncSession, change: dict, *, lead_data: dict | 
                        f"{f' · ad: {row.ad_name}' if row.ad_name else ''}{hot_note}")
 
     alerts: list = []
-    owner = await pick_telecaller(db, tl) if tl else None
+    owner = await pick_telecaller(db, tl, store) if tl else None
     owner_id = owner.id if owner else (tl.id if tl else None)
     fallback_tl = None if owner_id else await fallback_team_leader(
         db, [store.name if store else None, branch_text, ans["city"]])
@@ -438,7 +438,7 @@ async def route_unassigned_for_form(db: AsyncSession, form_id: str, actor: User)
     )).scalars().all()
     for lead in leads:
         lead.store_id = store.id
-        owner = await pick_telecaller(db, tl)
+        owner = await pick_telecaller(db, tl, store)
         await transfer_ownership(db, lead, (owner or tl).id, source="manual", actor_id=actor.id, now=now,
                                  automation=automation, reason=f"Form mapped to {store.name}")
         if not lead.status:

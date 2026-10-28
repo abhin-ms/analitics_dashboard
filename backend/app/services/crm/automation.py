@@ -27,6 +27,7 @@ from .engine import (
     RoundRobin, add_activity, admin_ids, create_alert, emit_alerts,
     team_leader_ids, transfer_ownership, user_names,
 )
+from .intake import lead_store, store_telecallers
 from .night_queue import release_queue
 from .timeutil import ist_today, to_ist, utcnow, working_minutes_between
 
@@ -114,7 +115,13 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
         if elapsed >= automation["reassign_minutes"]:
             chosen = None
             if (lead.reassign_count or 0) == 0 and lead.assignment_source != "manual":
-                chosen = await rr.pick(lead.sheet_tl_name, exclude={fu.owner_user_id} if fu.owner_user_id else None)
+                exclude = {fu.owner_user_id} if fu.owner_user_id else None
+                store = await lead_store(db, lead)
+                if store is not None:  # only another telecaller of the same store
+                    chosen = await rr.pick_among([{"id": u.id, "available": True}
+                                                  for u in await store_telecallers(db, store)], exclude)
+                else:
+                    chosen = await rr.pick(lead.sheet_tl_name, exclude=exclude)
             if chosen:
                 names = await user_names(db, [fu.owner_user_id])
                 await transfer_ownership(

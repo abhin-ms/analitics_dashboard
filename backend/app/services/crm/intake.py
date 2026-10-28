@@ -19,7 +19,7 @@ import re
 from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...models.models import (
@@ -175,11 +175,39 @@ async def fallback_team_leader(db: AsyncSession, texts: list[str | None], countr
     return None
 
 
-async def pick_telecaller(db: AsyncSession, tl: User) -> User | None:
-    """Available telecaller on this team leader's team with the fewest leads
-    assigned today (leads waiting for them in the night queue count too)."""
+async def store_telecallers(db: AsyncSession, store: Store, *, available_only: bool = True) -> list[User]:
+    """Active telecallers assigned to this store (Settings → Users): as their
+    own store or as one of their further stores."""
+    from ...models.models import UserStoreAccess
+    extra = select(UserStoreAccess.user_id).where(UserStoreAccess.store_id == store.id)
+    q = (select(User).join(Role, Role.id == User.role_id)
+         .where(Role.name == "Telecaller", User.is_active == True,  # noqa: E712
+                or_(User.store_id == store.id, User.id.in_(extra))))
+    users = list((await db.execute(q)).scalars().all())
+    return [u for u in users if u.available_for_leads is not False] if available_only else users
+
+
+async def lead_store(db: AsyncSession, lead: TeleCallLead) -> Store | None:
+    """The store a lead belongs to: its own, else the shop whose own city
+    sheet it came from (a sheet covering several shops gives none)."""
+    if lead.store_id:
+        return await db.get(Store, lead.store_id)
+    from ..store_portfolio import shop_of_sheet
+    shop = shop_of_sheet(lead.sheet_tl_name or "")
+    return await store_for_shop(db, shop) if shop else None
+
+
+async def pick_telecaller(db: AsyncSession, tl: User, store: Store | None = None) -> User | None:
+    """Available telecaller with the fewest leads assigned today (leads
+    waiting for them in the night queue count too): one of the store's own
+    telecallers when the lead's store is known — never another store's, so
+    with nobody free there the team leader keeps it — else anyone on the team
+    leader's team."""
     from .night_queue import queued_counts
-    team = [u for u in await team_telecallers(db, tl) if u.available_for_leads is not False]
+    if store is not None:
+        team = await store_telecallers(db, store)
+    else:
+        team = [u for u in await team_telecallers(db, tl) if u.available_for_leads is not False]
     if not team:
         return None
     start, end = ist_day_bounds_utc(ist_today())
@@ -307,7 +335,7 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
                        f"{store.name if store else (store_text or 'not given')}")
 
     alerts: list = []
-    owner = await pick_telecaller(db, tl) if tl else None
+    owner = await pick_telecaller(db, tl, store) if tl else None
     owner_id = owner.id if owner else (tl.id if tl else None)
     fallback_tl = None if owner_id else await fallback_team_leader(
         db, [store.name if store else None, store_text, pick(payload, "state")], pick(payload, "country"))
