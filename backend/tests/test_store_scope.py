@@ -144,6 +144,18 @@ async def test_telecaller_sees_only_their_own_stores_leads(db, setup):
     assert all(lead_in_scope(l, scope) == (l.full_name in seen) for l in setup["leads"].values())
 
 
+@pytest.mark.asyncio
+async def test_a_lead_from_another_store_shows_its_store_name(db, setup):
+    """A telecaller's store list holds only their own stores, so the lead
+    carries its store's name — a Calicut lead held by Kochi's telecaller reads
+    "Calicut", not "No store matched" (live: Wayanad lead with swalih)."""
+    from app.api.v1.crm import lead_row, store_names
+    leads = list(setup["leads"].values())
+    stores = await store_names(db, leads)
+    rows = {r["full_name"]: r["store_name"] for r in (lead_row(l, {}, stores=stores) for l in leads)}
+    assert rows["other_store"] == "Calicut" and rows["tagged"] == "Kochi" and rows["own_sheet"] is None
+
+
 async def _seen(db, user):
     scope = await get_scope(db, user)
     return scope, {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(scope)))).scalars()}
