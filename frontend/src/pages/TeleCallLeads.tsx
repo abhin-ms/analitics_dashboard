@@ -932,6 +932,7 @@ export default function TeleCallLeads() {
                 />
                 <input
                   type="password"
+                  autoComplete="new-password"
                   placeholder="Password"
                   value={newTelecaller.password}
                   onChange={(e) => setNewTelecaller((p) => ({ ...p, password: e.target.value }))}

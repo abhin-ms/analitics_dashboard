@@ -8,11 +8,23 @@ ALGORITHM = "HS256"
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # Spaces around a password are a typing / keyboard accident, never meant:
+    # every new password is saved without them (see verify_password).
+    return bcrypt.hashpw(password.strip().encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    """Exactly as typed, else without the spaces a phone keyboard adds around
+    it (a password saved before they were stripped still works as typed)."""
+    hashed_b = hashed.encode("utf-8")
+    if bcrypt.checkpw(plain.encode("utf-8"), hashed_b):
+        return True
+    return plain != plain.strip() and bcrypt.checkpw(plain.strip().encode("utf-8"), hashed_b)
+
+
+def normalize_email(email: str | None) -> str:
+    """Emails are matched without surrounding spaces and ignoring case."""
+    return (email or "").strip().lower()
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

@@ -5,7 +5,7 @@ Mirrors the rules already used by /tele-call-leads:
   * Team Leader / Telecaller: every lead on their assigned city sheets
     ("My leads" for a telecaller = leads they own)
   * Salesperson: leads where person_calling == their name (or they own)
-  * Store Owner (with Leads → View ticked for the role): their stores'
+  * Store Owner / Store Staff (with Leads → View ticked for the role): their stores'
     leads — tagged with the store, on the store's own city sheet, or with an
     appointment there; Edit / Manage ticks let them work and reassign them
   * anyone else: nothing
@@ -21,7 +21,7 @@ from ...core.deps import ADMIN_TIER_ROLES
 from ...models.models import Role, TeleCallLead, TeleSheetAssignment, User
 
 LEAD_WORKER_ROLES = {"Telecaller", "Team Leader", "Salesperson"}
-STORE_ROLES = {"Store Owner"}
+STORE_ROLES = {"Store Owner", "Store Staff"}
 
 
 @dataclass

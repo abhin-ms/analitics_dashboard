@@ -130,6 +130,7 @@ export default function SetPassword() {
                 />
                 <input
                   type="password"
+                  autoComplete="new-password"
                   id="set-password"
                   placeholder="••••••••"
                   value={password}
@@ -189,6 +190,7 @@ export default function SetPassword() {
                 />
                 <input
                   type="password"
+                  autoComplete="new-password"
                   id="set-password-confirm"
                   placeholder="••••••••"
                   value={confirm}

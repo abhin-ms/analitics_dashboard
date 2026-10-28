@@ -19,7 +19,8 @@ from ...services.sales_report_service import get_sales_report
 
 router = APIRouter(prefix="/store-owner", tags=["store-owner"])
 
-OWNER_ROLES = {"Store Owner"}
+# Store-level accounts that get this dashboard (sales, leads, staff, social) for their store(s)
+OWNER_ROLES = {"Store Owner", "Store Staff"}
 # Staff whose lead work is measured (they own leads in the CRM).
 LEAD_ROLES = {"Telecaller", "Salesperson"}
 RECENT_LEADS = 100
@@ -28,7 +29,7 @@ RECENT_LEADS = 100
 async def _owner_store_ids(user: User, db: AsyncSession) -> list[int]:
     role = (await db.execute(select(Role.name).where(Role.id == user.role_id))).scalar_one_or_none()
     if role not in OWNER_ROLES:
-        raise HTTPException(status_code=403, detail="Only store owners have a store owner dashboard")
+        raise HTTPException(status_code=403, detail="Only store accounts have a store dashboard")
     ids = {sa.store_id for sa in user.store_access}
     if user.store_id:
         ids.add(user.store_id)
