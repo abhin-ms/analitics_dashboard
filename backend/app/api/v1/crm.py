@@ -93,13 +93,25 @@ def source_key(l: TeleCallLead) -> str:
     return typed if typed in SOURCE_LABELS else "app"
 
 
-def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | None = None) -> dict:
+async def store_names(db: AsyncSession, leads) -> dict[int, str]:
+    """Names of the leads' stores — sent with each lead, since a telecaller's
+    store list holds only their own stores (a lead they hold for another
+    store would otherwise read "No store matched")."""
+    ids = {l.store_id for l in leads if l.store_id}
+    if not ids:
+        return {}
+    return dict((await db.execute(select(Store.id, Store.name).where(Store.id.in_(ids)))).all())
+
+
+def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | None = None,
+             stores: dict[int, str] | None = None) -> dict:
     src = source_key(l)
     return {
         "source": src,
         "source_label": SOURCE_LABELS.get(src, src.replace("_", " ").title()),
         "is_premium": bool(l.is_premium),
         "store_id": l.store_id,
+        "store_name": (stores or {}).get(l.store_id) if l.store_id else None,
         "preferred_store": l.preferred_store_text,
         "customer_state": l.customer_state,
         "phone_brand": l.phone_brand,
@@ -358,6 +370,7 @@ async def list_leads(
 
     names = await user_names(db, {l.owner_user_id for l in leads} | {l.queued_owner_id for l in leads})
     fc = await pending_first_calls(db, [l.id for l in leads])
+    stores = await store_names(db, leads)
 
     groups = None
     group_cols = {"owner": TeleCallLead.owner_user_id, "stage": func.coalesce(TeleCallLead.stage, "new"),
@@ -381,7 +394,7 @@ async def list_leads(
         groups.sort(key=lambda x: -x["count"])
 
     return {
-        "items": [lead_row(l, names, fc) for l in leads],
+        "items": [lead_row(l, names, fc, stores) for l in leads],
         "total": total, "page": page, "page_size": page_size,
         "status_counts": status_counts, "tab_counts": tab_counts, "groups": groups,
     }
@@ -447,7 +460,7 @@ async def create_lead(body: NewLeadRequest, db: AsyncSession = Depends(get_db), 
                         reason="First call for a new lead", at=now)
     await db.commit()
     names = await user_names(db, [lead.owner_user_id])
-    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]))}
+    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]), await store_names(db, [lead]))}
 
 
 @router.get("/leads/{lead_id}")
@@ -484,7 +497,7 @@ async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db), user=Depend
         })
     timeline.sort(key=lambda x: x["at"] or "", reverse=True)
     return {
-        "lead": lead_row(lead, names, fc),
+        "lead": lead_row(lead, names, fc, await store_names(db, [lead])),
         "timeline": timeline,
         "followups": [{
             "id": f.id, "kind": f.kind, "due_at": iso_utc(f.due_at), "status": f.status,
@@ -611,7 +624,7 @@ async def patch_lead(lead_id: int, body: LeadPatch, db: AsyncSession = Depends(g
                      before={k: v[0] for k, v in changes.items()}, after={k: v[1] for k, v in changes.items()})
     await db.commit()
     names = await user_names(db, [lead.owner_user_id])
-    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]))}
+    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]), await store_names(db, [lead]))}
 
 
 class ActivityRequest(BaseModel):
@@ -658,7 +671,7 @@ async def log_activity(lead_id: int, body: ActivityRequest, db: AsyncSession = D
     fu = result["followup"]
     return {
         "ok": True,
-        "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id])),
+        "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]), await store_names(db, [lead])),
         "next_follow_up": {"due_at": iso_utc(fu.due_at), "kind": fu.kind, "reason": fu.reason} if fu else None,
     }
 
@@ -699,7 +712,7 @@ async def assign_lead(lead_id: int, body: AssignRequest, db: AsyncSession = Depe
     await _assign(db, scope, user, lead, body.owner_user_id, await get_automation(db), utcnow())
     await db.commit()
     names = await user_names(db, [lead.owner_user_id])
-    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]))}
+    return {"ok": True, "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]), await store_names(db, [lead]))}
 
 
 class BulkAssignRequest(BaseModel):
@@ -1123,9 +1136,10 @@ async def pipeline(mine: str = Query("0"), sheet: str = Query(""), owner: str = 
         else:
             value = sum(float(pv or 0) for pv, _ in all_vals)
         names = await user_names(db, {l.owner_user_id for l in leads} | {l.queued_owner_id for l in leads})
+        stores = await store_names(db, leads)
         columns.append({
             "stage": st["key"], "label": st["label"], "count": count_by.get(st["key"], 0), "value": value,
-            "cards": [lead_row(l, names) for l in leads],
+            "cards": [lead_row(l, names, stores=stores) for l in leads],
         })
     return {"columns": columns}
 

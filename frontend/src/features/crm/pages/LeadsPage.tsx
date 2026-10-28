@@ -71,8 +71,11 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const { data: storeList } = useQuery({ queryKey: ["stores"], queryFn: () => api.get<{ id: number; name: string; is_active: boolean }[]>("/stores/") });
   const storeName = useMemo(() => new Map((storeList || []).map((st) => [st.id, st.name])), [storeList]);
   const storeLine = (l: CrmLead) => {
-    if (l.store_id && storeName.get(l.store_id)) {
-      return <span className="inline-flex items-center gap-1 font-semibold text-[var(--text-primary)]"><StoreIcon size={11} />{storeName.get(l.store_id)}</span>;
+    // the lead carries its store's name: a telecaller's store list holds only
+    // their own stores, and a lead from another store must still show it
+    const name = l.store_id ? l.store_name || storeName.get(l.store_id) : null;
+    if (name) {
+      return <span className="inline-flex items-center gap-1 font-semibold text-[var(--text-primary)]"><StoreIcon size={11} />{name}</span>;
     }
     if (STORE_ROUTED.has(l.source)) {
       return <span className="font-semibold text-amber-500" title={l.preferred_store || ""}>No store matched{l.preferred_store ? ` (“${l.preferred_store}”)` : ""}</span>;

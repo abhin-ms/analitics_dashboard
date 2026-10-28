@@ -4,6 +4,7 @@ export interface CrmLead {
   source_label: string;
   is_premium: boolean;
   store_id: number | null;
+  store_name?: string | null;
   preferred_store: string | null;
   customer_state: string | null;
   phone_brand: string | null;
