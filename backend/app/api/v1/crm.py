@@ -25,7 +25,7 @@ from ...services.crm import metrics as crm_metrics
 from ...services.crm.config import ensure_go_live, get_automation, get_go_live
 from ...services.crm.engine import (
     RoundRobin, add_activity, alert_to_dict, create_followup, emit_alerts, log_outcome,
-    mark_edited, parse_amount, record_audit, recompute_next_follow_up, refresh_derived,
+    mark_edited, norm_phone, parse_amount, record_audit, recompute_next_follow_up, refresh_derived,
     refresh_potential_value, resolve_alerts_for_followups, set_status_from_app, transfer_ownership,
     user_names,
 )
@@ -295,6 +295,7 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
             "edit_prices": scope.can_edit_settings or any(
                 p["resource"] == "settings" and p["action"] == "edit" for p in perms),
             "see_team": scope.is_admin or scope.is_tl,
+            "failed_payments": _can_see_failed_payments(scope),
             # a store owner works leads only with the Leads → Edit / Create ticks
             "edit": scope.can_edit_leads,
             "create": not (scope.is_store or scope.global_view) or scope.can("create"),
@@ -411,6 +412,64 @@ class NewLeadRequest(BaseModel):
     coverage: Optional[str] = None
     remarks: str = ""
     owner_user_id: Optional[int] = None
+
+
+def _can_see_failed_payments(scope: CrmScope) -> bool:
+    return scope.is_admin or scope.global_view
+
+
+@router.get("/failed-payments")
+async def failed_payments(days: int = Query(30, ge=1, le=365), show: str = Query("unpaid"),
+                          q: str = Query(""), db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    """Website bookings whose ₹99 payment failed, was cancelled, timed out or
+    was abandoned — kept, not leads. One row per booking (its latest try);
+    "Paid later" when the same booking or phone number paid afterwards."""
+    from ...models.models import LeadSubmission
+    from ...services.crm.intake import FAILED_STATUS, pick
+    scope = await require_scope(db, user)
+    if not _can_see_failed_payments(scope):
+        raise HTTPException(status_code=403, detail="Only admins can see failed payments")
+    since = utcnow() - timedelta(days=days)
+    subs = (await db.execute(select(LeadSubmission).where(
+        LeadSubmission.channel == "website",
+        LeadSubmission.status.in_((FAILED_STATUS, "rejected_unpaid")),  # rejected_unpaid: kept before this list existed
+        LeadSubmission.received_at >= since).order_by(LeadSubmission.received_at.desc()))).scalars().all()
+    paid = (await db.execute(select(TeleCallLead.id, TeleCallLead.external_ref, TeleCallLead.phone, TeleCallLead.created_at)
+                             .where(TeleCallLead.source_channel == "website", TeleCallLead.created_at >= since))).all()
+    paid_ref = {ref: lid for lid, ref, _, _ in paid if ref}
+    paid_phone: dict[str, list] = defaultdict(list)
+    for lid, _, phone, at in paid:
+        paid_phone[norm_phone(phone)].append((at, lid))
+
+    rows: dict[str, dict] = {}
+    for s in subs:  # newest first: the first one seen is the booking's latest try
+        p = s.payload or {}
+        phone = pick(p, "phone")
+        key = s.external_ref or f"phone:{norm_phone(phone)}"
+        if key in rows:
+            rows[key]["attempts"] += 1
+            continue
+        later = paid_ref.get(s.external_ref) or next(
+            (lid for at, lid in sorted(paid_phone.get(norm_phone(phone), [])) if at >= s.received_at), None)
+        rows[key] = {
+            "id": s.id, "at": iso_utc(s.received_at), "attempts": 1,
+            "name": pick(p, "full_name"), "phone": phone, "email": pick(p, "email"),
+            "store": pick(p, "store"), "place": pick(p, "place") or pick(p, "state"),
+            "device": " ".join(x for x in (pick(p, "brand"), pick(p, "model")) if x),
+            "preferred_date": pick(p, "preferred_date"), "amount": pick(p, "amount"),
+            "payment_status": pick(p, "payment_status") or "not paid", "reason": pick(p, "payment_error"),
+            "entry_id": pick(p, "entry_id"), "paid_lead_id": later,
+        }
+    items = list(rows.values())
+    counts = {"unpaid": sum(1 for r in items if not r["paid_lead_id"]), "paid_later": sum(1 for r in items if r["paid_lead_id"])}
+    if show == "unpaid":
+        items = [r for r in items if not r["paid_lead_id"]]
+    elif show == "paid_later":
+        items = [r for r in items if r["paid_lead_id"]]
+    if q.strip():
+        needle = q.strip().lower()
+        items = [r for r in items if needle in " ".join(str(r[k] or "") for k in ("name", "phone", "email", "store")).lower()]
+    return {"items": items, "counts": counts, "days": days}
 
 
 @router.post("/leads")

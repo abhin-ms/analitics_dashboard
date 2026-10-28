@@ -93,14 +93,41 @@ async def test_key_is_required(env):
 
 
 @pytest.mark.asyncio
-async def test_unpaid_booking_is_logged_not_created(env):
-    client, Session, *_ = env
-    r = await client.post("/api/v1/public/website-leads", json={**BOOKING, "payment_status": "failed"},
-                          headers={"X-Api-Key": KEY})
-    assert r.status_code == 200 and r.json()["status"] == "rejected_unpaid"
+async def test_failed_payments_are_kept_under_failed_payments_not_leads(env):
+    """A failed / cancelled / abandoned payment is saved (with the reason)
+    and listed under Failed payments — never a lead. When the same booking
+    then pays, it becomes the lead as usual and shows "Paid later"."""
+    client, Session, ids, state = env
+    post = lambda body: client.post("/api/v1/public/website-leads", json=body, headers={"X-Api-Key": KEY})  # noqa: E731
+    failed = {**BOOKING, "payment_status": "failed", "payment_error": "Card declined", "payment_id": ""}
+    r = await post(failed)
+    assert r.status_code == 200 and r.json() == {**r.json(), "ok": True, "status": "saved_unpaid"}
+    await post({**failed, "payment_error": "Cancelled by user"})  # tried again: same booking
+    await post({**BOOKING, "full_name": "Ravi K", "mobile": "9847000001", "entry_id": "WEB-2002",
+                "payment_status": "abandoned", "payment_id": ""})
     async with Session() as db:
         assert (await db.execute(select(func.count(TeleCallLead.id)))).scalar() == 0
-        assert (await db.execute(select(LeadSubmission.status))).scalar() == "rejected_unpaid"
+        assert set((await db.execute(select(LeadSubmission.status))).scalars()) == {"payment_failed"}
+
+    r = (await client.get("/api/v1/crm/failed-payments")).json()
+    rows = {x["name"]: x for x in r["items"]}
+    assert set(rows) == {"Anita Das", "Ravi K"} and r["counts"] == {"unpaid": 2, "paid_later": 0}
+    assert rows["Anita Das"] == {**rows["Anita Das"], "attempts": 2, "reason": "Cancelled by user",
+                                 "payment_status": "failed", "store": "Kochi", "device": "Apple iPhone 15 Pro"}
+    assert rows["Ravi K"]["payment_status"] == "abandoned"
+    assert (await client.get("/api/v1/crm/meta")).json()["can"]["failed_payments"]
+
+    r = await post(BOOKING)  # Anita retries and pays
+    assert r.json()["status"] == "created"
+    lead_id = r.json()["lead_id"]
+    r = (await client.get("/api/v1/crm/failed-payments")).json()
+    assert [x["name"] for x in r["items"]] == ["Ravi K"] and r["counts"] == {"unpaid": 1, "paid_later": 1}
+    later = (await client.get("/api/v1/crm/failed-payments?show=paid_later")).json()["items"]
+    assert [(x["name"], x["paid_lead_id"]) for x in later] == [("Anita Das", lead_id)]
+
+    state["user"] = ids["sureka"]  # telecallers don't get the list
+    assert (await client.get("/api/v1/crm/failed-payments")).status_code == 403
+    assert not (await client.get("/api/v1/crm/meta")).json()["can"]["failed_payments"]
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { openLead } from "../components/LeadDrawer";
 import { AssignDialog, LogActivityDialog, NewLeadDialog } from "../components/dialogs";
 import { StatusChips } from "../components/shared";
+import { FailedPayments } from "../components/FailedPayments";
 import { Button, Card, Empty, Modal, PageHeader, Pill, PriorityBadge, StageBadge, Tabs, inputCls, inlineInputCls, Field } from "../components/ui";
 
 const ALL_COLUMNS = [
@@ -60,7 +61,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const tab = sp.get("list") || (isAgent ? "mine" : "all");
   const page = Number(sp.get("page") || 1);
   const params = {
-    tab, page, page_size: 50,
+    tab: tab === "failed" ? "all" : tab, page, page_size: 50,
     status: sp.get("status") || "", stage: sp.get("stage") || "", owner: sp.get("owner") || "",
     sheet: sp.get("sheet") || "", priority: sp.get("priority") || "", q: sp.get("q") || "",
     group_by: sp.get("group_by") || "", sort: sp.get("sort") || "newest", source: sp.get("source") || "",
@@ -131,7 +132,8 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const tabDefs = [
     { key: "all", label: "All leads" }, { key: "mine", label: "My leads" }, { key: "today", label: "Today" },
     { key: "overdue", label: "Overdue" }, { key: "unassigned", label: "Unassigned" }, { key: "new", label: "New" },
-  ].map((t) => ({ key: t.key, label: <>{t.label}{data?.tab_counts?.[t.key] != null && <span className="ml-1 text-[11px] opacity-70">{data.tab_counts[t.key]}</span>}</> }));
+  ].map((t) => ({ key: t.key, label: <>{t.label}{data?.tab_counts?.[t.key] != null && <span className="ml-1 text-[11px] opacity-70">{data.tab_counts[t.key]}</span>}</> }))
+    .concat(meta?.can.failed_payments ? [{ key: "failed", label: <>Failed payments</> }] : []);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1;
   const colCount = 2 + ALL_COLUMNS.filter((c) => show(c.key)).length + 1;
@@ -247,11 +249,12 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
           </>}
         />
 
-        {data && <StatusChips counts={data.status_counts} value={params.status === "" ? "" : params.status}
+        {data && tab !== "failed" && <StatusChips counts={data.status_counts} value={params.status === "" ? "" : params.status}
           onChange={(s) => update({ status: s })} />}
 
         <Tabs tabs={tabDefs} value={tab} onChange={(t) => update({ list: t })} />
 
+        {tab === "failed" ? <FailedPayments /> : (<>
         <div className="flex flex-col lg:flex-row lg:items-center gap-2">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -408,6 +411,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             </>
           )}
         </Card>
+        </>)}
       </div>
 
       <NewLeadDialog open={dialog === "new"} onClose={() => setDialog("")} onCreated={(l) => openLead(l.id)} />

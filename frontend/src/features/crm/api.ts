@@ -638,3 +638,21 @@ export function useTeamOverview(start: string, end: string) {
     placeholderData: (prev) => prev,
   });
 }
+
+/** Website bookings whose ₹99 payment failed / was cancelled / abandoned —
+ * kept, not leads (Leads → Failed payments). */
+export interface FailedPayment {
+  id: number; at: string; attempts: number; name: string; phone: string; email: string; store: string;
+  place: string; device: string; preferred_date: string; amount: string; payment_status: string; reason: string;
+  entry_id: string; paid_lead_id: number | null;
+}
+
+export function useFailedPayments(params: { days: number; show: string; q: string }) {
+  return useQuery({
+    queryKey: [CRM_KEY, "failed-payments", params],
+    queryFn: () => api.get<{ items: FailedPayment[]; counts: { unpaid: number; paid_later: number }; days: number }>(
+      `/crm/failed-payments${qs(params)}`),
+    placeholderData: (prev) => prev,
+    refetchInterval: 60_000,
+  });
+}

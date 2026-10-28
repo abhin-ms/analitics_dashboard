@@ -85,7 +85,9 @@ export interface CrmMeta {
   stores: { id: number; name: string }[];
   can: { reassign: boolean; edit_settings: boolean; export: boolean; edit_prices: boolean; see_team: boolean;
     /** may log calls / change status / book (a store owner needs the Leads → Edit tick) */
-    edit?: boolean; create?: boolean };
+    edit?: boolean; create?: boolean;
+    /** admins / full Leads access: the website's failed payments list */
+    failed_payments?: boolean };
   automation: {
     first_call_minutes: number;
     reassign_minutes: number;

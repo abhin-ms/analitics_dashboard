@@ -340,6 +340,9 @@ async def test_automatic_messages_go_to_the_right_numbers_once(env):
     to, name, comps = sends()[-1]
     assert name == "lead_not_attended"
     assert comps[1]["parameters"] == [{"type": "text", "text": str(lead_id)}]  # B2 has its View Lead link
+    store_name = next(x["text"] for x in comps[0]["parameters"] if x["parameter_name"] == "store_name")
+    async with Session() as db:
+        assert store_name == (await db.get(Store, ids["store"])).name  # the customer's store
 
     async with Session() as db:
         sent = await auto._run(db, "booking", lead_id)
