@@ -117,3 +117,76 @@ async def test_store_staff_linked_to_one_store_sees_its_leads(db, setup):
     scope = await require_scope(db, staff, "edit")
     seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(scope)))).scalars()}
     assert seen == {"tagged", "own_sheet", "booked"} and scope.can_reassign
+
+
+@pytest.mark.asyncio
+async def test_telecaller_sees_only_their_own_stores_leads(db, setup):
+    """Kochi's telecaller: Kochi's leads (tagged, on the Kochi sheet, booked
+    into Kochi) and leads given to them — never Calicut's, nor the shared
+    "Kerala" sheet's, though both stores share one team leader."""
+    tc_role = Role(name="Telecaller")
+    db.add(tc_role)
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    tl = (await db.execute(select(User).where(User.name == "Tara"))).scalar_one()
+    sudhi = User(name="Sudhi", email="su@x", password_hash="x", role_id=tc_role.id,
+                 team_leader_id=tl.id, store_id=stores["Kochi"].id)
+    db.add(sudhi)
+    await db.flush()
+    given = setup["leads"]["calicut_sheet"]  # a Calicut lead handed to Sudhi by hand: his to work
+    given.owner_user_id = sudhi.id
+    await db.commit()
+    scope = await get_scope(db, sudhi)
+    assert scope.store_bound and scope.store_ids == [stores["Kochi"].id]
+    seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(scope)))).scalars()}
+    assert seen == {"tagged", "own_sheet", "booked", "calicut_sheet"}
+    assert "other_store" not in seen and "shared_sheet" not in seen
+    assert all(lead_in_scope(l, scope) == (l.full_name in seen) for l in setup["leads"].values())
+
+
+async def _seen(db, user):
+    scope = await get_scope(db, user)
+    return scope, {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(scope)))).scalars()}
+
+
+ALL = {"tagged", "own_sheet", "shared_sheet", "other_store", "calicut_sheet", "booked"}
+
+
+@pytest.mark.asyncio
+async def test_admins_and_leads_tick_roles_see_every_store(db, setup):
+    roles = {n: Role(name=n) for n in ("SuperAdmin", "Viewer")}
+    db.add_all(roles.values())
+    await db.flush()
+    boss = User(name="Boss", email="b@x", password_hash="x", role_id=roles["SuperAdmin"].id)
+    viewer = User(name="Vee", email="v@x", password_hash="x", role_id=roles["Viewer"].id)
+    db.add_all([boss, viewer])
+    await db.commit()
+    assert (await _seen(db, boss))[1] == ALL                      # admin: every store
+
+    with pytest.raises(HTTPException):                            # no Leads tick: nothing
+        await require_scope(db, viewer)
+    await tick(db, roles["Viewer"], "view")
+    scope, seen = await _seen(db, viewer)
+    assert seen == ALL and not scope.can_edit_leads and not scope.can_reassign
+    with pytest.raises(HTTPException):                            # view only
+        await require_scope(db, viewer, "edit")
+    await tick(db, roles["Viewer"], "edit")
+    assert (await require_scope(db, viewer, "edit")).can_edit_leads
+
+
+@pytest.mark.asyncio
+async def test_telecaller_with_two_assigned_stores_sees_both_and_nothing_else(db, setup):
+    from app.services.crm.intake import store_telecallers
+    tc_role = Role(name="Telecaller")
+    db.add(tc_role)
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    arjun = User(name="Arjun", email="ar@x", password_hash="x", role_id=tc_role.id, store_id=stores["Kochi"].id)
+    db.add(arjun)
+    await db.flush()
+    db.add(UserStoreAccess(user_id=arjun.id, store_id=stores["Calicut"].id))  # "Also covers" Calicut
+    await db.commit()
+    scope, seen = await _seen(db, arjun)
+    assert scope.store_ids == sorted([stores["Kochi"].id, stores["Calicut"].id])
+    assert seen == ALL - {"shared_sheet"}                         # both stores, not the shared sheet
+    assert [u.name for u in await store_telecallers(db, stores["Calicut"])] == ["Arjun"]

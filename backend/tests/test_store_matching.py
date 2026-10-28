@@ -42,9 +42,6 @@ async def db():
         sam = User(name="Sam", email="s@x", password_hash="x", role_id=roles["Team Leader"].id)
         s.add_all([admin, nobody, michael, abdullah, sam])
         await s.flush()
-        caller = User(name="Tia", email="t@x", password_hash="x", role_id=roles["Telecaller"].id,
-                      team_leader_id=abdullah.id)
-        s.add(caller)
         stores = {
             "tvm": Store(name="TVM", team_leader_id=michael.id),
             "kt": Store(name="Kerala Trivandrum", team_leader_id=nobody.id),  # duplicate, no real TL
@@ -53,6 +50,10 @@ async def db():
             "bandra": Store(name="Mumbai Bandra", team_leader_id=abdullah.id),
         }
         s.add_all(stores.values())
+        await s.flush()
+        caller = User(name="Tia", email="t@x", password_hash="x", role_id=roles["Telecaller"].id,
+                      team_leader_id=abdullah.id, store_id=stores["hitech"].id)  # Hitech City's telecaller
+        s.add(caller)
         await s.flush()
         s.add(StoreMcpAlias(store_id=stores["tvm"].id, mcp_shop_name="BP TVM"))
         await s.commit()

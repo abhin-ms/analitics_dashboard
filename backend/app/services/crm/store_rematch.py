@@ -108,7 +108,7 @@ async def rematch_stores(db: AsyncSession, actor: User, *, apply: bool, days: in
         if apply:
             if tl:
                 lead.store_id = store.id
-                owner = await pick_telecaller(db, tl) or tl
+                owner = await pick_telecaller(db, tl, store) or tl
                 reason = f"Store matched: {store.name}"
             else:
                 owner, reason = by_area, "Store not matched — team leader of the area to assign"

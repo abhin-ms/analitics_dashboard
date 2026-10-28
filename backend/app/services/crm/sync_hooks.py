@@ -20,6 +20,7 @@ from .engine import (
     RoundRobin, apply_sheet_status_change, create_alert, create_followup,
     match_user_by_name, refresh_derived, team_leader_ids, transfer_ownership,
 )
+from .intake import lead_store
 from .night_queue import queue_lead, should_queue
 from .scope import sheet_members
 from .status import CLOSED_STATUSES
@@ -99,21 +100,25 @@ class SyncContext:
             self._tab_tl[tab] = await self.db.get(User, leaders[0]["id"]) if leaders else None
         return self._tab_tl[tab]
 
-    async def telecaller_for(self, tl: User) -> User | None:
-        """Available telecaller on this team leader's team with the fewest
-        leads given out today (counting the ones handed out in this run)."""
-        from .intake import team_telecallers
+    async def telecaller_for(self, tl: User, store: Store | None = None) -> User | None:
+        """Available telecaller with the fewest leads given out today
+        (counting the ones handed out in this run): one of the store's own
+        telecallers when the lead's store is known (none free → None, the
+        team leader keeps it), else anyone on the team leader's team."""
+        from .intake import store_telecallers, team_telecallers
         if not hasattr(self, "_teams"):
-            self._teams: dict[int, list[User]] = {}
+            self._teams: dict = {}  # team leader id, or ("store", id) → telecallers
             start, end = ist_day_bounds_utc(ist_today(self.now))
             self._today = dict((await self.db.execute(
                 select(TeleCallLead.owner_user_id, func.count(TeleCallLead.id))
                 .where(TeleCallLead.owner_user_id.isnot(None),
                        TeleCallLead.assigned_at >= start, TeleCallLead.assigned_at < end)
                 .group_by(TeleCallLead.owner_user_id))).all())
-        if tl.id not in self._teams:
-            self._teams[tl.id] = [u for u in await team_telecallers(self.db, tl) if u.available_for_leads is not False]
-        team = self._teams[tl.id]
+        key = ("store", store.id) if store is not None else tl.id
+        if key not in self._teams:
+            self._teams[key] = await store_telecallers(self.db, store) if store is not None else \
+                [u for u in await team_telecallers(self.db, tl) if u.available_for_leads is not False]
+        team = self._teams[key]
         if not team:
             return None
         chosen = min(team, key=lambda u: (self._today.get(u.id, 0), u.id))
@@ -163,7 +168,7 @@ async def after_upsert(ctx: SyncContext, lead: TeleCallLead, *, is_new: bool,
         tl = await ctx.team_leader_for(lead) if lead.owner_user_id is None or reroute else None
         # a re-route only takes leads the team leader still holds, never one a telecaller has
         if tl and (lead.owner_user_id is None or lead.owner_user_id == tl.id):
-            agent = await ctx.telecaller_for(tl)
+            agent = await ctx.telecaller_for(tl, await lead_store(db, lead))  # that store's own telecallers
             owner = agent or (tl if lead.owner_user_id is None else None)
             if owner and tracked_new and lead.owner_user_id is None and should_queue(ctx.now, ctx.automation):
                 queue_lead(db, lead, owner, now=ctx.now, automation=ctx.automation)

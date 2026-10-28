@@ -282,8 +282,13 @@ class RoundRobin:
         return self._members[sheet]
 
     async def pick(self, sheet: str, exclude: set[int] | None = None) -> dict | None:
-        members = [m for m in await self._load(sheet)
-                   if m["available"] and m["id"] not in (exclude or set())]
+        return await self.pick_among(await self._load(sheet), exclude)
+
+    async def pick_among(self, people: list[dict], exclude: set[int] | None = None) -> dict | None:
+        """The same fair pick among the given people ({"id", "available"})."""
+        if not self._loaded_counts:
+            await self._load("")
+        members = [m for m in people if m["available"] and m["id"] not in (exclude or set())]
         if not members:
             return None
         members.sort(key=lambda m: (self._counts.get(m["id"], 0),

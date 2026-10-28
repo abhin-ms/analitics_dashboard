@@ -51,11 +51,12 @@ DEFAULT_SERVICES = ["Screen repair", "Battery replacement"]
 # ── helpers ────────────────────────────────────────────────────────
 async def require_scope(db: AsyncSession, user: User, action: str | None = None) -> CrmScope:
     """The caller's lead scope. `action` ("create" / "edit"): the Leads tick a
-    store owner needs for this — lead workers and admins work leads by role."""
+    store account or a Leads-tick role (e.g. Viewer) needs for this — lead
+    workers and admins work leads by role."""
     scope = await get_scope(db, user)
     if not scope.has_access:
         raise HTTPException(status_code=403, detail="Your role has no access to telecalling leads")
-    if action and scope.is_store and not scope.can(action):
+    if action and (scope.is_store or scope.global_view) and not scope.can(action):
         raise HTTPException(status_code=403, detail=f"Your role can view these leads but not {action} them "
                                                     "(Roles & Permissions → Leads)")
     return scope
@@ -284,7 +285,7 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
             "see_team": scope.is_admin or scope.is_tl,
             # a store owner works leads only with the Leads → Edit / Create ticks
             "edit": scope.can_edit_leads,
-            "create": not scope.is_store or scope.can("create"),
+            "create": not (scope.is_store or scope.global_view) or scope.can("create"),
         },
         "automation": {k: automation[k] for k in (
             "first_call_minutes", "reassign_minutes", "escalate_minutes", "working_hours", "enabled")},

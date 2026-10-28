@@ -4,7 +4,7 @@ people who should know a lead just arrived.
   * assigned lead → its owner ("assigned to you"), plus the rest of the
     branch team and the branch's team leader ("new lead for <branch>"),
     and every admin ("new lead → <owner>")
-  * unassigned lead → every telecaller and every admin
+  * unassigned lead → every admin, and the branch's team leader and telecallers
   * night-queue lead → every admin on arrival; owner and branch at hand-over
 
 Branch team: for a store-routed lead (website, Meta webhook) the store's
@@ -28,12 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 async def _branch(db: AsyncSession, lead: TeleCallLead) -> tuple[str, set[int]]:
-    """(branch name, ids of its team leader and telecallers)."""
-    from .intake import _real_team_leader, team_telecallers
+    """(branch name, ids of its team leader and that store's own telecallers —
+    not the team leader's telecallers at other stores)."""
+    from .intake import _real_team_leader, store_telecallers
     store = await db.get(Store, lead.store_id) if lead.store_id else None
     tl = await _real_team_leader(db, store)
     if tl:
-        return store.name, {tl.id} | {u.id for u in await team_telecallers(db, tl)}
+        return store.name, {tl.id} | {u.id for u in await store_telecallers(db, store, available_only=False)}
     members = await sheet_members(db, [lead.sheet_tl_name], roles={"Telecaller", "Team Leader"}) \
         if lead.sheet_tl_name else []
     return (store.name if store else lead.sheet_tl_name or "no branch"), {m["id"] for m in members}
@@ -80,8 +81,8 @@ async def notify_new_lead(db: AsyncSession, lead: TeleCallLead, *, admins: bool 
             add(uid, "lead_branch", f"New {what} for {branch}", f"{detail} · given to {owner_name}")
         for uid in (set(await admin_ids(db)) - team - {lead.owner_user_id}) if admins else set():
             add(uid, "lead_admin", f"New {what} → {owner_name}", detail)
-    else:
-        for uid in await _all_telecallers(db) | set(await admin_ids(db)) | team:
+    else:  # admins and the branch's own people — not every telecaller of every store
+        for uid in set(await admin_ids(db)) | team:
             add(uid, "lead_unassigned", f"Unassigned {what} — {branch}", f"{detail} · needs an owner")
     db.add_all(rows)
     return rows

@@ -103,7 +103,7 @@ export default function UserManagement() {
         email: editForm.email,
         role_id: editForm.role_id,
         is_active: editForm.is_active,
-        store_ids: kind === "rm-multi" ? editForm.store_ids : [],
+        store_ids: kind === "rm-multi" || roleNameById(editForm.role_id) === "Telecaller" ? editForm.store_ids : [],
         store_id: kind === "single" && editForm.store_id ? Number(editForm.store_id) : null,
         team_leader_id: kind === "single" && editForm.team_leader_id ? Number(editForm.team_leader_id) : null,
       },
@@ -141,7 +141,7 @@ export default function UserManagement() {
               createMutation.mutate({
                 name: form.name, email: form.email, password: form.password,
                 role_id: Number(form.role_id),
-                store_ids: kind === "rm-multi" ? form.store_ids : [],
+                store_ids: kind === "rm-multi" || roleNameById(form.role_id) === "Telecaller" ? form.store_ids : [],
                 store_id: kind === "single" && form.store_id ? Number(form.store_id) : null,
                 team_leader_id: kind === "single" && form.team_leader_id ? Number(form.team_leader_id) : null,
               });
@@ -591,16 +591,39 @@ function RoleScopedFields({
   }
 
   // kind === "single" (Telecaller / Salesperson / Store Staff)
+  const extraStores = roleName === "Telecaller" ? stores.filter((s: any) => String(s.id) !== storeId) : [];
   return (
-    <div className={compact ? "flex flex-col gap-1" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
-      <select value={storeId} onChange={(e) => onStoreIdChange(e.target.value)} className={inputCls}>
-        <option value="">Store (optional)</option>
-        {stores.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
-      <select value={teamLeaderId} onChange={(e) => onTeamLeaderIdChange(e.target.value)} className={inputCls}>
-        <option value="">Reports to (optional)</option>
-        {teamLeaders.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
-      </select>
+    <div className={compact ? "flex flex-col gap-1" : "space-y-2"}>
+      <div className={compact ? "flex flex-col gap-1" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
+        <select value={storeId} onChange={(e) => {
+          onStoreIdChange(e.target.value);
+          onStoreIdsChange(storeIds.filter(x => String(x) !== e.target.value));
+        }} className={inputCls}>
+          <option value="">Store (optional)</option>
+          {stores.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select value={teamLeaderId} onChange={(e) => onTeamLeaderIdChange(e.target.value)} className={inputCls}>
+          <option value="">Reports to (optional)</option>
+          {teamLeaders.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </div>
+      {/* A telecaller who covers more stores gets (and sees) their leads too — never other stores' */}
+      {extraStores.length > 0 && storeId && (
+        <div>
+          <label className="block text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">
+            Also covers ({storeIds.length})
+          </label>
+          <div className={`grid ${compact ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3"} gap-1 max-h-28 overflow-y-auto p-2 rounded-lg bg-[var(--bg-primary)] border border-[var(--border-subtle)]`}>
+            {extraStores.map((s: any) => (
+              <label key={s.id} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={storeIds.includes(s.id)}
+                  onChange={() => onStoreIdsChange(storeIds.includes(s.id) ? storeIds.filter(x => x !== s.id) : [...storeIds, s.id])} />
+                <span className="truncate">{s.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
