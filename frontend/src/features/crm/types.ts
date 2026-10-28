@@ -80,7 +80,9 @@ export interface CrmMeta {
   service_types: string[];
   coverages: string[];
   stores: { id: number; name: string }[];
-  can: { reassign: boolean; edit_settings: boolean; export: boolean; edit_prices: boolean; see_team: boolean };
+  can: { reassign: boolean; edit_settings: boolean; export: boolean; edit_prices: boolean; see_team: boolean;
+    /** may log calls / change status / book (a store owner needs the Leads → Edit tick) */
+    edit?: boolean; create?: boolean };
   automation: {
     first_call_minutes: number;
     reassign_minutes: number;

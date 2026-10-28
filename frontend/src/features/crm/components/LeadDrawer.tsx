@@ -145,9 +145,11 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
                 {!lead.from_sheet && <Pill label="App lead" color="#06b6d4" />}
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant="primary" size="sm" onClick={() => setDialog("log")}><PhoneCall size={14} />Log activity</Button>
-                <Button size="sm" onClick={() => setDialog("followup")}><Clock size={14} />Schedule follow-up</Button>
-                <Button size="sm" onClick={() => setDialog("appt")}><CalendarPlus size={14} />Book appointment</Button>
+                {meta?.can.edit !== false && <>
+                  <Button variant="primary" size="sm" onClick={() => setDialog("log")}><PhoneCall size={14} />Log activity</Button>
+                  <Button size="sm" onClick={() => setDialog("followup")}><Clock size={14} />Schedule follow-up</Button>
+                  <Button size="sm" onClick={() => setDialog("appt")}><CalendarPlus size={14} />Book appointment</Button>
+                </>}
                 {meta?.can.reassign && <Button size="sm" onClick={() => setDialog("assign")}><UserCog size={14} />Assign</Button>}
               </div>
             </div>

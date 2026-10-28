@@ -193,7 +193,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
         {show("city") && <td className="py-3 pr-3 text-xs text-[var(--text-secondary)]">{l.city}</td>}
         {show("received") && <td className="py-3 pr-3 text-xs text-[var(--text-secondary)] whitespace-nowrap">{fmtDateTime(l.submitted_at || l.received_at)}</td>}
         <td className="py-3 pr-4 text-right">
-          <Button size="sm" variant="ghost" onClick={() => setLogLead(l)}>Log</Button>
+          {meta?.can.edit !== false && <Button size="sm" variant="ghost" onClick={() => setLogLead(l)}>Log</Button>}
         </td>
       </tr>
     );
@@ -221,7 +221,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
         </div>
         <div className="flex items-center justify-between">
           <span className={`text-xs ${due.overdue ? "text-rose-400 font-semibold" : "text-[var(--text-secondary)]"}`}>{due.text}</span>
-          <Button size="sm" onClick={() => setLogLead(l)}>Log</Button>
+          {meta?.can.edit !== false && <Button size="sm" onClick={() => setLogLead(l)}>Log</Button>}
         </div>
       </div>
     );
@@ -240,7 +240,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
                 catch (e) { toast.error(e instanceof Error ? e.message : "Export failed"); }
               }}><Download size={14} />Export</Button>
             )}
-            <Button variant="primary" onClick={() => setDialog("new")}><Plus size={15} />New lead</Button>
+            {meta?.can.create !== false && <Button variant="primary" onClick={() => setDialog("new")}><Plus size={15} />New lead</Button>}
           </>}
         />
 

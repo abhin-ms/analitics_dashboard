@@ -49,10 +49,15 @@ DEFAULT_SERVICES = ["Screen repair", "Battery replacement"]
 
 
 # ── helpers ────────────────────────────────────────────────────────
-async def require_scope(db: AsyncSession, user: User) -> CrmScope:
+async def require_scope(db: AsyncSession, user: User, action: str | None = None) -> CrmScope:
+    """The caller's lead scope. `action` ("create" / "edit"): the Leads tick a
+    store owner needs for this — lead workers and admins work leads by role."""
     scope = await get_scope(db, user)
     if not scope.has_access:
         raise HTTPException(status_code=403, detail="Your role has no access to telecalling leads")
+    if action and scope.is_store and not scope.can(action):
+        raise HTTPException(status_code=403, detail=f"Your role can view these leads but not {action} them "
+                                                    "(Roles & Permissions → Leads)")
     return scope
 
 
@@ -277,6 +282,9 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
             "edit_prices": scope.can_edit_settings or any(
                 p["resource"] == "settings" and p["action"] == "edit" for p in perms),
             "see_team": scope.is_admin or scope.is_tl,
+            # a store owner works leads only with the Leads → Edit / Create ticks
+            "edit": scope.can_edit_leads,
+            "create": not scope.is_store or scope.can("create"),
         },
         "automation": {k: automation[k] for k in (
             "first_call_minutes", "reassign_minutes", "escalate_minutes", "working_hours", "enabled")},
@@ -395,7 +403,7 @@ class NewLeadRequest(BaseModel):
 async def create_lead(body: NewLeadRequest, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     """+ New lead (walk-in, referral, phone). Lives in the app only — it is
     never written to, or overwritten by, the Google Sheets."""
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "create")
     valid = [s["tl_name"] for s in TELE_CALL_SHEETS]
     if body.city not in valid:
         raise HTTPException(status_code=400, detail=f"City must be one of {valid}")
@@ -412,6 +420,8 @@ async def create_lead(body: NewLeadRequest, db: AsyncSession = Depends(get_db), 
         coverage=body.coverage, person_calling="", edited_by_user=True,
         source_channel=(body.lead_source or "Walk-in").strip().lower().replace("-", "_").replace(" ", "_")[:30],
     )
+    if scope.is_store and len(scope.store_ids) == 1:
+        lead.store_id = scope.store_ids[0]  # a walk-in added by the store is that store's lead
     refresh_derived(lead)
     db.add(lead)
     await db.flush()
@@ -504,7 +514,7 @@ class LeadPatch(BaseModel):
 @router.patch("/leads/{lead_id}")
 async def patch_lead(lead_id: int, body: LeadPatch, db: AsyncSession = Depends(get_db),
                      user=Depends(get_current_user)):
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "edit")
     lead = await load_lead(db, lead_id, scope)
     now = utcnow()
     changes: dict = {}
@@ -624,7 +634,7 @@ async def log_activity(lead_id: int, body: ActivityRequest, db: AsyncSession = D
                        user=Depends(get_current_user)):
     """Log activity: record the call outcome; the system sets the status and
     schedules the next step (see services/crm/engine.py next_step_for_outcome)."""
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "edit")
     lead = await load_lead(db, lead_id, scope)
     if body.outcome not in OUTCOMES:
         raise HTTPException(status_code=400, detail=f"outcome must be one of {list(OUTCOMES)}")
@@ -869,7 +879,7 @@ async def complete_followup(followup_id: int, body: CompleteRequest, db: AsyncSe
                             user=Depends(get_current_user)):
     """Mark a follow-up done without a call outcome (e.g. handled in store).
     Prefer Log activity, which also records the outcome and next step."""
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "edit")
     fu = (await db.execute(select(TeleLeadFollowup).where(TeleLeadFollowup.id == followup_id))).scalar_one_or_none()
     if not fu:
         raise HTTPException(status_code=404, detail="Follow-up not found")
@@ -992,7 +1002,7 @@ async def create_appointment(body: AppointmentRequest, db: AsyncSession = Depend
                              user=Depends(get_current_user)):
     """Book an appointment (or turn a sheet appointment into an app record).
     Also fills the lead's Appointment Date text so existing views count it."""
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "edit")
     lead = await load_lead(db, body.lead_id, scope)
     when = parse_client_datetime(body.scheduled_at)
     if not when:
@@ -1040,7 +1050,7 @@ class AppointmentPatch(BaseModel):
 @router.patch("/appointments/{appointment_id}")
 async def patch_appointment(appointment_id: int, body: AppointmentPatch, db: AsyncSession = Depends(get_db),
                             user=Depends(get_current_user)):
-    scope = await require_scope(db, user)
+    scope = await require_scope(db, user, "edit")
     appt = (await db.execute(select(TeleAppointment).where(TeleAppointment.id == appointment_id))).scalar_one_or_none()
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
