@@ -159,9 +159,17 @@ async def _fix_store_mismatches(db: AsyncSession, actor: User, *, apply: bool, d
     names = await user_names(db, set(covers))
     out = []
     for lead in leads:
-        key = lead.store_id or ("sheet", lead.sheet_tl_name)
+        # no store tag: what the lead itself says first (its form / ad set
+        # "Kazhakkoottam, TVM", or the city answer), then its city sheet
+        texts = [] if lead.store_id else [lead.preferred_store_text,
+                                         lead.remarks if lead.source_channel in ("facebook", "instagram") else None]
+        key = lead.store_id or ("text", *texts, "sheet", lead.sheet_tl_name)
         if key not in stores:
-            stores[key] = await lead_store(db, lead)
+            found = None
+            for text in texts:
+                if text and (found := await match_store(db, text, "")):
+                    break
+            stores[key] = found or await lead_store(db, lead)
         store = stores[key]
         if store is not None and store.id in covers[lead.owner_user_id]:
             continue

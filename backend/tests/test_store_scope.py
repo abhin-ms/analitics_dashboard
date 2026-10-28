@@ -241,3 +241,30 @@ async def test_fix_button_moves_other_store_leads_and_team_leaders_assign_unassi
     assert may_take(people["Sudhi"], None) and may_take(people["Sudhi"], stores["Kochi"].id)
     assert not may_take(people["Sudhi"], stores["Calicut"].id)               # never another store's
     assert may_take(people["Tara"], stores["Calicut"].id)
+
+
+@pytest.mark.asyncio
+async def test_fix_reads_the_leads_own_store_text_before_its_sheet(db, setup):
+    """An untagged lead on the shared "Kerala" sheet whose ad set names
+    another shop ("Instant Forms - Calicut") goes to that shop's telecaller,
+    not left with the Kochi telecaller it was given to."""
+    from app.services.crm.store_rematch import rematch_stores
+    tc_role, admin_role = Role(name="Telecaller"), Role(name="SuperAdmin")
+    db.add_all([tc_role, admin_role])
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    tara = (await db.execute(select(User).where(User.name == "Tara"))).scalar_one()
+    sudhi = User(name="Sudhi", email="su@x", password_hash="x", role_id=tc_role.id, team_leader_id=tara.id,
+                 store_id=stores["Kochi"].id)
+    swalih = User(name="Swalih", email="sw@x", password_hash="x", role_id=tc_role.id, team_leader_id=tara.id,
+                  store_id=stores["Calicut"].id)
+    boss = User(name="Boss", email="bo@x", password_hash="x", role_id=admin_role.id)
+    db.add_all([sudhi, swalih, boss])
+    await db.flush()
+    lead = setup["leads"]["shared_sheet"]
+    lead.owner_user_id, lead.assignment_source = sudhi.id, "auto"
+    lead.source_channel, lead.preferred_store_text = "facebook", "Instant Forms - Calicut"
+    await db.commit()
+    await rematch_stores(db, boss, apply=True, days=30)
+    await db.refresh(lead)
+    assert lead.owner_user_id == swalih.id and lead.store_id == stores["Calicut"].id
