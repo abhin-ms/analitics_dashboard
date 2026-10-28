@@ -157,6 +157,20 @@ def _fetch_sheet_rows(spreadsheet_id: str, tab: str | None = None) -> list[dict]
 # follow the sheet...
 SHEET_FIELDS_AFTER_APP_EDIT = {"lead_source", "product", "sale_amount", "bill_no"}
 
+# How far apart a direct (website / Meta) lead and its sheet copy can be.
+SHEET_COPY_WINDOW = timedelta(days=3)
+
+
+def copy_gap(direct: TeleCallLead, sheet_at: datetime | None) -> timedelta | None:
+    """How far a sheet row (its lead time) is from a direct lead with the same
+    phone, or None when it is too far to be its copy. A row whose time can't
+    be read counts as a copy (gap 0)."""
+    when = direct.submitted_at or direct.created_at
+    if sheet_at is None or when is None:
+        return timedelta(0)
+    gap = abs(when - sheet_at)
+    return gap if gap <= SHEET_COPY_WINDOW else None
+
 # Last run summary per city (read by CRM Settings → Integrations).
 LAST_SYNC: dict[str, dict] = {}
 
@@ -164,6 +178,46 @@ LAST_SYNC: dict[str, dict] = {}
 def _norm_phone(text: str) -> str:
     digits = "".join(ch for ch in (text or "") if ch.isdigit())
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+# The rows of each lead that is on a sheet more than once, as last seen —
+# kept in the database (settings) so every worker's sync agrees:
+# "<sheet>:<lead>" → [chosen row, fingerprint of each row].
+DUP_ROWS_KEY = "sync.duplicate_rows"
+
+
+def _fp(text: str, n: int) -> str:
+    import hashlib
+    return hashlib.md5(text.encode()).hexdigest()[:n]
+
+
+def _one_row_per_lead(spreadsheet_id: str, leads: list[dict], seen: dict, out: dict) -> tuple[list[dict], int]:
+    """A customer copied onto two rows (same phone and lead time) is one
+    lead; applying both rows every sync flipped its status each minute and
+    undid the telecaller's update. Keep one row per lead: the one edited
+    since the last sync, else the one used last time (first time: the last
+    row, which is what the lead already holds). `seen` is the last sync's
+    state, `out` collects this one's. Returns the rows and how many
+    duplicates were dropped."""
+    groups: dict[tuple, list[int]] = {}
+    for i, r in enumerate(leads):
+        who = _norm_phone(r.get("phone", "")) or f"name:{r.get('full_name', '')}:{r.get('phone', '')}"
+        groups.setdefault((who, r.get("created_time", "")), []).append(i)
+    keep: set[int] = set()
+    sheet = _fp(spreadsheet_id, 6)
+    for (who, at), idx in groups.items():
+        if len(idx) == 1:
+            keep.add(idx[0])
+            continue
+        key = f"{sheet}:{_fp(f'{who}|{at}', 10)}"
+        rows = [_fp(repr(sorted(leads[i].items())), 8) for i in idx]
+        prev = seen.get(key)
+        changed = ([n for n, row in enumerate(rows) if row != prev[1 + n]]
+                   if prev and len(prev) == len(rows) + 1 else [])
+        chosen = changed[-1] if changed else (prev[0] if prev and prev[0] < len(rows) else len(rows) - 1)
+        out[key] = [chosen, *rows]
+        keep.add(idx[chosen])
+    return [r for i, r in enumerate(leads) if i in keep], len(leads) - len(keep)
 
 
 @asynccontextmanager
@@ -212,30 +266,40 @@ async def _sync_tele_call_leads(db: AsyncSession) -> dict:
 
     total_synced = 0
     ctx = await SyncContext.build(db)
+    from .crm.config import _get_json, _set_json
+    dup_seen = await _get_json(db, DUP_ROWS_KEY) or {}
+    dup_state: dict = {}
 
-    # Meta leads the webhook already created (not yet tied to a sheet row):
-    # the sheet copy of the same lead attaches to them instead of becoming
-    # a second lead. Matched on phone + submission time within a day. Looks
-    # back 90 days, not 7: a city sheet added later brings weeks-old rows,
-    # and those copies became second leads (135 of them).
-    from .crm.meta_leads import MERGE_WINDOW
+    # Leads that came in directly (Meta webhook, website) are the main copy;
+    # the same lead backed up into a sheet must not become a second lead.
+    # A sheet copy attaches to the direct lead while that one has no sheet
+    # row yet; once it has one, further copies (the lead also pasted into
+    # another city's sheet, a second row) are skipped. Matched on phone and
+    # time within SHEET_COPY_WINDOW (phone alone when the sheet's time can't
+    # be read). Looks back 90 days: a city sheet added later brings
+    # weeks-old rows. crm/meta_leads.direct_lead_copies uses the same rule.
     from .crm.timeutil import parse_sheet_datetime
-    webhook_leads: dict[str, list[TeleCallLead]] = {}
+    direct_leads: dict[str, list[TeleCallLead]] = {}
     for row in (await db.execute(select(TeleCallLead).where(
-        TeleCallLead.external_ref.like("meta:%"), TeleCallLead.spreadsheet_id == "",
+        TeleCallLead.external_ref.like("meta:%") | TeleCallLead.external_ref.like("website:%"),
         TeleCallLead.created_at >= datetime.utcnow() - timedelta(days=90),
     ))).scalars().all():
-        webhook_leads.setdefault(_norm_phone(row.phone), []).append(row)
+        if len(_norm_phone(row.phone)) >= 10:
+            direct_leads.setdefault(_norm_phone(row.phone), []).append(row)
 
-    def webhook_twin(phone: str, created_time: str) -> TeleCallLead | None:
+    def direct_copy(phone: str, created_time: str) -> tuple[TeleCallLead | None, bool]:
+        """(the direct lead this row should become, is it a copy to skip)."""
         at = parse_sheet_datetime(created_time)
-        cands = [r for r in webhook_leads.get(_norm_phone(phone), [])
-                 if at and r.submitted_at and abs(r.submitted_at - at) <= MERGE_WINDOW]
+        cands = [(gap, r) for r in direct_leads.get(_norm_phone(phone), [])
+                 if (gap := copy_gap(r, at)) is not None]
         if not cands:
-            return None
-        twin = min(cands, key=lambda r: abs(r.submitted_at - at))
-        webhook_leads[_norm_phone(phone)].remove(twin)
-        return twin
+            return None, False
+        free = [c for c in cands if not c[1].spreadsheet_id]
+        if not free:
+            return None, True
+        twin = min(free, key=lambda c: c[0])[1]
+        direct_leads[_norm_phone(phone)].remove(twin)
+        return twin, False
 
     for sheet_cfg in TELE_CALL_SHEETS:
         spreadsheet_id = sheet_key(sheet_cfg)
@@ -247,7 +311,11 @@ async def _sync_tele_call_leads(db: AsyncSession) -> dict:
             logger.error(f"Failed to fetch tele sheet for {tl_name}: {e}")
             LAST_SYNC[tl_name] = {"at": datetime.now(timezone.utc).isoformat(), "ok": False,
                                   "error": str(e)[:300], "rows": 0}
+            prefix = _fp(spreadsheet_id, 6) + ":"  # not read this time: keep what it had
+            dup_state.update({k: v for k, v in dup_seen.items() if k.startswith(prefix)})
             continue
+        leads, duplicate_rows = _one_row_per_lead(spreadsheet_id, leads, dup_seen, dup_state)
+        sheet_copies = 0
 
         # One query per sheet instead of one per row.
         existing_rows = (await db.execute(
@@ -280,10 +348,13 @@ async def _sync_tele_call_leads(db: AsyncSession) -> dict:
                     by_key[(full_name, phone, created_time)] = candidate
                     existing = candidate
             if existing is None:
-                twin = webhook_twin(phone, created_time)
+                twin, is_copy = direct_copy(phone, created_time)
+                if is_copy:
+                    sheet_copies += 1  # already on the dashboard from the website / Meta
+                    continue
                 if twin is not None:
-                    # Same Meta lead the webhook already created: from now on
-                    # it is this sheet row (keeps its owner, source and Hot flag).
+                    # Same lead the webhook / website already created: from now
+                    # on it is this sheet row (keeps its owner, source and Hot flag).
                     twin.spreadsheet_id = spreadsheet_id
                     twin.full_name, twin.phone, twin.created_time = full_name, phone, created_time
                     by_key[(full_name, phone, created_time)] = twin
@@ -355,9 +426,12 @@ async def _sync_tele_call_leads(db: AsyncSession) -> dict:
         await db.commit()
         total_synced += synced
         LAST_SYNC[tl_name] = {"at": datetime.now(timezone.utc).isoformat(), "ok": True,
-                              "rows": synced, "inserted": inserted, "error": None}
+                              "rows": synced, "inserted": inserted, "duplicate_rows": duplicate_rows,
+                              "copies_of_direct_leads": sheet_copies, "error": None}
         logger.info(f"Synced tele leads for {tl_name}: {synced} rows ({inserted} new)")
 
+    if dup_state != dup_seen:
+        await _set_json(db, DUP_ROWS_KEY, dup_state)
     await db.commit()
     try:  # new leads may match a bill's customer mobile; bill numbers typed in the sheets get checked
         from .crm.bill_verify import run_bill_matching

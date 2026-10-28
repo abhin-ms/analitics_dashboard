@@ -280,3 +280,43 @@ async def test_fix_reads_the_leads_own_store_text_before_its_sheet(db, setup):
     await rematch_stores(db, boss, apply=True, days=30)
     await db.refresh(lead)
     assert lead.owner_user_id == swalih.id and lead.store_id == stores["Calicut"].id
+
+
+@pytest.mark.asyncio
+async def test_leads_update_page_shows_a_telecaller_only_their_store(db, setup):
+    """Leads Update follows the same rules as the Leads page: Kochi's
+    telecaller — even with the shared "Kerala" sheet assigned — sees and may
+    edit Kochi's leads and the ones given to them, grouped under Kochi; never
+    Calicut's or the rest of the Kerala sheet."""
+    from app.api.v1.tele_call_leads import LeadUpdate, get_tele_call_leads, update_lead
+    tc_role = Role(name="Telecaller")
+    db.add(tc_role)
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    tara = (await db.execute(select(User).where(User.name == "Tara"))).scalar_one()
+    sudhi = User(name="Sudhi", email="su@x", password_hash="x", role_id=tc_role.id,
+                 team_leader_id=tara.id, store_id=stores["Kochi"].id)
+    db.add(sudhi)
+    await db.flush()
+    db.add(TeleSheetAssignment(user_id=sudhi.id, sheet_tl_name="Kerala"))  # used to open the whole sheet
+    await db.commit()
+
+    async def page(user, group_by="store"):
+        return await get_tele_call_leads(tl_name="", status="", person_calling="", group_by=group_by, db=db, user=user)
+
+    data = await page(sudhi)
+    seen = {l["full_name"] for g in data["tl_groups"].values() for l in g["leads"]}
+    assert seen == {"tagged", "own_sheet", "booked"}
+    assert set(data["tl_groups"]) == {"Kochi"}  # own-sheet and booked leads are Kochi's too
+
+    leads = setup["leads"]
+    r = await update_lead(leads["tagged"].id, LeadUpdate(status="Will Visit"), db=db, user=sudhi)
+    assert r["lead"]["status"] == "Will Visit"
+    for other in ("other_store", "shared_sheet"):
+        with pytest.raises(HTTPException) as e:
+            await update_lead(leads[other].id, LeadUpdate(status="Will Visit"), db=db, user=sudhi)
+        assert e.value.status_code == 403
+
+    # the team leader: both stores and their sheets, by store or by sheet
+    tl_seen = {l["full_name"] for g in (await page(tara, "sheet"))["tl_groups"].values() for l in g["leads"]}
+    assert tl_seen == set(leads)

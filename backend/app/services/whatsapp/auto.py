@@ -199,6 +199,7 @@ async def _run(db, job: str, lead_id: int, user_id: int | None = None) -> list[s
         owner = await db.get(User, lead.owner_user_id) if lead.owner_user_id else None
         for phone, _ in await contact("team_leader", user_id=user_id):
             await send("B2", phone, {"lead_name": lead.full_name or "Customer",
+                                     "customer_number": lead.phone or "-",
                                      # the store the customer picked, not the sheet fallback
                                      "store_name": store.name if store else (lead.preferred_store_text or "Not selected"),
                                      "lead_source": SOURCE_LABEL.get(lead.source_channel or "", lead.lead_source or "Lead"),

@@ -5,12 +5,12 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from ...db.session import get_db
-from ...models.models import TeleCallLead, TeleSheetAssignment, User, Role
+from ...models.models import Role, Store, TeleCallLead, TeleSheetAssignment, User
 from ...services.tele_call_sync import sync_tele_call_leads, fetch_tele_leads_direct, TELE_CALL_SHEETS
 from ...core.deps import get_current_user
 from ...services.crm.config import get_aliases, get_automation, get_go_live
 from ...services.crm.engine import mark_edited, match_user_by_name, set_status_from_app, transfer_ownership
-from ...services.crm.scope import sheet_members
+from ...services.crm.scope import get_scope, lead_filter, lead_in_scope, sheet_members
 from ...services.crm.timeutil import iso_utc, utcnow
 
 router = APIRouter(prefix="/tele-call-leads", tags=["Tele Call Leads"])
@@ -54,17 +54,17 @@ async def _get_user_role_name(db: AsyncSession, user) -> str:
 
 
 async def _check_lead_access(db: AsyncSession, user, lead: TeleCallLead, role_name: str) -> bool:
-    if role_name in ADMIN_ROLES:
-        return True
-    if role_name in ("Team Leader", "Telecaller"):
-        sheets = await _get_user_sheet_names(db, user)
-        return lead.sheet_tl_name in sheets
-    if role_name == "Salesperson":
-        return lead.person_calling == user.name
-    return False
+    """Same rules as the Leads page (crm/scope.py): a telecaller works only
+    their store's leads and the ones given to them, a team leader their
+    stores and sheets."""
+    scope = await get_scope(db, user)
+    return scope.has_access and scope.can_edit_leads and lead_in_scope(lead, scope, unassigned=False)
 
 
-def _lead_to_dict(lead: TeleCallLead) -> dict:
+NO_STORE = "No store matched"
+
+
+def _lead_to_dict(lead: TeleCallLead, stores: dict[int, str] | None = None) -> dict:
     return {
         "id": lead.id,
         "lead_source": lead.lead_source,
@@ -81,6 +81,8 @@ def _lead_to_dict(lead: TeleCallLead) -> dict:
         "product": lead.product,
         "salesperson": lead.salesperson,
         "sheet_tl_name": lead.sheet_tl_name,
+        "store_id": lead.store_id,
+        "store_name": (stores or {}).get(lead.store_id) if lead.store_id else None,
         # Telecalling CRM fields (additive)
         "owner_user_id": lead.owner_user_id,
         "stage": lead.stage,
@@ -97,25 +99,19 @@ async def get_tele_call_leads(
     tl_name: str = Query("", description="Filter by city sheet name"),
     status: str = Query("", description="Filter by status"),
     person_calling: str = Query("", description="Filter by person calling"),
+    group_by: str = Query("sheet", pattern="^(sheet|store)$", description="Group by city sheet or by store"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Get tele call leads — role-based filtering applied automatically."""
+    """Get tele call leads — the same who-sees-what as the Leads page
+    (crm/scope.py): a telecaller only their store's leads and the ones given
+    to them, a team leader their stores and city sheets."""
     role_name = await _get_user_role_name(db, user)
-
-    query = select(TeleCallLead)
-
-    if role_name in ADMIN_ROLES:
-        pass
-    elif role_name in ("Team Leader", "Telecaller"):
-        sheets = await _get_user_sheet_names(db, user)
-        if not sheets:
-            return {"tl_groups": {}, "total": 0, "role": role_name, "user_sheets": []}
-        query = query.where(TeleCallLead.sheet_tl_name.in_(sheets))
-    elif role_name == "Salesperson":
-        query = query.where(TeleCallLead.person_calling == user.name)
-    else:
+    scope = await get_scope(db, user)
+    if not scope.has_access:
         return {"tl_groups": {}, "total": 0, "role": role_name, "user_sheets": []}
+
+    query = select(TeleCallLead).where(lead_filter(scope, unassigned=False))
 
     if tl_name:
         query = query.where(TeleCallLead.sheet_tl_name == tl_name)
@@ -127,13 +123,17 @@ async def get_tele_call_leads(
     query = query.order_by(TeleCallLead.sheet_tl_name, TeleCallLead.created_time.desc())
     result = await db.execute(query)
     leads = result.scalars().all()
+    store_ids = {l.store_id for l in leads if l.store_id} | set(scope.store_ids)
+    stores = dict((await db.execute(select(Store.id, Store.name).where(Store.id.in_(store_ids)))).all()) if store_ids else {}
+    # A telecaller / store with one store: its untagged leads (on the store's
+    # own sheet, booked into it) are that store's.
+    home = stores.get(scope.store_ids[0]) if (scope.store_bound or scope.is_store) and len(scope.store_ids) == 1 else None
 
     tl_groups: dict[str, list] = {}
     for lead in leads:
-        tl = lead.sheet_tl_name or "Unknown"
-        if tl not in tl_groups:
-            tl_groups[tl] = []
-        tl_groups[tl].append(_lead_to_dict(lead))
+        row = _lead_to_dict(lead, stores)
+        tl = (row["store_name"] or home or NO_STORE) if group_by == "store" else (lead.sheet_tl_name or "Unknown")
+        tl_groups.setdefault(tl, []).append(row)
 
     summary = {}
     for tl, tl_leads in tl_groups.items():
@@ -147,7 +147,7 @@ async def get_tele_call_leads(
             "leads": tl_leads,
         }
 
-    return {"tl_groups": summary, "total": len(leads), "role": role_name}
+    return {"tl_groups": summary, "total": len(leads), "role": role_name, "group_by": group_by}
 
 
 @router.get("/my-sheets")
@@ -215,16 +215,10 @@ async def get_status_summary(
         func.count(TeleCallLead.id),
     )
 
-    if role_name in ("Team Leader", "Telecaller"):
-        sheets = await _get_user_sheet_names(db, user)
-        if sheets:
-            query = query.where(TeleCallLead.sheet_tl_name.in_(sheets))
-        else:
-            return {"summary": {}}
-    elif role_name == "Salesperson":
-        query = query.where(TeleCallLead.person_calling == user.name)
-    elif role_name not in ADMIN_ROLES:
+    scope = await get_scope(db, user)
+    if not scope.has_access:
         return {"summary": {}}
+    query = query.where(lead_filter(scope, unassigned=False))
 
     if owner:
         owner_id = user.id if owner == "me" else (int(owner) if owner.isdigit() else None)
@@ -527,10 +521,8 @@ async def assign_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    if role_name == "Team Leader":
-        sheets = await _get_user_sheet_names(db, user)
-        if lead.sheet_tl_name not in sheets:
-            raise HTTPException(status_code=403, detail="Access denied to this lead")
+    if role_name == "Team Leader" and not lead_in_scope(lead, await get_scope(db, user), unassigned=False):
+        raise HTTPException(status_code=403, detail="Access denied to this lead")
 
     lead.salesperson = body.salesperson
     lead.edited_by_user = True

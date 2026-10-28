@@ -169,8 +169,10 @@ async def _store_scope(db: AsyncSession, user: User, role: str) -> CrmScope:
                     appointment_lead_ids=appt, perms=perms)
 
 
-def lead_filter(scope: CrmScope):
-    """SQLAlchemy boolean clause restricting TeleCallLead rows to the scope."""
+def lead_filter(scope: CrmScope, unassigned: bool = True):
+    """SQLAlchemy boolean clause restricting TeleCallLead rows to the scope.
+    unassigned=False leaves out a team leader's "every unassigned lead"
+    (the Leads Update page shows their own stores and sheets only)."""
     if scope.is_admin or scope.global_view:
         return TeleCallLead.id.isnot(None)
     if scope.is_store or scope.store_bound:
@@ -188,7 +190,7 @@ def lead_filter(scope: CrmScope):
             clauses.append(TeleCallLead.sheet_tl_name.in_(scope.sheets))
         if scope.store_ids:
             clauses.append(TeleCallLead.store_id.in_(scope.store_ids))
-        if scope.is_tl:  # every unassigned lead, for a team leader to pick up and assign
+        if scope.is_tl and unassigned:  # every unassigned lead, for a team leader to pick up and assign
             clauses.append(TeleCallLead.owner_user_id.is_(None))
         return or_(*clauses)
     if scope.is_salesperson:
@@ -197,7 +199,7 @@ def lead_filter(scope: CrmScope):
     return false()
 
 
-def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
+def lead_in_scope(lead: TeleCallLead, scope: CrmScope, unassigned: bool = True) -> bool:
     if scope.is_admin or scope.global_view:
         return True
     if scope.store_bound and lead.owner_user_id == scope.user.id:
@@ -209,7 +211,7 @@ def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
     if scope.role in ("Team Leader", "Telecaller"):
         return (lead.sheet_tl_name in scope.sheets or lead.owner_user_id == scope.user.id
                 or (lead.store_id is not None and lead.store_id in scope.store_ids)
-                or (scope.is_tl and lead.owner_user_id is None))
+                or (scope.is_tl and unassigned and lead.owner_user_id is None))
     if scope.is_salesperson:
         return lead.person_calling == scope.user.name or lead.owner_user_id == scope.user.id
     return False
