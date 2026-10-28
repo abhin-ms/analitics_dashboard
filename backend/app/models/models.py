@@ -988,7 +988,7 @@ class LeadSubmission(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     channel = Column(String(30), nullable=False)
     external_ref = Column(String(120), nullable=True, index=True)
-    status = Column(String(20), nullable=False)  # created | duplicate | rejected_unpaid | invalid | error
+    status = Column(String(20), nullable=False)  # created | duplicate | payment_failed | invalid | error
     message = Column(String(300), nullable=True)
     payload = Column(JSON, nullable=True)
     lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="SET NULL"), nullable=True)

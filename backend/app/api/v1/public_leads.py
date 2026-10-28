@@ -63,8 +63,9 @@ async def _payload(request: Request) -> dict:
 
 @router.post("/website-leads")
 async def website_lead(request: Request, db: AsyncSession = Depends(get_db)):
-    """One paid website booking → one premium lead. Unpaid or incomplete
-    entries are logged but not turned into leads."""
+    """One paid website booking → one premium lead. Failed / cancelled /
+    abandoned payments are kept under Failed payments (not leads);
+    incomplete entries are logged and refused."""
     ip = _rate_limit(request)
     _check_key(request)
     result = await ingest_website_lead(db, await _payload(request), remote_ip=ip)

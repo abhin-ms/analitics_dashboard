@@ -5,7 +5,10 @@ Website rule (from the business): only bookings that paid the ₹99
 reservation become leads — they are PREMIUM leads. Every webhook call is
 logged in lead_submissions whether or not a lead is created, and each paid
 entry is a new lead (a repeat call with the same entry/payment id is a
-retry, not a new lead).
+retry, not a new lead). Bookings whose payment failed, was cancelled, timed
+out or was abandoned are kept there as "payment_failed" — listed under Leads
+→ Failed payments, never a lead; when the same entry is later sent as paid
+it becomes the lead as usual.
 
 Routing: preferred store → that store's team leader → one of that team
 leader's telecallers (fewest leads assigned today first). No store match or
@@ -33,6 +36,7 @@ from .engine import (
 )
 from .timeutil import add_working_minutes, from_ist, ist_day_bounds_utc, ist_today, parse_sheet_datetime, to_ist, utcnow
 
+FAILED_STATUS = "payment_failed"  # lead_submissions.status of a booking that didn't pay
 PAID_STATES = {"paid", "success", "successful", "captured", "completed", "complete", "true", "1", "yes"}
 
 # Accepted field names for each value (third-party forms name things freely).
@@ -53,6 +57,7 @@ FIELDS = {
     "amount": ["amount", "payment_amount", "paid_amount"],
     "entry_id": ["entry_id", "submission_id", "booking_id", "lead_id", "id"],
     "paid_at": ["paid_at", "payment_time", "created_at", "submitted_at"],
+    "payment_error": ["payment_error", "error", "error_description", "failure_reason", "reason"],
 }
 
 
@@ -285,9 +290,10 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
         await db.commit()
         return {"ok": False, "status": "invalid", "detail": "full_name and phone (10+ digits) are required"}
     if not is_paid(payload):
-        log("rejected_unpaid", "Payment not confirmed — only paid (₹99) bookings become leads")
+        state, reason = pick(payload, "payment_status").lower() or "not paid", pick(payload, "payment_error")
+        log(FAILED_STATUS, f"Payment {state}{f': {reason}' if reason else ''} — kept under Failed payments, not a lead")
         await db.commit()
-        return {"ok": False, "status": "rejected_unpaid", "detail": "Only paid bookings are accepted"}
+        return {"ok": True, "status": "saved_unpaid", "detail": "Saved under Failed payments (only paid bookings become leads)"}
     if ext:
         existing = (await db.execute(select(TeleCallLead.id).where(TeleCallLead.external_ref == ext))).scalar()
         if existing:
