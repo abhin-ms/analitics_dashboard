@@ -62,7 +62,7 @@ function StoreMatchFix() {
   const [preview, setPreview] = useState<StoreRematchResult | null>(null);
   const waiting = (preview?.forms.reduce((n, f) => n + f.waiting_leads, 0) ?? 0) + (preview?.leads.length ?? 0)
     + (preview?.merged.length ?? 0);
-  const changes = preview ? preview.merged.length + preview.forms.length + preview.leads.length : 0;
+  const changes = preview ? preview.merged.length + preview.forms.length + preview.leads.length + (preview.moved?.length ?? 0) : 0;
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <span className="text-[var(--text-secondary)]">Leads or forms without a store?</span>
@@ -88,6 +88,19 @@ function StoreMatchFix() {
           <p className="text-sm text-[var(--text-secondary)]">Nothing to fix: every form and recent lead that names a known store already has it.</p>
         ) : (
           <div className="space-y-4 text-xs">
+            {(preview.moved?.length ?? 0) > 0 && (
+              <div>
+                <p className="font-semibold text-white mb-1.5">Held by a telecaller of another store ({preview.moved!.length})</p>
+                {preview.moved!.slice(0, 50).map((m) => (
+                  <p key={m.lead_id} className="py-1 border-b border-[var(--border-subtle)]">
+                    <span className="text-white">{m.name}</span>
+                    <span className="text-[var(--text-muted)]"> · {m.store || "no store matched"} · {m.from} → </span>
+                    <b className="text-white">{m.to}</b>
+                  </p>
+                ))}
+                {preview.moved!.length > 50 && <p className="text-[var(--text-muted)] pt-1">…and {preview.moved!.length - 50} more</p>}
+              </div>
+            )}
             {preview.merged.length > 0 && (
               <p className="text-white">
                 <b>{preview.merged.length}</b> Meta lead{preview.merged.length === 1 ? "" : "s"} also came in from a Google Sheet

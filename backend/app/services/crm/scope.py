@@ -4,7 +4,8 @@ Mirrors the rules already used by /tele-call-leads:
   * admin tier (SuperAdmin, Admin, CEO, COO, Regional Manager): everything
   * any other role with Leads → View ticked (e.g. Viewer): everything too,
     working the leads only with its Edit / Manage ticks
-  * Team Leader: every lead on their city sheets and of their stores
+  * Team Leader: every lead on their city sheets and of their stores, and
+    every unassigned lead (to pick up and assign)
   * Telecaller with assigned store(s): those stores' leads (tagged with it, on
     its own city sheet, booked into it) and leads given to them — never
     another store's; without a store: their city sheets and team's stores
@@ -23,7 +24,7 @@ from sqlalchemy import false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import ADMIN_TIER_ROLES
-from ...models.models import Role, TeleCallLead, TeleSheetAssignment, User
+from ...models.models import Role, Store, TeleCallLead, TeleSheetAssignment, User
 
 LEAD_WORKER_ROLES = {"Telecaller", "Team Leader", "Salesperson"}
 STORE_ROLES = {"Store Owner", "Store Staff"}
@@ -187,6 +188,8 @@ def lead_filter(scope: CrmScope):
             clauses.append(TeleCallLead.sheet_tl_name.in_(scope.sheets))
         if scope.store_ids:
             clauses.append(TeleCallLead.store_id.in_(scope.store_ids))
+        if scope.is_tl:  # every unassigned lead, for a team leader to pick up and assign
+            clauses.append(TeleCallLead.owner_user_id.is_(None))
         return or_(*clauses)
     if scope.is_salesperson:
         return or_(TeleCallLead.person_calling == scope.user.name,
@@ -205,10 +208,59 @@ def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
                 or lead.id in scope.appointment_lead_ids)
     if scope.role in ("Team Leader", "Telecaller"):
         return (lead.sheet_tl_name in scope.sheets or lead.owner_user_id == scope.user.id
-                or (lead.store_id is not None and lead.store_id in scope.store_ids))
+                or (lead.store_id is not None and lead.store_id in scope.store_ids)
+                or (scope.is_tl and lead.owner_user_id is None))
     if scope.is_salesperson:
         return lead.person_calling == scope.user.name or lead.owner_user_id == scope.user.id
     return False
+
+
+ASSIGNABLE_ROLES = {"Telecaller", "Team Leader", "Salesperson"}
+
+
+async def assignable_people(db: AsyncSession, scope: CrmScope) -> list[dict]:
+    """Who this person may hand leads to, with the stores each covers:
+    admins (and Leads-manage roles) anyone who works leads; a team leader
+    themself, the telecallers reporting to them or assigned to their stores,
+    and the people on their city sheets."""
+    from ...models.models import UserStoreAccess
+    q = (select(User, Role.name).join(Role, Role.id == User.role_id)
+         .where(Role.name.in_(ASSIGNABLE_ROLES), User.is_active == True))  # noqa: E712
+    users = (await db.execute(q)).all()
+    extra: dict[int, set[int]] = {}
+    for uid, sid in (await db.execute(select(UserStoreAccess.user_id, UserStoreAccess.store_id))).all():
+        extra.setdefault(uid, set()).add(sid)
+    sheets_of: dict[int, list[str]] = {}
+    for m in await sheet_members(db, None):
+        sheets_of[m["id"]] = m["sheets"]
+    tl_store_rows = (await db.execute(select(Store.id, Store.team_leader_id).where(Store.is_active == True))).all()  # noqa: E712
+    tl_stores: dict[int, set[int]] = {}
+    for sid, tl in tl_store_rows:
+        tl_stores.setdefault(tl, set()).add(sid)
+
+    def stores_of(u: User, role: str) -> list[int]:
+        if role == "Team Leader":
+            return sorted(tl_stores.get(u.id, set()))
+        return sorted(({u.store_id} if u.store_id else set()) | extra.get(u.id, set()))
+
+    out = []
+    for u, role in users:
+        person = {"id": u.id, "name": u.name, "role": role, "sheets": sheets_of.get(u.id, []),
+                  "stores": stores_of(u, role), "team_leader_id": u.team_leader_id,
+                  "available": u.available_for_leads is not False}
+        if scope.is_admin or (scope.global_view and scope.can("manage")):
+            out.append(person)
+        elif scope.is_tl and (u.id == scope.user.id or u.team_leader_id == scope.user.id
+                              or set(person["stores"]) & set(scope.store_ids)
+                              or set(person["sheets"]) & set(scope.sheets)):
+            out.append(person)
+    return sorted(out, key=lambda p: p["name"].lower())
+
+
+def may_take(person: dict, store_id: int | None) -> bool:
+    """A telecaller only takes leads of the stores they cover; a lead whose
+    store isn't known can go to anyone, and team leaders take any."""
+    return person["role"] != "Telecaller" or store_id is None or store_id in person["stores"]
 
 
 async def sheet_members(db: AsyncSession, sheet_names: list[str] | None = None,

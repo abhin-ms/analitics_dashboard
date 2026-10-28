@@ -733,7 +733,7 @@ async def store_rematch(body: StoreRematch, db: AsyncSession = Depends(get_db), 
     if body.apply:
         record_audit(db, user.id, "store_rematch", "tele_call_leads", None,
                      after={"merged": len(result["merged"]), "forms": len(result["forms"]),
-                            "leads": len(result["leads"])})
+                            "leads": len(result["leads"]), "moved": len(result["moved"])})
         await db.commit()
         try:
             from ...socket import sio

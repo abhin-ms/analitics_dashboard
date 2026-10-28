@@ -304,7 +304,8 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
                 try {
                   const r = await rematch.mutateAsync(true);
                   const assigned = r.leads.length + r.forms.reduce((n, f) => n + f.waiting_leads, 0);
-                  toast.success(`${assigned} lead${assigned === 1 ? "" : "s"} assigned · ${r.merged.length} duplicate${r.merged.length === 1 ? "" : "s"} merged`);
+                  const moved = r.moved?.length ?? 0;
+                  toast.success(`${assigned} lead${assigned === 1 ? "" : "s"} assigned · ${r.merged.length} duplicate${r.merged.length === 1 ? "" : "s"} merged · ${moved} moved back to the right store`);
                 } catch (e) { toast.error(e instanceof Error ? e.message : "Could not assign leads"); }
               }}><RefreshCw size={13} />Assign unassigned leads</Button>
             )}

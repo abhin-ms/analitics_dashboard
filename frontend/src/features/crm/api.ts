@@ -580,6 +580,8 @@ export interface StoreRematchResult {
   merged: { lead_id: number; copy_id: number; name: string; sheet: string }[];
   forms: { form: string; from: string | null; to: string; team_leader: string; waiting_leads: number }[];
   leads: { lead_id: number; name: string; source: string; said: string; to: string; team_leader: string }[];
+  /** open leads a telecaller held for another store: moved to that store's team, or back to Unassigned */
+  moved?: { lead_id: number; name: string; from: string; store: string | null; to: string }[];
 }
 
 /** Merge Meta leads with their sheet copy, then re-match / assign leads and

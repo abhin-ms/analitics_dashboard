@@ -128,9 +128,11 @@ export function AssignDialog({ leads, open, onClose, onDone }: {
   const { data: meta } = useCrmMeta();
   const assign = useAssignLead();
   const [owner, setOwner] = useState<string>("");
-  const cities = useMemo(() => new Set(leads.map((l) => l.city)), [leads]);
-  // Only people on every selected lead's city team (the server checks too).
-  const people = (meta?.people || []).filter((p) => [...cities].every((c) => p.sheets.includes(c)));
+  const storeIds = useMemo(() => new Set(leads.map((l) => l.store_id).filter((s): s is number => !!s)), [leads]);
+  // A telecaller only for leads of the stores they cover (a lead with no store
+  // yet: anyone); team leaders for any. The server checks too.
+  const people = (meta?.people || []).filter((p) =>
+    p.role !== "Telecaller" || [...storeIds].every((s) => (p.stores || []).includes(s)));
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -159,7 +161,7 @@ export function AssignDialog({ leads, open, onClose, onDone }: {
         <Button variant="primary" onClick={submit} disabled={!owner} loading={busy}>Assign</Button>
       </>}>
       <div className="space-y-3">
-        <Field label="New owner" hint="Only people on the lead's city team are listed. Open follow-ups move to the new owner; missed deadlines stay with the previous owner.">
+        <Field label="New owner" hint="Telecallers are listed only for leads of the stores they cover; a lead with no store becomes the chosen telecaller's store's. Open follow-ups move to the new owner; missed deadlines stay with the previous owner.">
           <select className={inputCls} value={owner} onChange={(e) => setOwner(e.target.value)}>
             <option value="">Choose…</option>
             {people.map((p) => (

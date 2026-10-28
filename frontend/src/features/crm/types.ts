@@ -64,6 +64,8 @@ export interface CrmPerson {
   name: string;
   role: string;
   sheets: string[];
+  /** stores they cover (a team leader: their stores) */
+  stores?: number[];
   available: boolean;
 }
 
