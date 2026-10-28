@@ -402,7 +402,7 @@ async def create_telecaller(
     Team Leaders can only assign to a sheet they themselves are assigned to;
     Admin-tier roles can assign to any sheet.
     """
-    from ...core.security import hash_password
+    from ...core.security import hash_password, normalize_email
 
     role_name = await _get_user_role_name(db, user)
     if role_name != "Team Leader" and role_name not in ADMIN_ROLES:
@@ -417,7 +417,7 @@ async def create_telecaller(
         if body.sheet_tl_name not in my_sheets:
             raise HTTPException(status_code=403, detail="You can only assign telecallers to your own sheet")
 
-    existing = await db.execute(select(User).where(User.email == body.email))
+    existing = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(body.email)))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="A user with this email already exists")
 
@@ -427,7 +427,7 @@ async def create_telecaller(
 
     new_user = User(
         name=body.name,
-        email=body.email,
+        email=normalize_email(body.email),
         password_hash=hash_password(body.password),
         role_id=tc_role.id,
         is_active=True,

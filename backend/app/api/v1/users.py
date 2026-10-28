@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from ...core.deps import get_db, require_permission
-from ...core.security import hash_password
+from ...core.security import hash_password, normalize_email
 from ...models.models import (
     User, Role, UserStoreAccess, Store, DailySubmission, Lead, LeadActivity,
     Task, Investment, SheetSource, Setting, AISummaryConfig, AuditLog,
@@ -46,7 +46,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     _user: User = require_permission("users", "create"),
 ):
-    existing = await db.execute(select(User).where(User.email == body.email))
+    existing = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(body.email)))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -57,7 +57,7 @@ async def create_user(
 
     user = User(
         name=body.name,
-        email=body.email,
+        email=normalize_email(body.email),
         password_hash=hash_password(body.password),
         role_id=body.role_id,
         is_active=body.is_active,
@@ -137,7 +137,7 @@ async def update_user(
 
     was_active = user.is_active
     for field, value in body.model_dump(exclude_unset=True, exclude={"store_ids", "password"}).items():
-        setattr(user, field, value)
+        setattr(user, field, normalize_email(value) if field == "email" else value)
 
     # A new password or deactivation signs the user out on every device.
     if body.password:

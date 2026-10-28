@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from ...core.config import settings
 from ...core.security import (
+    normalize_email,
     hash_password, verify_password, create_access_token,
     create_refresh_token, decode_token, session_claims, token_matches_user,
     create_password_reset_token,
@@ -35,7 +36,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(body.email)))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -99,7 +100,7 @@ async def logout(response: Response):
 
 @router.post("/forgot-password")
 async def forgot_password(body: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(select(User).where(func.lower(func.trim(User.email)) == normalize_email(body.email)))
     user = result.scalar_one_or_none()
     if user:
         token = create_password_reset_token(user.id)

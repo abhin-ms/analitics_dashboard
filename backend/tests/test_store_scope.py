@@ -98,3 +98,22 @@ async def test_store_owner_sees_their_stores_leads_by_their_ticks(db, setup):
     await tick(db, role, "manage")
     scope = await get_scope(db, owner)
     assert scope.can_reassign and scope.can("create")  # manage covers the rest
+
+
+@pytest.mark.asyncio
+async def test_store_staff_linked_to_one_store_sees_its_leads(db, setup):
+    """A Store Staff account (its store set on the user, like the live "Kochi"
+    account) gets the same store leads, by its own role's ticks."""
+    staff_role = Role(name="Store Staff")
+    db.add(staff_role)
+    await db.flush()
+    kochi_id = (await db.execute(select(Store.id).where(Store.name == "Kochi"))).scalar_one()
+    staff = User(name="Kochi", email="k@x", password_hash="x", role_id=staff_role.id, store_id=kochi_id)
+    db.add(staff)
+    await db.commit()
+    with pytest.raises(HTTPException):
+        await require_scope(db, staff)
+    await tick(db, staff_role, "view", "edit", "create", "manage")
+    scope = await require_scope(db, staff, "edit")
+    seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(scope)))).scalars()}
+    assert seen == {"tagged", "own_sheet", "booked"} and scope.can_reassign

@@ -159,6 +159,9 @@ export default function UserManagement() {
               <input
                 type="email"
                 placeholder="Email *"
+                // not the admin's own saved login: this is a new user
+                autoComplete="off"
+                name="new-user-email"
                 value={form.email}
                 onChange={(e) => setForm(p => ({...p, email: e.target.value}))}
                 required
@@ -167,6 +170,8 @@ export default function UserManagement() {
               <input
                 type="password"
                 placeholder="Password *"
+                autoComplete="new-password"
+                name="new-user-password"
                 value={form.password}
                 onChange={(e) => setForm(p => ({...p, password: e.target.value}))}
                 required
@@ -425,6 +430,10 @@ export default function UserManagement() {
                       <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
                       <input
                         type={showResetPw ? "text" : "password"}
+                        // "new-password": without it the browser fills in the admin's own saved
+                        // password here, and the user's password becomes that + what was typed
+                        autoComplete="new-password"
+                        name="reset-new-password"
                         value={resetPassword}
                         onChange={(e) => setResetPassword(e.target.value)}
                         placeholder="Enter new password (min 6 chars)"
