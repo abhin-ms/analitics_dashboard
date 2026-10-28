@@ -30,7 +30,7 @@ from ...services.crm.engine import (
     user_names,
 )
 from ...services.crm.scope import (
-    CrmScope, get_scope, lead_filter, lead_in_scope, sheet_members, visible_agents,
+    CrmScope, assignable_people, get_scope, lead_filter, lead_in_scope, may_take, sheet_members, visible_agents,
 )
 from ...services.crm.status import (
     CLOSED_STAGES, NO_STATUS, OUTCOMES, PRIORITIES, STAGE_KEYS, STAGE_LABELS, STAGES, STATUSES,
@@ -256,8 +256,8 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
     coverages = (await db.execute(select(PriceBookEntry.coverage).distinct())).scalars().all()
     all_sheets = [s["tl_name"] for s in TELE_CALL_SHEETS]
     sheets = all_sheets if scope.is_admin else scope.sheets
-    assignable = await sheet_members(db, sheets if not scope.is_admin else None,
-                                     roles={"Telecaller", "Team Leader", "Salesperson"})
+    # by store: telecallers belong to stores, not city sheets
+    assignable = await assignable_people(db, scope) if scope.can_reassign else []
     stores = (await db.execute(select(Store.id, Store.name).where(Store.is_active == True)  # noqa: E712
                                .order_by(Store.name))).all()
     return {
@@ -271,7 +271,7 @@ async def crm_meta(db: AsyncSession = Depends(get_db), user=Depends(get_current_
         "sheets": sheets,
         "all_sheets": all_sheets,
         "people": [{"id": m["id"], "name": m["name"], "role": m["role"], "sheets": m["sheets"],
-                    "available": m["available"]} for m in assignable],
+                    "stores": m["stores"], "available": m["available"]} for m in assignable],
         "phone_models": sorted(set(models)),
         "service_types": sorted(set(services) | set(DEFAULT_SERVICES)),
         "coverages": list(dict.fromkeys(DEFAULT_COVERAGES + sorted(coverages))),
@@ -670,10 +670,16 @@ class AssignRequest(BaseModel):
 async def _assign(db: AsyncSession, scope: CrmScope, user: User, lead: TeleCallLead, owner_id: int | None,
                   automation: dict, now: datetime) -> bool:
     if owner_id is not None:
-        members = await sheet_members(db, None if scope.is_admin else scope.sheets)
-        allowed = {m["id"] for m in members if scope.is_admin or lead.sheet_tl_name in m["sheets"]}
-        if owner_id not in allowed:
-            raise HTTPException(status_code=400, detail="That person is not on this lead's city team")
+        from ...services.crm.intake import lead_store
+        person = next((p for p in await assignable_people(db, scope) if p["id"] == owner_id), None)
+        if person is None:
+            raise HTTPException(status_code=400, detail="You can't give leads to that person (not on your team)")
+        store = await lead_store(db, lead)
+        if not may_take(person, store.id if store else None):
+            raise HTTPException(status_code=400, detail=f"{person['name']} doesn't handle {store.name} — "
+                                                        "choose one of that store's telecallers")
+        if store is None and person["role"] == "Telecaller" and len(person["stores"]) == 1:
+            lead.store_id = person["stores"][0]  # an unmatched lead now belongs to that telecaller's store
     before = lead.owner_user_id
     changed = await transfer_ownership(db, lead, owner_id, source="manual", actor_id=user.id, now=now,
                                        automation=automation, reason=f"Reassigned by {user.name}")

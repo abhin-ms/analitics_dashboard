@@ -2,9 +2,11 @@
 Google Sheet copy, re-match Meta lead forms and the unassigned leads of the
 last weeks with the current matching rules, and give them to the store's
 team — or, when no store can be found, to the team leader of the area to
-assign by hand. Always previewed first (apply=False writes nothing);
-applying never touches a form an admin mapped by hand or a lead someone
-already owns. Writes the database only, never the Google Sheets."""
+assign by hand; and move leads a telecaller holds for a store they don't
+cover to that store's team (or back to Unassigned). Always previewed first
+(apply=False writes nothing); applying never touches a form an admin mapped
+by hand, nor a lead the sheet's "Person Calling" gave out. Writes the
+database only, never the Google Sheets."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -119,6 +121,64 @@ async def rematch_stores(db: AsyncSession, actor: User, *, apply: bool, days: in
                                 reason="Call the lead" if tl else "Assign the lead to a telecaller",
                                 due_at=add_working_minutes(now, automation["first_call_minutes"],
                                                            automation["working_hours"]))
+    # 3. open leads a telecaller holds for a store they don't cover (handed out
+    #    before telecallers were tied to their stores): to that store's own
+    #    telecaller (else its team leader); a lead with no store goes back to
+    #    Unassigned for a team leader to assign. Rows the sheet's "Person
+    #    Calling" decides are left to the sheet.
+    moved_out = await _fix_store_mismatches(db, actor, apply=apply, days=days, now=now, automation=automation)
+
     if apply:
         await db.commit()
-    return {"applied": apply, "merged": merged_out, "forms": forms_out, "leads": leads_out}
+    return {"applied": apply, "merged": merged_out, "forms": forms_out, "leads": leads_out, "moved": moved_out}
+
+
+async def _fix_store_mismatches(db: AsyncSession, actor: User, *, apply: bool, days: int, now,
+                                automation: dict) -> list[dict]:
+    from sqlalchemy import or_
+    from ...models.models import Role
+    from .engine import user_names
+    from .intake import lead_store
+    from .scope import assigned_store_ids
+    telecallers = (await db.execute(select(User).join(Role, Role.id == User.role_id)
+                                    .where(Role.name == "Telecaller"))).scalars().all()
+    covers = {u.id: ids for u in telecallers if (ids := await assigned_store_ids(db, u))}
+    if not covers:
+        return []
+    leads = (await db.execute(select(TeleCallLead).where(
+        TeleCallLead.owner_user_id.in_(covers), TeleCallLead.created_at >= now - timedelta(days=days),
+        or_(TeleCallLead.stage.is_(None), TeleCallLead.stage.notin_(CLOSED_STAGES)),
+        or_(TeleCallLead.assignment_source.is_(None), TeleCallLead.assignment_source != "sheet"),
+    ))).scalars().all()
+    from ..store_portfolio import area_of_sheet, area_of_store
+    covered = {s.id: s for s in (await db.execute(
+        select(Store).where(Store.id.in_(set().union(*covers.values()))))).scalars().all()}
+    areas = {uid: {area_of_store(covered[sid].name, covered[sid].region or "") for sid in ids if sid in covered} - {None}
+             for uid, ids in covers.items()}
+    stores: dict = {}
+    names = await user_names(db, set(covers))
+    out = []
+    for lead in leads:
+        key = lead.store_id or ("sheet", lead.sheet_tl_name)
+        if key not in stores:
+            stores[key] = await lead_store(db, lead)
+        store = stores[key]
+        if store is not None and store.id in covers[lead.owner_user_id]:
+            continue
+        if store is None and area_of_sheet(lead.sheet_tl_name or "") in areas[lead.owner_user_id]:
+            continue  # a shared sheet of their own area ("Bangalore" for Indiranagar): can't tell better
+        new = None
+        if store is not None:
+            tl = await _real_team_leader(db, store)
+            new = await pick_telecaller(db, tl, store) or tl
+        out.append({"lead_id": lead.id, "name": lead.full_name, "from": names.get(lead.owner_user_id, ""),
+                    "store": store.name if store else None, "to": new.name if new else "Unassigned"})
+        if apply:
+            if store is not None and not lead.store_id:
+                lead.store_id = store.id
+            await transfer_ownership(
+                db, lead, new.id if new else None, source="auto", actor_id=actor.id, now=now, automation=automation,
+                reason=(f"{store.name}'s lead — moved to that store's team" if store
+                        else "No store matched — back to Unassigned for a team leader to assign"))
+            await db.flush()
+    return out

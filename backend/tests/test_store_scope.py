@@ -190,3 +190,54 @@ async def test_telecaller_with_two_assigned_stores_sees_both_and_nothing_else(db
     assert scope.store_ids == sorted([stores["Kochi"].id, stores["Calicut"].id])
     assert seen == ALL - {"shared_sheet"}                         # both stores, not the shared sheet
     assert [u.name for u in await store_telecallers(db, stores["Calicut"])] == ["Arjun"]
+
+
+@pytest.mark.asyncio
+async def test_fix_button_moves_other_store_leads_and_team_leaders_assign_unassigned(db, setup):
+    """Leads a telecaller held for another store go to that store's own
+    telecaller; one with no store goes back to Unassigned, where every team
+    leader sees it and can give it out — a telecaller only for their stores."""
+    from app.services.crm.scope import assignable_people, may_take
+    from app.services.crm.store_rematch import rematch_stores
+    tc_role = Role(name="Telecaller")
+    admin_role = Role(name="SuperAdmin")
+    db.add_all([tc_role, admin_role])
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    tara = (await db.execute(select(User).where(User.name == "Tara"))).scalar_one()
+    sudhi = User(name="Sudhi", email="su@x", password_hash="x", role_id=tc_role.id, team_leader_id=tara.id,
+                 store_id=stores["Kochi"].id)
+    swalih = User(name="Swalih", email="sw@x", password_hash="x", role_id=tc_role.id, team_leader_id=tara.id,
+                  store_id=stores["Calicut"].id)
+    boss = User(name="Boss", email="bo@x", password_hash="x", role_id=admin_role.id)
+    db.add_all([sudhi, swalih, boss])
+    await db.flush()
+    leads = setup["leads"]
+    unmatched = TeleCallLead(sheet_tl_name="Meta", full_name="unmatched", phone="u", status="",  # no store, no area
+                             created_at=leads["tagged"].created_at, submitted_at=leads["tagged"].created_at)
+    db.add(unmatched)
+    await db.flush()
+    leads["unmatched"] = unmatched
+    for name in ("calicut_sheet", "shared_sheet", "own_sheet", "unmatched"):   # all given to Kochi's Sudhi
+        leads[name].owner_user_id, leads[name].assignment_source = sudhi.id, "auto"
+    await db.commit()
+
+    preview = await rematch_stores(db, boss, apply=False, days=30)
+    assert {(m["name"], m["to"]) for m in preview["moved"]} == {("calicut_sheet", "Swalih"),
+                                                                ("unmatched", "Unassigned")}
+    await rematch_stores(db, boss, apply=True, days=30)
+    for l in leads.values():
+        await db.refresh(l)
+    assert leads["calicut_sheet"].owner_user_id == swalih.id and leads["calicut_sheet"].store_id == stores["Calicut"].id
+    assert leads["unmatched"].owner_user_id is None                           # no store: back to Unassigned
+    assert leads["own_sheet"].owner_user_id == sudhi.id                       # Kochi's own: stays
+    assert leads["shared_sheet"].owner_user_id == sudhi.id                    # "Kerala" sheet, his own area: stays
+
+    tl_scope = await get_scope(db, tara)                                      # TL sees the unassigned one
+    tl_seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(tl_scope)))).scalars()}
+    assert "unmatched" in tl_seen
+    people = {p["name"]: p for p in await assignable_people(db, tl_scope)}
+    assert {"Sudhi", "Swalih", "Tara"} <= set(people)
+    assert may_take(people["Sudhi"], None) and may_take(people["Sudhi"], stores["Kochi"].id)
+    assert not may_take(people["Sudhi"], stores["Calicut"].id)               # never another store's
+    assert may_take(people["Tara"], stores["Calicut"].id)
