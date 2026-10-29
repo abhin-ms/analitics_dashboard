@@ -3,8 +3,12 @@ import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
-import { useState } from "react";
-import { Users, Plus, Trash2, ShieldCheck, UserCheck, Edit3, Save, X, Eye, EyeOff, KeyRound, AlertTriangle } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Users, Plus, Trash2, ShieldCheck, UserCheck, Edit3, Save, X, Eye, EyeOff, KeyRound, AlertTriangle, Search } from "lucide-react";
+
+const NONE = "none"; // filter value: store / team leader not set
+const EMPTY_FILTERS = { q: "", role: "", store: "", tl: "", status: "" };
+const ctl = "px-3 py-2 rounded-xl bg-[var(--bg-primary)] border border-[var(--border-subtle)] text-xs text-white focus:outline-none focus:border-[var(--accent-blue)]";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role_id: "", store_ids: [] as number[], store_id: "", team_leader_id: "" };
 
@@ -36,6 +40,42 @@ export default function UserManagement() {
 
   const roleNameById = (id: number | string) => (roles || []).find((r: any) => r.id === Number(id))?.name || "";
   const teamLeaders = (users || []).filter((u: any) => u.role_name === "Team Leader");
+  const storeName = (id: number) => stores?.find((s: any) => s.id === id)?.name || `Store #${id}`;
+  const userName = (id: number) => (users || []).find((x: any) => x.id === id)?.name || "";
+
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const setF = (k: keyof typeof EMPTY_FILTERS, v: string) => setFilters((p) => ({ ...p, [k]: v }));
+  const filtering = Object.values(filters).some(Boolean);
+  const storesOf = (u: any): number[] =>
+    [...(u.store_id ? [u.store_id] : []), ...((u.store_ids || []) as number[]).filter((x) => x !== u.store_id)];
+  const filtered = useMemo(() => {
+    const q = filters.q.trim().toLowerCase();
+    return (users || []).filter((u: any) => {
+      if (q && !`${u.name} ${u.email}`.toLowerCase().includes(q)) return false;
+      if (filters.role && u.role_name !== filters.role) return false;
+      if (filters.status && (filters.status === "active") !== !!u.is_active) return false;
+      if (filters.store) {
+        const ids = storesOf(u);
+        if (filters.store === NONE ? ids.length > 0 : !ids.includes(Number(filters.store))) return false;
+      }
+      if (filters.tl && (filters.tl === NONE ? !!u.team_leader_id : u.team_leader_id !== Number(filters.tl))) return false;
+      return true;
+    });
+  }, [users, filters]);
+  const roleCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    (users || []).forEach((u: any) => { c[u.role_name] = (c[u.role_name] || 0) + 1; });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [users]);
+
+  // What the Stores column says for a user.
+  const storeSummary = (u: any) => {
+    const ids = storesOf(u);
+    if (u.role_name === "Team Leader") return "See Branch Assignment";
+    if (u.role_name === "Regional Manager" || u.role_name === "Store Owner") return ids.length ? `${ids.length} store${ids.length > 1 ? "s" : ""}` : "—";
+    if (!ids.length) return "—";
+    return storeName(ids[0]) + (ids.length > 1 ? ` +${ids.length - 1} more` : "");
+  };
 
   const createMutation = useMutation({
     mutationFn: (data: any) => api.post("/users/", data),
@@ -210,11 +250,133 @@ export default function UserManagement() {
           </form>
         )}
 
-        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 sm:p-6 overflow-hidden">
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 sm:p-4 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))] gap-2">
+            <div className="relative sm:col-span-2 lg:col-span-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input id="user-search" value={filters.q} onChange={(e) => setF("q", e.target.value)} placeholder="Search name or email"
+                aria-label="Search users" className={`${ctl} w-full pl-8`} />
+            </div>
+            <select id="user-role" aria-label="Role" value={filters.role} onChange={(e) => setF("role", e.target.value)} className={ctl}>
+              <option value="">All roles</option>
+              {(roles || []).map((r: any) => <option key={r.id} value={r.name}>{r.name}</option>)}
+            </select>
+            <select id="user-store" aria-label="Store" value={filters.store} onChange={(e) => setF("store", e.target.value)} className={ctl}>
+              <option value="">All stores</option>
+              <option value={NONE}>No store set</option>
+              {(stores || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <select id="user-tl" aria-label="Reports to" value={filters.tl} onChange={(e) => setF("tl", e.target.value)} className={ctl}>
+              <option value="">Any team leader</option>
+              <option value={NONE}>No team leader</option>
+              {teamLeaders.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <select id="user-status" aria-label="Status" value={filters.status} onChange={(e) => setF("status", e.target.value)} className={ctl}>
+              <option value="">Active and inactive</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {roleCounts.map(([name, n]) => (
+              <button key={name} type="button" onClick={() => setF("role", filters.role === name ? "" : name)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer transition-colors ${filters.role === name
+                  ? "bg-[var(--accent-blue)] border-[var(--accent-blue)] text-white"
+                  : "bg-[var(--bg-primary)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white"}`}>
+                {name} <span className="opacity-70">{n}</span>
+              </button>
+            ))}
+            <span className="ml-auto text-xs text-[var(--text-muted)]">
+              {filtered.length} of {users?.length || 0} users
+              {filtering && (
+                <button type="button" onClick={() => setFilters(EMPTY_FILTERS)} className="ml-2 text-[var(--accent-blue)] hover:underline cursor-pointer">
+                  Clear filters
+                </button>
+              )}
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-2 sm:p-4 overflow-hidden">
           {isLoading ? (
             <TableSkeleton />
+          ) : filtered.length === 0 ? (
+            <p className="py-10 text-center text-sm text-[var(--text-muted)]">
+              No users match these filters.{" "}
+              <button type="button" onClick={() => setFilters(EMPTY_FILTERS)} className="text-[var(--accent-blue)] hover:underline cursor-pointer">Clear filters</button>
+            </p>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Phones and tablets: one card per user; editing opens inside the card */}
+            <div className="lg:hidden divide-y divide-[var(--border-subtle)]">
+              {filtered.map((u: any) => (
+                <div key={u.id} className="p-3">
+                  {editingId === u.id ? (
+                    <div className="space-y-2">
+                      <input aria-label="Name" value={editForm.name} onChange={(e) => setEditForm(p => ({...p, name: e.target.value}))} className={`${ctl} w-full`} />
+                      <input aria-label="Email" type="email" value={editForm.email} onChange={(e) => setEditForm(p => ({...p, email: e.target.value}))} className={`${ctl} w-full`} />
+                      <select aria-label="Role" value={editForm.role_id}
+                        onChange={(e) => setEditForm(p => ({...p, role_id: Number(e.target.value), store_ids: [], store_id: "", team_leader_id: ""}))}
+                        className={`${ctl} w-full`}>
+                        {(roles || []).map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                      </select>
+                      <RoleScopedFields
+                        compact
+                        roleName={roleNameById(editForm.role_id)}
+                        stores={stores || []}
+                        teamLeaders={teamLeaders}
+                        storeIds={editForm.store_ids}
+                        storeId={editForm.store_id}
+                        teamLeaderId={editForm.team_leader_id}
+                        onStoreIdsChange={(ids) => setEditForm(p => ({...p, store_ids: ids}))}
+                        onStoreIdChange={(id) => setEditForm(p => ({...p, store_id: id}))}
+                        onTeamLeaderIdChange={(id) => setEditForm(p => ({...p, team_leader_id: id}))}
+                      />
+                      <div className="flex items-center gap-2 pt-1">
+                        <button type="button" aria-label="Active" onClick={() => setEditForm(p => ({...p, is_active: !p.is_active}))}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${editForm.is_active ? "bg-emerald-500" : "bg-zinc-600"}`}>
+                          <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${editForm.is_active ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                        </button>
+                        <span className="text-xs text-[var(--text-secondary)]">{editForm.is_active ? "Active" : "Inactive"}</span>
+                        <div className="ml-auto flex gap-2">
+                          <button onClick={() => setEditingId(null)}
+                            className="px-3 py-2 rounded-lg text-xs font-semibold border border-[var(--border-subtle)] text-[var(--text-secondary)] cursor-pointer">Cancel</button>
+                          <button onClick={handleUpdate} disabled={updateMutation.isPending}
+                            className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white cursor-pointer disabled:opacity-50">
+                            {updateMutation.isPending ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-3">
+                      <div className="h-9 w-9 rounded-full bg-[var(--accent-blue)]/15 border border-[var(--accent-blue)]/30 flex items-center justify-center text-[var(--accent-blue)] font-bold text-xs shrink-0">
+                        {u.name ? u.name.charAt(0).toUpperCase() : <UserCheck size={15} />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-white truncate">{u.name}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--accent-blue)]/10 text-[var(--accent-blue)] border border-[var(--accent-blue)]/20">{u.role_name}</span>
+                          {!u.is_active && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">Inactive</span>}
+                        </div>
+                        <p className="text-xs text-[var(--text-secondary)] truncate mt-0.5">{u.email}</p>
+                        <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                          {storeSummary(u)}{u.team_leader_id ? ` · Reports to ${userName(u.team_leader_id)}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button onClick={() => openResetModal(u)} className="p-2 rounded-lg text-amber-400 hover:bg-amber-500/10 cursor-pointer" title="Reset Password" aria-label="Reset password"><KeyRound size={16} /></button>
+                        <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/10 cursor-pointer" title="Edit User" aria-label="Edit user"><Edit3 size={16} /></button>
+                        <button onClick={() => setDeleteConfirm({ id: u.id, name: u.name })} className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/10 cursor-pointer" title="Delete User" aria-label="Delete user"><Trash2 size={16} /></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Laptops: the table, edited in place */}
+            <div className="hidden lg:block overflow-x-auto">
               <table className="w-full text-sm text-left border-collapse">
                 <thead>
                   <tr className="text-[var(--text-muted)] text-xs uppercase tracking-wider border-b border-[var(--border-subtle)]">
@@ -227,7 +389,7 @@ export default function UserManagement() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
-                  {(users || []).map((u: any) => (
+                  {filtered.map((u: any) => (
                     <tr key={u.id} className="hover:bg-[var(--bg-card-hover)] transition-colors">
                       <td className="py-3 px-4 font-semibold text-white">
                         {editingId === u.id ? (
@@ -291,13 +453,8 @@ export default function UserManagement() {
                           />
                         ) : (
                           <span className="block text-right">
-                            {u.role_name === "Regional Manager"
-                              ? `${u.store_ids?.length || 0} stores`
-                              : u.store_id
-                                ? stores?.find((s: any) => s.id === u.store_id)?.name || `Store #${u.store_id}`
-                                : u.role_name === "Team Leader"
-                                  ? "See Branch Assignment"
-                                  : "—"}
+                            {storeSummary(u)}
+                            {u.team_leader_id ? <span className="block text-[11px] text-[var(--text-muted)]">Reports to {userName(u.team_leader_id)}</span> : null}
                           </span>
                         )}
                       </td>
@@ -377,6 +534,7 @@ export default function UserManagement() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
 

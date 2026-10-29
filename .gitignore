@@ -56,3 +56,6 @@ backend/bp-analytics-sync-75ca3b0a13a4.json
 
 # Login credentials handout — keep out of git (contains passwords)
 BP_Analytics_Credentials.*
+
+# Call recordings uploaded by the mobile app (local dev)
+backend/data/

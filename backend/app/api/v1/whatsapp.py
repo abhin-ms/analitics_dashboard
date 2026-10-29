@@ -436,16 +436,128 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
     return {"ok": True, "message": _message_row(msg, {user.id: user.name})}
 
 
+# Who a message went to, by what sent it (auto:<template key>, the CEO
+# report, or a test from the Test tab).
+RECIPIENT_PURPOSES = {
+    "customer": ["auto:A1", "auto:A4", "auto:A5"],
+    "store": ["auto:A2", "auto:A3"],
+    "telecaller": ["auto:B1"],
+    "team_leader": ["auto:B2"],
+    "ceo": ["ceo_report"],
+    "test": ["test"],
+}
+RECIPIENT_LABEL = {p: k for k, ps in RECIPIENT_PURPOSES.items() for p in ps}
+WA_STATUSES = ("accepted", "sent", "delivered", "read", "failed")
+EXPORT_MAX = 50_000
+
+
+def _message_filters(status: str, template: str, recipient: str, q: str, start: str, end: str) -> list:
+    """Conditions shared by the list and the CSV download. Dates are IST
+    calendar days (YYYY-MM-DD), both inclusive."""
+    from datetime import date
+    from sqlalchemy import or_
+    from ...models.models import TeleCallLead
+    from ...services.crm.metrics import period_bounds
+    conds = []
+    if status:
+        if status not in WA_STATUSES:
+            raise HTTPException(status_code=400, detail=f"status must be one of {', '.join(WA_STATUSES)}")
+        conds.append(WhatsAppMessage.status == status)
+    if template:
+        conds.append(WhatsAppMessage.template == template)
+    if recipient:
+        if recipient not in RECIPIENT_PURPOSES:
+            raise HTTPException(status_code=400, detail="Unknown recipient type")
+        conds.append(WhatsAppMessage.purpose.in_(RECIPIENT_PURPOSES[recipient]))
+    if start or end:
+        try:
+            d_start = date.fromisoformat(start) if start else date(2000, 1, 1)
+            d_end = date.fromisoformat(end) if end else date(2100, 1, 1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start / end must be YYYY-MM-DD")
+        s_utc, e_utc = period_bounds(d_start, d_end)
+        conds += [WhatsAppMessage.created_at >= s_utc, WhatsAppMessage.created_at < e_utc]
+    q = q.strip()
+    if q:
+        digits = "".join(ch for ch in q if ch.isdigit())
+        by_name = select(TeleCallLead.id).where(TeleCallLead.full_name.ilike(f"%{q}%"))
+        conds.append(or_(WhatsAppMessage.lead_id.in_(by_name),
+                         *([WhatsAppMessage.to_phone.like(f"%{digits}%")] if len(digits) >= 3 else [])))
+    return conds
+
+
+async def _with_lead_names(db: AsyncSession, rows: list[WhatsAppMessage]) -> tuple[dict, dict]:
+    from ...models.models import TeleCallLead
+    users = dict((await db.execute(
+        select(User.id, User.name).where(User.id.in_({r.sent_by for r in rows if r.sent_by} or {-1})))).all())
+    leads = dict((await db.execute(
+        select(TeleCallLead.id, TeleCallLead.full_name).where(TeleCallLead.id.in_({r.lead_id for r in rows if r.lead_id} or {-1})))).all())
+    return users, leads
+
+
 @router.get("/messages")
-async def read_messages(limit: int = Query(30, ge=1, le=200), db: AsyncSession = Depends(get_db),
-                        _u: User = require_permission("settings", "view")):
-    rows = (await db.execute(
-        select(WhatsAppMessage).order_by(WhatsAppMessage.id.desc()).limit(limit)
-    )).scalars().all()
-    names = dict((await db.execute(
-        select(User.id, User.name).where(User.id.in_({r.sent_by for r in rows if r.sent_by} or {-1}))
-    )).all())
-    return {"items": [_message_row(r, names) for r in rows]}
+async def read_messages(
+    page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
+    status: str = "", template: str = "", recipient: str = "", q: str = "", start: str = "", end: str = "",
+    limit: Optional[int] = Query(None, ge=1, le=200),  # older callers: the newest N
+    db: AsyncSession = Depends(get_db), _u: User = require_permission("settings", "view"),
+):
+    """Sent messages, newest first, filtered and a page at a time, with the
+    count per status for the same filters (status itself left out)."""
+    from sqlalchemy import and_, func, true
+    if limit:
+        page, page_size = 1, limit
+    conds = _message_filters(status, template, recipient, q, start, end)
+    where = and_(*conds) if conds else true()
+    total = (await db.execute(select(func.count(WhatsAppMessage.id)).where(where))).scalar() or 0
+    rows = (await db.execute(select(WhatsAppMessage).where(where).order_by(WhatsAppMessage.created_at.desc(), WhatsAppMessage.id.desc())
+                             .offset((page - 1) * page_size).limit(page_size))).scalars().all()
+    others = _message_filters("", template, recipient, q, start, end)
+    counts = dict((await db.execute(select(WhatsAppMessage.status, func.count(WhatsAppMessage.id))
+                                    .where(and_(*others) if others else true())
+                                    .group_by(WhatsAppMessage.status))).all())
+    templates = sorted((await db.execute(select(WhatsAppMessage.template).distinct())).scalars().all())
+    users, leads = await _with_lead_names(db, rows)
+    return {
+        "items": [{**_message_row(r, users), "lead_id": r.lead_id, "lead_name": leads.get(r.lead_id),
+                   "recipient": RECIPIENT_LABEL.get(r.purpose, "other")} for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+        "status_counts": {s: counts.get(s, 0) for s in WA_STATUSES}, "templates": templates,
+    }
+
+
+@router.get("/messages/export")
+async def export_messages(
+    status: str = "", template: str = "", recipient: str = "", q: str = "", start: str = "", end: str = "",
+    db: AsyncSession = Depends(get_db), user: User = require_permission("settings", "view"),
+):
+    """The filtered messages as a CSV (times in IST), up to EXPORT_MAX rows."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy import and_, true
+    from ...services.crm.timeutil import ist_today, to_ist
+    conds = _message_filters(status, template, recipient, q, start, end)
+    rows = (await db.execute(select(WhatsAppMessage).where(and_(*conds) if conds else true())
+                             .order_by(WhatsAppMessage.created_at.desc(), WhatsAppMessage.id.desc())
+                             .limit(EXPORT_MAX))).scalars().all()
+    users, leads = await _with_lead_names(db, rows)
+    fmt = lambda d: to_ist(d).strftime("%Y-%m-%d %H:%M:%S") if d else ""  # noqa: E731
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ID", "Created (IST)", "To", "Recipient", "Lead", "Template", "Language", "Status",
+                "Sent (IST)", "Delivered (IST)", "Read (IST)", "Failed (IST)", "Error code", "Error", "Sent by"])
+    for m in rows:
+        w.writerow([m.id, fmt(m.created_at), f"+{m.to_phone}", RECIPIENT_LABEL.get(m.purpose, m.purpose).replace("_", " "),
+                    leads.get(m.lead_id, ""), m.template, m.language, m.status, fmt(m.sent_at), fmt(m.delivered_at),
+                    fmt(m.read_at), fmt(m.failed_at), m.error_code or "", (m.error_text or "").replace("\n", " "),
+                    users.get(m.sent_by, "") if m.sent_by else ("automatic" if m.purpose != "test" else "")])
+    record_audit(db, user.id, "export", "whatsapp_messages", None,
+                 after={"rows": len(rows), "status": status, "template": template, "recipient": recipient,
+                        "start": start, "end": end})
+    await db.commit()
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="whatsapp-messages-{ist_today().isoformat()}.csv"'})
 
 
 @router.post("/messages/{message_id}/resend")

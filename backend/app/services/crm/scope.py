@@ -4,8 +4,9 @@ Mirrors the rules already used by /tele-call-leads:
   * admin tier (SuperAdmin, Admin, CEO, COO, Regional Manager): everything
   * any other role with Leads → View ticked (e.g. Viewer): everything too,
     working the leads only with its Edit / Manage ticks
-  * Team Leader: every lead on their city sheets and of their stores, and
-    every unassigned lead (to pick up and assign)
+  * Team Leader: every lead on their city sheets and of their stores,
+    assigned or not — never another team's (unassigned leads with no store
+    are for the admins to place)
   * Telecaller with assigned store(s): those stores' leads (tagged with it, on
     its own city sheet, booked into it) and leads given to them — never
     another store's; without a store: their city sheets and team's stores
@@ -169,10 +170,8 @@ async def _store_scope(db: AsyncSession, user: User, role: str) -> CrmScope:
                     appointment_lead_ids=appt, perms=perms)
 
 
-def lead_filter(scope: CrmScope, unassigned: bool = True):
-    """SQLAlchemy boolean clause restricting TeleCallLead rows to the scope.
-    unassigned=False leaves out a team leader's "every unassigned lead"
-    (the Leads Update page shows their own stores and sheets only)."""
+def lead_filter(scope: CrmScope):
+    """SQLAlchemy boolean clause restricting TeleCallLead rows to the scope."""
     if scope.is_admin or scope.global_view:
         return TeleCallLead.id.isnot(None)
     if scope.is_store or scope.store_bound:
@@ -190,8 +189,6 @@ def lead_filter(scope: CrmScope, unassigned: bool = True):
             clauses.append(TeleCallLead.sheet_tl_name.in_(scope.sheets))
         if scope.store_ids:
             clauses.append(TeleCallLead.store_id.in_(scope.store_ids))
-        if scope.is_tl and unassigned:  # every unassigned lead, for a team leader to pick up and assign
-            clauses.append(TeleCallLead.owner_user_id.is_(None))
         return or_(*clauses)
     if scope.is_salesperson:
         return or_(TeleCallLead.person_calling == scope.user.name,
@@ -199,7 +196,7 @@ def lead_filter(scope: CrmScope, unassigned: bool = True):
     return false()
 
 
-def lead_in_scope(lead: TeleCallLead, scope: CrmScope, unassigned: bool = True) -> bool:
+def lead_in_scope(lead: TeleCallLead, scope: CrmScope) -> bool:
     if scope.is_admin or scope.global_view:
         return True
     if scope.store_bound and lead.owner_user_id == scope.user.id:
@@ -210,8 +207,7 @@ def lead_in_scope(lead: TeleCallLead, scope: CrmScope, unassigned: bool = True) 
                 or lead.id in scope.appointment_lead_ids)
     if scope.role in ("Team Leader", "Telecaller"):
         return (lead.sheet_tl_name in scope.sheets or lead.owner_user_id == scope.user.id
-                or (lead.store_id is not None and lead.store_id in scope.store_ids)
-                or (scope.is_tl and unassigned and lead.owner_user_id is None))
+                or (lead.store_id is not None and lead.store_id in scope.store_ids))
     if scope.is_salesperson:
         return lead.person_calling == scope.user.name or lead.owner_user_id == scope.user.id
     return False

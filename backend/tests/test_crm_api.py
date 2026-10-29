@@ -356,3 +356,55 @@ async def test_call_start_time_and_todays_calling(env):
     assert row["calls"] == 2 and row["connected"] == 1 and row["talk_seconds"] == 105 and row["last_call_at"]
     assert data["summary"]["calls"] >= 2 and data["summary"]["calling"] >= 1
     assert "first_call_minutes" in data and isinstance(data["late"], list)
+
+
+@pytest.mark.asyncio
+async def test_call_recording_upload_and_playback(env, tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "RECORDINGS_DIR", str(tmp_path))
+    as_user, _ = env
+    c = as_user("sureka")
+    lead_id = (await c.get("/api/v1/crm/leads", params={"q": "Arjun"})).json()["items"][0]["id"]
+    r = await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={"outcome": "will_visit", "call_seconds": 42})
+    assert r.status_code == 200, r.text
+    activity_id = r.json()["activity_id"]
+
+    audio = b"\x00\x00\x00\x18ftypM4A " + b"x" * 1000
+    up = lambda: c.post(f"/api/v1/crm/activities/{activity_id}/recording",
+                        files={"file": ("Call_9876500001.m4a", audio, "audio/mp4")}, data={"duration_seconds": "40"})
+    r = await up()
+    assert r.status_code == 200, r.text
+    rec = r.json()["recording"]
+    assert rec["size_bytes"] == len(audio) and rec["duration_seconds"] == 40 and rec["mime_type"] == "audio/mp4"
+    assert (await up()).json()["recording"]["id"] == rec["id"]      # a retry keeps the first file
+    assert len(list(tmp_path.rglob("*.m4a"))) == 1
+
+    call = [t for t in (await c.get(f"/api/v1/crm/leads/{lead_id}")).json()["timeline"] if t["type"] == "call"][0]
+    assert call["meta"]["recording_id"] == rec["id"] and call["meta"]["call_seconds"] == 42
+
+    r = await c.get(f"/api/v1/crm/recordings/{rec['id']}/audio")
+    assert r.status_code == 200 and r.content == audio and r.headers["content-type"] == "audio/mp4"
+    # the team leader of the same city can listen; another city's telecaller can't
+    assert (await as_user("tl").get(f"/api/v1/crm/recordings/{rec['id']}/audio")).status_code == 200
+    assert (await as_user("sam").get(f"/api/v1/crm/recordings/{rec['id']}/audio")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_call_recording_rules(env, tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "RECORDINGS_DIR", str(tmp_path))
+    as_user, _ = env
+    c = as_user("sureka")
+    lead_id = (await c.get("/api/v1/crm/leads", params={"q": "Arjun"})).json()["items"][0]["id"]
+    call_id = (await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={"outcome": "busy"})).json()["activity_id"]
+    note_id = (await c.post(f"/api/v1/crm/leads/{lead_id}/activities", json={"outcome": "note", "notes": "x"})).json()["activity_id"]
+
+    def send(client, act, name="a.m4a", body=b"abc"):
+        return client.post(f"/api/v1/crm/activities/{act}/recording", files={"file": (name, body, "audio/mp4")})
+
+    assert (await send(c, call_id, name="notes.pdf")).status_code == 400          # not audio
+    assert (await send(c, call_id, body=b"")).status_code == 400                  # empty
+    assert (await send(c, note_id)).status_code == 400                            # notes have no audio
+    assert (await send(as_user("riya"), call_id)).status_code == 403              # someone else's call
+    assert (await send(c, 999999)).status_code == 404
+    assert list(tmp_path.rglob("*.*")) == []                                       # nothing left on disk

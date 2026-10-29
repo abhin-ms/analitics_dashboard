@@ -62,7 +62,7 @@ TEMPLATES: list[dict] = [
     {
         "key": "B1", "name": "telecaller_new_lead", "label": "New lead alert", "recipient": "Telecaller",
         "trigger": "When a lead is given to them (a night lead: at hand-over)",
-        "params": [("lead_name", "Priya"), ("lead_source", "PM"), ("received_time", "18 Oct 2026, 7:30 PM")],
+        "params": [("lead_name", "Priya"), ("lead_source", "PM"), ("received_time", "11:02 AM IST")],
         "body": "New Lead Received\n\nName: {{lead_name}}\nSource: {{lead_source}}\nReceived at: {{received_time}}\n\n"
                 "Please call this customer within 15 minutes.",
         "buttons": [{"type": "url", "text": "View Lead", "url": "https://dash.breakprotection.com/leads?lead={{1}}", "sample": "1024"}],
@@ -71,7 +71,7 @@ TEMPLATES: list[dict] = [
         "key": "B2", "name": "lead_not_attended", "label": "Lead not attended", "recipient": "Team leader",
         "trigger": "When a lead isn't called in time and is escalated",
         "params": [("lead_name", "Priya"), ("customer_number", "9876543210"), ("store_name", "Indiranagar"),
-                   ("lead_source", "PM"), ("telecaller_name", "Anil"), ("received_time", "18 Oct 2026, 7:30 PM")],
+                   ("lead_source", "PM"), ("telecaller_name", "Anil"), ("received_time", "11:02 AM IST")],
         "body": "Lead Not Attended\n\nName: {{lead_name}}\nMobile No: {{customer_number}}\nStore: {{store_name}}\n"
                 "Source: {{lead_source}}\n"
                 "Assigned to: {{telecaller_name}}\n"

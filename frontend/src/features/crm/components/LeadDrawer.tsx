@@ -3,8 +3,10 @@ import { SourceIcon } from "@/components/shared/BrandIcon";
 import { create } from "zustand";
 import {
   X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine, Receipt,
+  Play, Download,
 } from "lucide-react";
 import { useToast } from "@/components/shared/Toast";
+import { api } from "@/lib/apiClient";
 import { PhoneActions } from "@/components/shared/PhoneActions";
 import { useCrmMeta, useLeadDetail, usePatchLead } from "../api";
 import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PREMIUM_COLOR, PRIORITIES, STAGES, STATUS_OPTIONS, sourceColor } from "../statusConfig";
@@ -57,6 +59,48 @@ function callLength(meta: Record<string, unknown> | null | undefined): string {
   const s = typeof meta?.call_seconds === "number" ? meta.call_seconds : null;
   if (s == null) return "";
   return ` · ${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/** The phone's recording of a call, uploaded by the mobile app. Fetched with
+ * the session (an <audio src> can't send it), then played; formats a browser
+ * can't play (AMR from some phones) are offered as a download. */
+function CallRecording({ id }: { id: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "error" | "unplayable">("idle");
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+
+  const load = async () => {
+    setState("loading");
+    try {
+      const res = await api.fetchRaw(`/crm/recordings/${id}/audio`);
+      if (!res.ok) throw new Error();
+      setUrl(URL.createObjectURL(await res.blob()));
+      setState("idle");
+    } catch {
+      setState("error");
+    }
+  };
+
+  if (!url) {
+    return (
+      <button onClick={load} disabled={state === "loading"}
+        className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-400 hover:text-blue-300 cursor-pointer disabled:opacity-60">
+        <Play size={12} fill="currentColor" />
+        {state === "loading" ? "Loading recording…" : state === "error" ? "Couldn't load the recording — try again" : "Play recording"}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-1 space-y-0.5">
+      {state !== "unplayable" && (
+        <audio src={url} controls autoPlay className="h-8 w-full max-w-xs" onError={() => setState("unplayable")} />
+      )}
+      <a href={url} download={`call-recording-${id}`}
+        className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-white">
+        <Download size={11} />{state === "unplayable" ? "This browser can't play this format — download it" : "Download"}
+      </a>
+    </div>
+  );
 }
 
 function timelineText(t: { type: string; outcome_label?: string | null; old_value?: string | null; new_value?: string | null; label?: string; notes?: string | null; meta?: Record<string, unknown> | null }) {
@@ -292,6 +336,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
                   <li key={t.id ?? `m${i}`} className="ml-4">
                     <span className={`absolute -left-[5px] mt-1.5 w-2.5 h-2.5 rounded-full ${t.type === "milestone" ? "bg-slate-500" : t.user === "System" ? "bg-amber-500" : "bg-blue-500"}`} />
                     <p className="text-xs text-white">{timelineText(t)}</p>
+                    {typeof t.meta?.recording_id === "number" && <CallRecording id={t.meta.recording_id} />}
                     {t.notes && t.type !== "system" && t.type !== "note" && <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{t.notes}</p>}
                     {t.type === "note" && t.notes && !t.new_value && <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{t.notes}</p>}
                     <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{fmtDateTime(t.at, { withYear: true })}{t.user ? ` · ${t.user}` : ""}</p>

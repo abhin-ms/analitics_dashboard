@@ -44,6 +44,7 @@ function leadTarget(l: CrmLead) {
 
 /** "11:30 AM" today, "19 Oct" another day. */
 function dueLabel(l: CrmLead): { text: string; late: boolean } {
+  if (l.in_night_queue) return { text: "Night lead", late: false }; // came in at night: due once its message goes out
   if (isOverdue(l)) return { text: "Due now", late: true };
   if (!l.next_follow_up_at) return { text: isNew(l) ? "Due now" : "No time set", late: isNew(l) };
   const d = new Date(l.next_follow_up_at);

@@ -167,9 +167,12 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
         </td>
         {show("owner") && (
           <td className="py-3 pr-3 text-xs">
-            {l.in_night_queue
-              ? <span className="text-sky-400" title="Came in after working hours — handed over from 10:30 AM, one every 15 minutes">Night queue{l.queued_for ? ` → ${l.queued_for}` : ""}</span>
-              : <span className={l.owner_name ? "text-white" : "text-amber-400"}>{l.owner_name || "Unassigned"}</span>}
+            <span className={l.owner_name ? "text-white" : "text-amber-400"}>{l.owner_name || "Unassigned"}</span>
+            {l.in_night_queue && (
+              <p className="text-[11px] text-sky-400" title="Came in after working hours. From opening the telecaller is told about night leads one at a time, 5 minutes apart; the first-call time starts then.">
+                Night lead · message pending
+              </p>
+            )}
             {l.first_call_pending && <p className="text-[11px] text-blue-400">Call within {meta?.automation.first_call_minutes ?? 5} minutes</p>}
           </td>
         )}
@@ -215,7 +218,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
               <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
             </div>
-            <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.in_night_queue ? `Night queue${l.queued_for ? ` → ${l.queued_for}` : ""}` : l.owner_name || "Unassigned"}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
+            <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.owner_name || "Unassigned"}{l.in_night_queue ? " · night lead" : ""}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>
           </div>
           <PriorityBadge priority={l.priority} />
         </div>

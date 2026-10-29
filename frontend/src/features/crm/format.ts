@@ -2,7 +2,7 @@
 
 const IST = "Asia/Kolkata";
 
-export function fmtDateTime(iso: string | null | undefined, opts?: { withYear?: boolean }): string {
+export function fmtDateTime(iso: string | null | undefined, opts?: { withYear?: boolean; hour12?: boolean }): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -11,9 +11,9 @@ export function fmtDateTime(iso: string | null | undefined, opts?: { withYear?: 
     day: "numeric",
     month: "short",
     ...(opts?.withYear ? { year: "numeric" } : {}),
-    hour: "2-digit",
+    hour: opts?.hour12 ? "numeric" : "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hour12: !!opts?.hour12,
   });
 }
 

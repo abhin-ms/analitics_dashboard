@@ -691,15 +691,21 @@ async def test_one_telecaller_team_escalates_to_team_leader_at_15_minutes(db, te
 
 
 @pytest.mark.asyncio
-async def test_night_leads_wait_and_are_handed_over_one_every_15_minutes(db, team, monkeypatch):
+async def test_night_leads_are_given_at_once_and_told_one_every_5_minutes(db, team, monkeypatch):
+    """A night lead is the telecaller's straight away (in their list), but
+    nobody is disturbed: no task, no alert until opening. Then they're told
+    one lead at a time, 5 minutes apart, hot first; each lead's first-call
+    clock starts when it is told."""
+    from app.services.crm.engine import transfer_ownership
     from app.services.crm.night_queue import queue_lead, should_queue
     monkeypatch.setitem(DEFAULT_AUTOMATION, "night_queue", True)
     automation = await get_automation(db)
+    assert automation["queue_gap_minutes"] == 5
     night = ist(2026, 9, 24, 21, 0)  # Thursday 9 PM — hours are 09:00–18:00 in tests
     assert should_queue(night, automation) and not should_queue(ist(2026, 9, 25, 9, 0), automation)
     db.add(Setting(key="crm.go_live_at", value='"2026-01-01T00:00:00"'))
     leads = []
-    for i, prio in enumerate(("warm", "hot")):
+    for i, prio in enumerate(("warm", "hot", "warm", "warm")):
         lead = TeleCallLead(sheet_tl_name="Kerala", spreadsheet_id="", full_name=f"Night {i}", phone=f"98765011{i}0",
                             status="", stage="new", priority=prio, created_at=night + timedelta(minutes=i),
                             submitted_at=night + timedelta(minutes=i), source_channel="instagram")
@@ -708,25 +714,31 @@ async def test_night_leads_wait_and_are_handed_over_one_every_15_minutes(db, tea
         queue_lead(db, lead, team["sureka"], now=night, automation=automation)
         leads.append(lead)
     await db.commit()
-    warm, hot = leads
+    warm, hot, taken, warm2 = leads
+    assert all(l.owner_user_id == team["sureka"].id for l in leads)               # hers at once
+    await transfer_ownership(db, taken, team["riya"].id, source="manual", actor_id=team["tl"].id,
+                             now=night + timedelta(hours=1), automation=automation)  # TL moves one at night
+    await db.commit()
 
-    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 8, 59))   # still closed
-    assert await count(db, TeleCallLead, TeleCallLead.owner_user_id.isnot(None)) == 0
-    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 0))    # opening: one, hot first
-    await db.refresh(hot)
-    await db.refresh(warm)
-    assert hot.owner_user_id == team["sureka"].id and warm.owner_user_id is None
-    fu = (await db.execute(select(TeleLeadFollowup).where(TeleLeadFollowup.lead_id == hot.id))).scalar_one()
-    assert fu.kind == "first_call" and fu.created_at == ist(2026, 9, 25, 9, 0)  # clock starts at hand-over
+    async def told():
+        return {f.lead_id: f.created_at for f in (await db.execute(
+            select(TeleLeadFollowup).where(TeleLeadFollowup.kind == "first_call"))).scalars()}
+
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 8, 59))   # still closed: nobody disturbed
+    assert await count(db, TeleLeadFollowup) == 0 and await count(db, CrmAlert) == 0
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 0))    # opening: the hot one first
+    assert await told() == {hot.id: ist(2026, 9, 25, 9, 0)}
+    await db.refresh(taken)
+    assert taken.owner_user_id == team["riya"].id and taken.queue_released_at is not None  # not told twice
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 3))
+    assert set(await told()) == {hot.id}                                          # 5-minute gap
+    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 5))
+    assert (await told())[warm.id] == ist(2026, 9, 25, 9, 5)                      # its clock starts now
     await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 10))
-    await db.refresh(warm)
-    assert warm.owner_user_id is None                                            # 15-minute gap
-    await crm_automation.run_automation_tick(db, now=ist(2026, 9, 25, 9, 15))
-    await db.refresh(warm)
-    assert warm.owner_user_id == team["sureka"].id
-    # arrived 12 working hours "ago", but escalation counts from the hand-over
+    assert (await told())[warm2.id] == ist(2026, 9, 25, 9, 10)
+    # arrived 12 working hours "ago", but the clock counts from when it was told
     await db.refresh(hot)
-    assert hot.escalated_at is None
+    assert hot.escalated_at is None and hot.assigned_at == ist(2026, 9, 25, 9, 0)
 
 
 @pytest.mark.asyncio

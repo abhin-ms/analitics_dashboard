@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { Check, CheckCheck, Clock, Copy, Plus, Send, Trash2, X } from "lucide-react";
+import { Check, CheckCheck, ChevronLeft, ChevronRight, Clock, Copy, Download, Plus, Search, Send, Trash2, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useAuthStore } from "@/lib/authStore";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,9 @@ import { TableSkeleton } from "@/components/shared/Skeleton";
 import { useToast } from "@/components/shared/Toast";
 import { Button, Card, CardHeader, Empty, ErrorText, Field, InfoNote, PageHeader, Tabs, inputCls } from "@/features/crm/components/ui";
 import { fmtDateTime } from "@/features/crm/format";
+
+/** WhatsApp times: IST, 12-hour with AM / PM. */
+const fmt12 = (iso: string | null | undefined) => fmtDateTime(iso, { hour12: true });
 
 interface WaConfig {
   configured: boolean;
@@ -49,7 +52,7 @@ function WebhookActivity() {
   return (
     <Card>
       <CardHeader title="Webhook problems & tests"
-        subtitle={last ? <>Last call from Meta: <span className="text-emerald-400">{fmtDateTime(last + "Z")} ✓</span> · delivery times show under Sent messages on the Test tab</> : "No call from Meta yet"}
+        subtitle={last ? <>Last call from Meta: <span className="text-emerald-400">{fmt12(last + "Z")} ✓</span> · delivery times show under Sent messages on the Test tab</> : "No call from Meta yet"}
         action={canEdit ? <Button size="sm" onClick={() => selftest.mutate()} loading={selftest.isPending}>Send a test call</Button> : undefined} />
       {selftest.data && (
         <div className={cn("mx-5 mt-3 rounded-xl px-3 py-2 text-xs", selftest.data.ok ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400")}>
@@ -63,7 +66,7 @@ function WebhookActivity() {
         <div className="divide-y divide-[var(--border-subtle)] mt-2">
           {items.map((e, i) => (
             <div key={i} className="px-5 py-2.5 flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 text-xs">
-              <span className="w-32 shrink-0 text-[var(--text-muted)] whitespace-nowrap">{fmtDateTime(e.at + "Z")}</span>
+              <span className="w-32 shrink-0 text-[var(--text-muted)] whitespace-nowrap">{fmt12(e.at + "Z")}</span>
               <span className="w-28 shrink-0">
                 <span className={cn("inline-block px-1.5 py-0.5 rounded font-semibold",
                   e.test ? "bg-[var(--bg-subtle)] text-[var(--text-secondary)]"
@@ -121,6 +124,18 @@ interface WaMessage {
   read_at: string | null;
   failed_at: string | null;
   sent_by: string | null;
+  lead_id?: number | null;
+  lead_name?: string | null;
+  recipient?: string;
+}
+
+interface WaMessagePage {
+  items: WaMessage[];
+  total: number;
+  page: number;
+  page_size: number;
+  status_counts: Record<WaMessage["status"], number>;
+  templates: string[];
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
@@ -238,7 +253,7 @@ function SetupTab() {
             {cfg.configured && (
               <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
                 Connected: <b>{cfg.verified_name || "WhatsApp number"}</b> {cfg.display_phone}
-                {cfg.updated_at && <span className="text-[var(--text-muted)]"> · saved {fmtDateTime(cfg.updated_at + "Z")}</span>}
+                {cfg.updated_at && <span className="text-[var(--text-muted)]"> · saved {fmt12(cfg.updated_at + "Z")}</span>}
               </div>
             )}
             <Field label="Access token" hint={cfg.access_token_masked ? `Saved (${cfg.access_token_masked}). Leave blank to keep it.` : "A permanent System User token is best; temporary tokens stop after 24 hours."}>
@@ -299,11 +314,11 @@ function SetupTab() {
                     )}
               </div>
               <p className="text-xs text-[var(--text-muted)]">
-                Last webhook call received: {cfg.last_webhook_at ? <span className="text-emerald-400">{fmtDateTime(cfg.last_webhook_at + "Z")}</span> : "none yet"}
+                Last webhook call received: {cfg.last_webhook_at ? <span className="text-emerald-400">{fmt12(cfg.last_webhook_at + "Z")}</span> : "none yet"}
               </p>
               {cfg.last_webhook_error && (!cfg.last_webhook_at || cfg.last_webhook_error.at > cfg.last_webhook_at) && (
                 <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
-                  <b>Last webhook call was refused</b> ({fmtDateTime(cfg.last_webhook_error.at + "Z")}): {cfg.last_webhook_error.reason}
+                  <b>Last webhook call was refused</b> ({fmt12(cfg.last_webhook_error.at + "Z")}): {cfg.last_webhook_error.reason}
                 </div>
               )}
               {canEdit && (
@@ -478,6 +493,7 @@ const STATUS_LOOK: Record<WaMessage["status"], { label: string; cls: string; ico
   read: { label: "Read", cls: "text-blue-400", icon: <CheckCheck size={13} /> },
   failed: { label: "Failed", cls: "text-rose-400", icon: <X size={13} /> },
 };
+const WA_STATUS_ORDER: WaMessage["status"][] = ["accepted", "sent", "delivered", "read", "failed"];
 
 /** Does the approved template have our button i? undefined = Meta not checked. */
 function onMeta(t: Template, i: number): boolean | undefined {
@@ -510,13 +526,6 @@ function TestTab() {
   const setAuto = useMutation({
     mutationFn: (auto: Record<string, boolean>) => api.put<{ auto: Record<string, boolean> }>("/whatsapp/auto", { auto }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["whatsapp", "templates"] }),
-  });
-  const messages = useQuery({
-    queryKey: ["whatsapp", "messages"],
-    queryFn: () => api.get<{ items: WaMessage[] }>("/whatsapp/messages?limit=30"),
-    // Poll while anything sent recently may still change status.
-    refetchInterval: (q) => (q.state.data?.items.some((m) => m.status !== "read" && m.status !== "failed"
-      && m.created_at && Date.now() - new Date(m.created_at).getTime() < 10 * 60_000) ? 4000 : false),
   });
 
   const [selected, setSelected] = useState("");  // template key — stays put when its name changes
@@ -558,13 +567,6 @@ function TestTab() {
       qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] });
     },
     onError: () => qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] }),
-  });
-  // a failed message, sent again (same template, values and number)
-  const resend = useMutation({
-    mutationFn: (id: number) => api.post<{ message: WaMessage }>(`/whatsapp/messages/${id}/resend`, {}),
-    onSuccess: () => toast.success("Sent again. Watch its status above."),
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not send it again"),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] }),
   });
 
   if (isLoading || !data || !tpl) return <TableSkeleton />;
@@ -712,10 +714,126 @@ function TestTab() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader title="Sent messages" subtitle="Accepted = Meta took it. Sent, Delivered and Read times come back from Meta through the webhook." />
-        {!messages.data ? <div className="p-5"><TableSkeleton /></div> : messages.data.items.length === 0 ? <Empty>No messages sent yet.</Empty> : (
-          <div className="overflow-x-auto">
+      <SentMessages title="Your test messages" initial={{ recipient: "test" }} pageSize={10} />
+    </div>
+  );
+}
+
+// ── Tab 4: sent messages ────────────────────────────────────────────
+
+const RECIPIENTS: [string, string][] = [
+  ["", "Everyone"], ["customer", "Customers"], ["store", "Stores"], ["telecaller", "Telecallers"],
+  ["team_leader", "Team leaders"], ["ceo", "CEO report"], ["test", "Tests"],
+];
+const RECIPIENT_NAME: Record<string, string> = Object.fromEntries(RECIPIENTS.filter(([k]) => k));
+type MsgFilters = { status: string; template: string; recipient: string; q: string; start: string; end: string };
+const NO_FILTERS: MsgFilters = { status: "", template: "", recipient: "", q: "", start: "", end: "" };
+const msgQuery = (f: MsgFilters, extra: Record<string, string | number> = {}) =>
+  new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([, v]) => v !== "").map(([k, v]) => [k, String(v)])).toString();
+
+/** Every message the app sent, newest first: filters, pages, CSV download
+ * of whatever the filters show, and Resend for a failed one. */
+function SentMessages({ title = "Sent messages", initial, pageSize: firstSize = 25 }: {
+  title?: string; initial?: Partial<MsgFilters>; pageSize?: number;
+}) {
+  const toast = useToast();
+  const canEdit = useCanEdit();
+  const qc = useQueryClient();
+  const base = { ...NO_FILTERS, ...initial };
+  const [f, setF] = useState<MsgFilters>(base);
+  const [search, setSearch] = useState(base.q);
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(firstSize);
+  const [downloading, setDownloading] = useState(false);
+  const set = (k: keyof MsgFilters, v: string) => { setF((p) => ({ ...p, [k]: v })); setPage(1); };
+  useEffect(() => { const t = setTimeout(() => { if (search !== f.q) set("q", search); }, 300); return () => clearTimeout(t); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filtering = (Object.keys(f) as (keyof MsgFilters)[]).some((k) => f[k] !== base[k]);
+
+  const messages = useQuery({
+    queryKey: ["whatsapp", "messages", f, page, size],
+    queryFn: () => api.get<WaMessagePage>(`/whatsapp/messages?${msgQuery(f, { page, page_size: size })}`),
+    placeholderData: (prev) => prev,
+    // Poll while anything on this page sent recently may still change status.
+    refetchInterval: (q) => (q.state.data?.items.some((m) => m.status !== "read" && m.status !== "failed"
+      && m.created_at && Date.now() - new Date(m.created_at).getTime() < 10 * 60_000) ? 4000 : false),
+  });
+  const resend = useMutation({
+    mutationFn: (id: number) => api.post<{ message: WaMessage }>(`/whatsapp/messages/${id}/resend`, {}),
+    onSuccess: () => toast.success("Sent again. It appears at the top of the list."),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Could not send it again"),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["whatsapp", "messages"] }),
+  });
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const res = await api.fetchRaw(`/whatsapp/messages/export?${msgQuery(f)}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Download failed (${res.status})`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `whatsapp-messages-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const d = messages.data;
+  const pages = d ? Math.max(1, Math.ceil(d.total / d.page_size)) : 1;
+  const sel = `${inputCls} !w-auto`;
+  return (
+    <Card>
+      <CardHeader title={title} subtitle="Accepted = Meta took it. Sent, Delivered and Read times come back from Meta through the webhook."
+        action={<Button size="sm" loading={downloading} disabled={!d?.total} onClick={download}><Download size={13} />Download CSV</Button>} />
+      <div className="px-4 py-3 space-y-2">
+        <div className="flex flex-wrap gap-2">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input id="wa-search" aria-label="Search by phone or customer" className={`${inputCls} pl-8`}
+              placeholder="Search phone number or customer name" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          {!initial?.recipient && (
+            <select id="wa-recipient" aria-label="Sent to" className={sel} value={f.recipient} onChange={(e) => set("recipient", e.target.value)}>
+              {RECIPIENTS.map(([k, l]) => <option key={k} value={k}>{k ? l : "Sent to: everyone"}</option>)}
+            </select>
+          )}
+          <select id="wa-template" aria-label="Template" className={sel} value={f.template} onChange={(e) => set("template", e.target.value)}>
+            <option value="">All templates</option>
+            {(d?.templates || []).map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">From
+            <input id="wa-start" type="date" className={sel} value={f.start} max={f.end || undefined} onChange={(e) => set("start", e.target.value)} />
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">To
+            <input id="wa-end" type="date" className={sel} value={f.end} min={f.start || undefined} onChange={(e) => set("end", e.target.value)} />
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {([["", "All"], ...WA_STATUS_ORDER.map((k) => [k, STATUS_LOOK[k].label])] as [string, string][]).map(([k, l]) => {
+            const n = k ? d?.status_counts[k as WaMessage["status"]] : d && Object.values(d.status_counts).reduce((a, b) => a + b, 0);
+            return (
+              <button key={k || "all"} type="button" onClick={() => set("status", k)}
+                className={cn("px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer",
+                  f.status === k ? "bg-[var(--accent-blue)] border-[var(--accent-blue)] text-white"
+                    : "border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]")}>
+                {l}{n != null && <span className="ml-1 opacity-70">{n}</span>}
+              </button>
+            );
+          })}
+          {filtering && (
+            <button type="button" className="ml-1 text-xs text-[var(--accent-blue)] hover:underline cursor-pointer"
+              onClick={() => { setF(base); setSearch(base.q); setPage(1); }}>Clear filters</button>
+          )}
+        </div>
+      </div>
+      {!d ? <div className="p-5"><TableSkeleton /></div> : d.items.length === 0 ? (
+        <Empty>{filtering ? "No messages match these filters." : "No messages sent yet."}</Empty>
+      ) : (
+        <>
+          <div className={cn("overflow-x-auto", messages.isFetching && "opacity-70 transition-opacity")}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
@@ -723,22 +841,27 @@ function TestTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {messages.data.items.map((m) => {
+                {d.items.map((m) => {
                   const look = STATUS_LOOK[m.status] ?? STATUS_LOOK.accepted;
                   return (
                     <tr key={m.id} className="align-top">
-                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{fmtDateTime(m.created_at)}</td>
-                      <td className="py-2.5 px-4 font-mono text-[var(--text-primary)]">+{m.to}</td>
+                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{fmt12(m.created_at)}</td>
+                      <td className="py-2.5 px-4">
+                        <p className="font-mono text-[var(--text-primary)] whitespace-nowrap">+{m.to}</p>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          {m.recipient && RECIPIENT_NAME[m.recipient] ? RECIPIENT_NAME[m.recipient] : ""}{m.lead_name ? ` · ${m.lead_name}` : ""}
+                        </p>
+                      </td>
                       <td className="py-2.5 px-4 font-mono text-[var(--text-secondary)]">{m.template}</td>
                       <td className="py-2.5 px-4">
                         <span className={cn("inline-flex items-center gap-1 font-semibold", look.cls)}>{look.icon}{look.label}</span>
-                        {m.failed_at && <p className="text-rose-400 whitespace-nowrap">at {fmtDateTime(m.failed_at)}</p>}
+                        {m.failed_at && <p className="text-rose-400 whitespace-nowrap">at {fmt12(m.failed_at)}</p>}
                         {m.error && <p className="text-rose-400 max-w-xs mt-0.5">{m.error_code ? `#${m.error_code} · ` : ""}{m.error}</p>}
                       </td>
-                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.sent_at ? fmtDateTime(m.sent_at) : "—"}</td>
-                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.delivered_at ? fmtDateTime(m.delivered_at) : "—"}</td>
-                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.read_at ? fmtDateTime(m.read_at) : "—"}</td>
-                      <td className="py-2.5 px-4 text-[var(--text-secondary)]">{m.sent_by || "—"}</td>
+                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.sent_at ? fmt12(m.sent_at) : "—"}</td>
+                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.delivered_at ? fmt12(m.delivered_at) : "—"}</td>
+                      <td className="py-2.5 px-4 whitespace-nowrap text-[var(--text-secondary)]">{m.read_at ? fmt12(m.read_at) : "—"}</td>
+                      <td className="py-2.5 px-4 text-[var(--text-secondary)]">{m.sent_by || (m.recipient === "test" ? "—" : "Automatic")}</td>
                       <td className="py-2.5 px-4">
                         {m.status === "failed" && canEdit && (
                           <Button size="sm" loading={resend.isPending && resend.variables === m.id}
@@ -753,13 +876,27 @@ function TestTab() {
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
-    </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-[var(--border-subtle)] text-xs text-[var(--text-muted)]">
+            <span>
+              {(d.page - 1) * d.page_size + 1}–{Math.min(d.page * d.page_size, d.total)} of {d.total.toLocaleString()} messages
+            </span>
+            <div className="flex items-center gap-2">
+              <select id="wa-size" aria-label="Rows per page" className={sel} value={size} onChange={(e) => { setSize(Number(e.target.value)); setPage(1); }}>
+                {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} per page</option>)}
+              </select>
+              <Button size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} title="Previous page"><ChevronLeft size={14} /></Button>
+              <span className="tabular-nums">Page {d.page} of {pages}</span>
+              <Button size="sm" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} title="Next page"><ChevronRight size={14} /></Button>
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
-const TABS = [{ key: "setup", label: "1 · WhatsApp setup" }, { key: "numbers", label: "2 · Numbers" }, { key: "test", label: "3 · Test templates" }];
+const TABS = [{ key: "setup", label: "1 · WhatsApp setup" }, { key: "numbers", label: "2 · Numbers" }, { key: "test", label: "3 · Test templates" },
+  { key: "messages", label: "4 · Sent messages" }];
 
 export default function WhatsAppSettings() {
   // ?tab=numbers opens a tab directly (and survives a reload)
@@ -774,6 +911,7 @@ export default function WhatsAppSettings() {
         {tab === "setup" && <SetupTab />}
         {tab === "numbers" && <NumbersTab />}
         {tab === "test" && <TestTab />}
+        {tab === "messages" && <SentMessages />}
       </div>
     </ErrorBoundary>
   );

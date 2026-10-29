@@ -219,7 +219,8 @@ async def test_night_booking_tells_admins_now_and_telecaller_at_handover(env, mo
         notes = {(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()}
         assert notes == {(ids["admin"], "lead_admin")}                # admins only, at arrival
         lead = await db.get(TeleCallLead, body["lead_id"])
-        assert lead.owner_user_id is None and lead.queued_owner_id is not None
+        assert lead.owner_user_id == lead.queued_owner_id is not None          # given to the telecaller at once…
+        assert not any(k == "lead_assigned" for _, k in notes)                 # …but not disturbed at night
         await release_queue(db, from_ist(datetime(2026, 10, 26, 10, 0)), await get_automation(db))  # Monday, open
         await db.commit()
         notes = [(n.user_id, n.kind) for n in (await db.execute(select(CrmNotification))).scalars().all()]

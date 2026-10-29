@@ -58,7 +58,7 @@ async def _check_lead_access(db: AsyncSession, user, lead: TeleCallLead, role_na
     their store's leads and the ones given to them, a team leader their
     stores and sheets."""
     scope = await get_scope(db, user)
-    return scope.has_access and scope.can_edit_leads and lead_in_scope(lead, scope, unassigned=False)
+    return scope.has_access and scope.can_edit_leads and lead_in_scope(lead, scope)
 
 
 NO_STORE = "No store matched"
@@ -111,7 +111,7 @@ async def get_tele_call_leads(
     if not scope.has_access:
         return {"tl_groups": {}, "total": 0, "role": role_name, "user_sheets": []}
 
-    query = select(TeleCallLead).where(lead_filter(scope, unassigned=False))
+    query = select(TeleCallLead).where(lead_filter(scope))
 
     if tl_name:
         query = query.where(TeleCallLead.sheet_tl_name == tl_name)
@@ -218,7 +218,7 @@ async def get_status_summary(
     scope = await get_scope(db, user)
     if not scope.has_access:
         return {"summary": {}}
-    query = query.where(lead_filter(scope, unassigned=False))
+    query = query.where(lead_filter(scope))
 
     if owner:
         owner_id = user.id if owner == "me" else (int(owner) if owner.isdigit() else None)
@@ -521,7 +521,7 @@ async def assign_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    if role_name == "Team Leader" and not lead_in_scope(lead, await get_scope(db, user), unassigned=False):
+    if role_name == "Team Leader" and not lead_in_scope(lead, await get_scope(db, user)):
         raise HTTPException(status_code=403, detail="Access denied to this lead")
 
     lead.salesperson = body.salesperson

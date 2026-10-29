@@ -57,6 +57,18 @@ def customer_phone(phone: str, country: str | None) -> str:
     return normalize_phone(phone)
 
 
+def received_label(at: datetime, now: datetime) -> str:
+    """When the lead came in, IST 12-hour: "11:02 AM IST" for a lead of
+    today, "28 Oct, 11:02 PM IST" for an older one (a night lead announced
+    next morning)."""
+    from ..crm.timeutil import to_ist
+    ist, today = to_ist(at), to_ist(now).date()
+    clock = ist.strftime("%I:%M %p").lstrip("0") + " IST"
+    if ist.date() == today:
+        return clock
+    return f"{ist.day} {ist.strftime('%b')}{'' if ist.year == today.year else ist.strftime(' %Y')}, {clock}"
+
+
 def _date(text: str | None) -> tuple[str, str]:
     """("29 Oct 2026", "11:00 AM" or "To be confirmed") from a preferred date."""
     from ..crm.timeutil import parse_sheet_datetime, to_ist
@@ -131,7 +143,6 @@ async def run(job: str, lead_id: int, user_id: int | None = None) -> list[str]:
 
 async def _run(db, job: str, lead_id: int, user_id: int | None = None) -> list[str]:
     from ...models.models import Store, TeleCallLead, User, WhatsAppContact, WhatsAppMessage
-    from ..crm.timeutil import to_ist
     from .client import WhatsAppError, send_template
     from .config import get_config, valid_phone
     from .templates import build_components, get_template
@@ -146,7 +157,7 @@ async def _run(db, job: str, lead_id: int, user_id: int | None = None) -> list[s
     store = await db.get(Store, lead.store_id) if lead.store_id else None
     store_name = store.name if store else (lead.preferred_store_text or lead.sheet_tl_name or "Break Protection")
     model = lead.phone_model or lead.phone_brand or "Not given"
-    received = to_ist(lead.submitted_at or lead.created_at or datetime.utcnow()).strftime("%d %b %Y, %I:%M %p")
+    received = received_label(lead.submitted_at or lead.created_at or datetime.utcnow(), datetime.utcnow())
     sent: list[str] = []
 
     async def send(key: str, to: str, values: dict, buttons: dict | None = None) -> None:

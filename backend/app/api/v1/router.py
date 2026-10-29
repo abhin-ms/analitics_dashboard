@@ -29,6 +29,7 @@ from .social import router as social_router
 from .store_owner import router as store_owner_router
 from .store_portfolio import router as store_portfolio_router
 from .tl_ranking import router as tl_ranking_router
+from .call_recordings import router as call_recordings_router
 from .whatsapp import router as whatsapp_router, public_router as whatsapp_public_router
 from ...instagram.router import router as instagram_router
 from ...instagram.webhook_handler import router as instagram_webhook_router
@@ -59,6 +60,7 @@ api_router.include_router(client_logs_router)
 api_router.include_router(tele_call_leads_router)
 api_router.include_router(crm_router)
 api_router.include_router(crm_admin_router)
+api_router.include_router(call_recordings_router)
 api_router.include_router(public_leads_router)
 api_router.include_router(meta_webhook_router)
 api_router.include_router(notifications_router)
