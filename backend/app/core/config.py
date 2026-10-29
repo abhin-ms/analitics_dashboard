@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     GOOGLE_SERVICE_ACCOUNT_JSON_PATH: str = ""
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:8001,http://localhost:8000,http://127.0.0.1:8000,http://0.0.0.0:8000"
     BASE_REPORTING_CURRENCY: str = "INR"
+    # Call recordings uploaded by the mobile app. Empty = backend/data/recordings.
+    RECORDINGS_DIR: str = ""
     # Shared secret the third-party website sends with each paid booking
     # (X-Api-Key header or ?key=). Empty = website webhook disabled.
     WEBSITE_WEBHOOK_KEY: str = ""

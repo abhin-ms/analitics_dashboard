@@ -48,6 +48,8 @@ services:
     volumes:
       - ./secrets/google-sa.json:/run/secrets/google-sa.json:ro
       - app_logs:/app/backend/logs
+      # call recordings uploaded by the mobile app (not in the database dump)
+      - recordings:/app/backend/data/recordings
     depends_on:
       db:
         condition: service_healthy
@@ -80,3 +82,4 @@ services:
 volumes:
   db_data:
   app_logs:
+  recordings:

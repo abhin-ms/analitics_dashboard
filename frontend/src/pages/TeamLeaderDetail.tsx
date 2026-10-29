@@ -360,7 +360,211 @@ export default function TeamLeaderDetail() {
             </p>
           </Card>
         </div>
+
+        {id && <TelecallingPerformance tlId={id} />}
       </div>
     </ErrorBoundary>
+  );
+}
+
+// ── Telecalling performance ─────────────────────────────────────────
+
+interface SourceCount { leads: number; attended: number; not_attended: number; calls: number }
+interface TcRow {
+  user_id: number | null; name: string; role: string; store: string | null; available: boolean | null;
+  leads: number; attended: number; not_attended: number; attended_pct: number | null; calls: number; converted: number;
+  by_source: Record<string, SourceCount>;
+}
+interface Telecalling {
+  start: string; end: string; stores: string[];
+  sources: { key: string; label: string }[];
+  telecallers: TcRow[];
+  total: Omit<TcRow, "user_id" | "name" | "role" | "store" | "available">;
+}
+
+const PERIODS = ["today", "yesterday", "7d", "month", "last_month", "custom"] as const;
+type Period = typeof PERIODS[number];
+const PERIOD_LABEL: Record<Period, string> = {
+  today: "Today", yesterday: "Yesterday", "7d": "Last 7 days", month: "This month", last_month: "Last month", custom: "Custom",
+};
+const SOURCE_COLOR: Record<string, string> = { website: "#10b981", facebook: "#3b82f6", instagram: "#ec4899", meta_sheet: "#a855f7" };
+const attColor = (p: number | null) => (p == null ? "var(--text-muted)" : p >= 60 ? "#10b981" : p >= 30 ? "#f59e0b" : "#ef4444");
+
+function periodRange(p: Period, custom: { start: string; end: string }): { start: string; end: string } {
+  const today = new Date();
+  const d = (offset: number) => localDateStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset));
+  switch (p) {
+    case "today": return { start: d(0), end: d(0) };
+    case "yesterday": return { start: d(1), end: d(1) };
+    case "7d": return { start: d(6), end: d(0) };
+    case "month": return { start: localDateStr(new Date(today.getFullYear(), today.getMonth(), 1)), end: d(0) };
+    case "last_month": return {
+      start: localDateStr(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
+      end: localDateStr(new Date(today.getFullYear(), today.getMonth(), 0)),
+    };
+    default: return custom;
+  }
+}
+
+/** The team leader's telecallers for a period: leads that came in, how many
+ * were attended, calls made, and the same per lead source. */
+function TelecallingPerformance({ tlId }: { tlId: string }) {
+  const [period, setPeriod] = useState<Period>("month");
+  const [custom, setCustom] = useState(() => periodRange("7d", { start: "", end: "" }));
+  const range = periodRange(period, custom);
+  const ready = !!range.start && !!range.end && range.start <= range.end;
+  const { data, isLoading, error, isFetching } = useQuery({
+    queryKey: ["tl-telecalling", tlId, range.start, range.end],
+    queryFn: () => api.get<Telecalling>(`/sales-reports/team-leader/${tlId}/telecalling?start=${range.start}&end=${range.end}`),
+    enabled: ready,
+    placeholderData: (prev) => prev,
+  });
+  const fmt = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const inputCls = "rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-xs text-[var(--text-primary)]";
+
+  return (
+    <Card>
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 mb-4">
+        <div>
+          <p className="text-sm font-semibold text-white">Telecalling performance</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            Leads that came in for this team, how many were attended, and calls made
+            {ready && <> · {fmt(range.start)}{range.end !== range.start ? ` – ${fmt(range.end)}` : ""}</>}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {PERIODS.map((p) => (
+            <button key={p} type="button" onClick={() => setPeriod(p)} aria-pressed={period === p}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${period === p
+                ? "bg-[var(--accent-blue)] border-[var(--accent-blue)] text-white"
+                : "border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white"}`}>
+              {PERIOD_LABEL[p]}
+            </button>
+          ))}
+          {period === "custom" && (
+            <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+              <input id="tc-start" type="date" aria-label="From" className={inputCls} value={custom.start} max={custom.end || undefined}
+                onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} />
+              to
+              <input id="tc-end" type="date" aria-label="To" className={inputCls} value={custom.end} min={custom.start || undefined}
+                onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} />
+            </span>
+          )}
+        </div>
+      </div>
+
+      {!ready ? <p className="text-sm text-[var(--text-muted)]">Pick a start and end date.</p>
+        : isLoading && !data ? <TableSkeleton />
+        : error || !data ? <p className="text-sm text-rose-400">{error instanceof Error ? error.message : "Could not load telecalling"}</p>
+        : (
+          <div className={`space-y-5 ${isFetching ? "opacity-70 transition-opacity" : ""}`}>
+            {/* Team totals */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {([
+                ["Leads came", data.total.leads, "var(--text-primary)"],
+                ["Attended", data.total.attended, "#10b981"],
+                ["Not attended", data.total.not_attended, data.total.not_attended ? "#ef4444" : "var(--text-primary)"],
+                ["Attended %", data.total.attended_pct == null ? "—" : `${data.total.attended_pct}%`, attColor(data.total.attended_pct)],
+                ["Calls made", data.total.calls, "#3b82f6"],
+                ["Sales", data.total.converted, "#a855f7"],
+              ] as [string, string | number, string][]).map(([l, v, c]) => (
+                <div key={l} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-primary)] p-3">
+                  <Label>{l}</Label>
+                  <p className="text-2xl font-extrabold mt-1 tabular-nums" style={{ color: c }}>{v}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* By source */}
+            {data.sources.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                {data.sources.map((s) => {
+                  const b = data.total.by_source[s.key] || { leads: 0, attended: 0, not_attended: 0, calls: 0 };
+                  const p = b.leads ? Math.round((b.attended / b.leads) * 100) : null;
+                  return (
+                    <div key={s.key} className="rounded-xl border border-[var(--border-subtle)] p-3">
+                      <p className="text-xs font-bold" style={{ color: SOURCE_COLOR[s.key] || "var(--text-secondary)" }}>{s.label} leads</p>
+                      <p className="text-xl font-extrabold text-white mt-0.5 tabular-nums">{b.leads}</p>
+                      <div className="mt-2"><Bar100 value={p} color={SOURCE_COLOR[s.key] || "#64748b"} /></div>
+                      <p className="text-[11px] text-[var(--text-secondary)] mt-1.5 tabular-nums">
+                        <span className="text-emerald-400 font-semibold">{b.attended} attended</span>
+                        {" · "}<span className={b.not_attended ? "text-rose-400" : ""}>{b.not_attended} not</span>{" · "}{b.calls} calls
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Per telecaller */}
+            {data.telecallers.length === 0 ? <p className="text-sm text-[var(--text-muted)]">No telecallers on this team.</p> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[var(--text-muted)] border-b border-[var(--border-subtle)] text-left">
+                      <th className="py-2 pr-3 font-semibold">Telecaller</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Leads</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Attended</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Not attended</th>
+                      <th className="py-2 pr-3 font-semibold min-w-[130px]">Attended %</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Calls made</th>
+                      <th className="py-2 pr-3 font-semibold text-right">Sales</th>
+                      {data.sources.map((s) => (
+                        <th key={s.key} className="py-2 pr-3 font-semibold text-right whitespace-nowrap" title="Leads · attended · calls">
+                          <span style={{ color: SOURCE_COLOR[s.key] }}>{s.label}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-subtle)]">
+                    {data.telecallers.map((r) => (
+                      <tr key={r.user_id ?? "none"} className={r.role !== "Telecaller" ? "text-[var(--text-secondary)]" : ""}>
+                        <td className="py-2.5 pr-3">
+                          <p className="text-white font-medium">{r.name}
+                            {r.available === false && <span className="ml-1.5 text-[10px] text-amber-400">Away</span>}</p>
+                          <p className="text-[11px] text-[var(--text-muted)]">
+                            {r.role === "Telecaller" ? r.store || "No store set" : r.role === "Team leader" ? "Team leader (own leads)" : "Not given to anyone"}
+                          </p>
+                        </td>
+                        <td className="py-2.5 pr-3 text-right tabular-nums text-white">{r.leads}</td>
+                        <td className="py-2.5 pr-3 text-right tabular-nums text-emerald-400">{r.attended}</td>
+                        <td className={`py-2.5 pr-3 text-right tabular-nums ${r.not_attended ? "text-rose-400 font-semibold" : ""}`}>{r.not_attended}</td>
+                        <td className="py-2.5 pr-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1"><Bar100 value={r.attended_pct} color={attColor(r.attended_pct)} /></div>
+                            <span className="w-10 text-right tabular-nums" style={{ color: attColor(r.attended_pct) }}>
+                              {r.attended_pct == null ? "—" : `${r.attended_pct}%`}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 pr-3 text-right tabular-nums text-blue-400">{r.calls}</td>
+                        <td className="py-2.5 pr-3 text-right tabular-nums text-purple-400">{r.converted}</td>
+                        {data.sources.map((s) => {
+                          const b = r.by_source[s.key];
+                          return (
+                            <td key={s.key} className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap"
+                              title={b ? `${b.leads} leads · ${b.attended} attended · ${b.not_attended} not · ${b.calls} calls` : ""}>
+                              {b && (b.leads || b.calls) ? (
+                                <>
+                                  <span className="text-white">{b.leads}</span>
+                                  <span className="block text-[10px] text-[var(--text-muted)]">{b.attended} att · {b.calls} calls</span>
+                                </>
+                              ) : <span className="text-[var(--text-muted)]">—</span>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[11px] text-[var(--text-muted)]">
+              A lead counts in the period it came in. Attended = called or given a status (in the app or the Google Sheet).
+              Calls made = leads called or updated in the period, including follow-ups of older leads. Green 60%+, amber 30–59%, red below 30%.
+            </p>
+          </div>
+        )}
+    </Card>
   );
 }

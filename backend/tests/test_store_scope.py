@@ -245,9 +245,11 @@ async def test_fix_button_moves_other_store_leads_and_team_leaders_assign_unassi
     assert leads["own_sheet"].owner_user_id == sudhi.id                       # Kochi's own: stays
     assert leads["shared_sheet"].owner_user_id == sudhi.id                    # "Kerala" sheet, his own area: stays
 
-    tl_scope = await get_scope(db, tara)                                      # TL sees the unassigned one
+    tl_scope = await get_scope(db, tara)
     tl_seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(tl_scope)))).scalars()}
-    assert "unmatched" in tl_seen
+    assert "unmatched" not in tl_seen          # no store, not her sheet: for the admins, not every team leader
+    boss_seen = {l.full_name for l in (await db.execute(select(TeleCallLead).where(lead_filter(await get_scope(db, boss))))).scalars()}
+    assert "unmatched" in boss_seen
     people = {p["name"]: p for p in await assignable_people(db, tl_scope)}
     assert {"Sudhi", "Swalih", "Tara"} <= set(people)
     assert may_take(people["Sudhi"], None) and may_take(people["Sudhi"], stores["Kochi"].id)
@@ -320,3 +322,58 @@ async def test_leads_update_page_shows_a_telecaller_only_their_store(db, setup):
     # the team leader: both stores and their sheets, by store or by sheet
     tl_seen = {l["full_name"] for g in (await page(tara, "sheet"))["tl_groups"].values() for l in g["leads"]}
     assert tl_seen == set(leads)
+
+
+@pytest.mark.asyncio
+async def test_team_telecalling_per_telecaller_and_source(db, setup):
+    """A team leader's telecalling for a period: each telecaller's leads,
+    attended / not attended, calls made (a sheet update counts for the
+    lead's owner) — overall and per source; unassigned store leads too;
+    other teams and other periods left out."""
+    from app.models.models import TeleLeadActivity
+    from app.services.crm.metrics import period_bounds
+    from app.services.crm.team_telecalling import team_telecalling
+    from datetime import date
+    tc_role = Role(name="Telecaller")
+    db.add(tc_role)
+    await db.flush()
+    stores = {s.name: s for s in (await db.execute(select(Store))).scalars().all()}
+    tara = (await db.execute(select(User).where(User.name == "Tara"))).scalar_one()
+    sudhi = User(name="Sudhi", email="su@x", password_hash="x", role_id=tc_role.id, team_leader_id=tara.id,
+                 store_id=stores["Kochi"].id)
+    swalih = User(name="Swalih", email="sw@x", password_hash="x", role_id=tc_role.id, store_id=stores["Calicut"].id)
+    other = User(name="Other", email="ot@x", password_hash="x", role_id=tc_role.id)  # another team
+    db.add_all([sudhi, swalih, other])
+    await db.flush()
+    day = datetime(2026, 10, 20, 6, 0)  # 20 Oct, 11:30 IST
+
+    def lead(name, src, owner, status="", store=None, at=day):
+        return TeleCallLead(sheet_tl_name="Kochi", full_name=name, phone=name, status=status, source_channel=src,
+                            owner_user_id=owner.id if owner else None, store_id=store.id if store else None,
+                            created_at=at, submitted_at=at)
+    leads = [lead("w1", "website", sudhi, "Will Visit"), lead("w2", "website", sudhi),
+             lead("f1", "facebook", sudhi, "Call Not Connected"), lead("i1", "instagram", swalih),
+             lead("u1", "instagram", None, store=stores["Kochi"]),          # unassigned, Tara's store
+             lead("x1", "facebook", other, "Will Visit"),                    # another team
+             lead("old", "facebook", sudhi, "Will Visit", at=datetime(2026, 10, 1, 6, 0))]  # earlier: not a lead of the period
+    db.add_all(leads)
+    await db.flush()
+    by = {l.full_name: l for l in leads}
+    db.add_all([TeleLeadActivity(lead_id=by["w1"].id, type="call", user_id=sudhi.id, created_at=day),
+                TeleLeadActivity(lead_id=by["f1"].id, type="status_change", user_id=None, created_at=day),   # sheet: Sudhi's
+                TeleLeadActivity(lead_id=by["old"].id, type="status_change", user_id=None, created_at=day),  # follow-up of an older lead
+                TeleLeadActivity(lead_id=by["x1"].id, type="call", user_id=other.id, created_at=day)])
+    await db.commit()
+
+    s, e = period_bounds(date(2026, 10, 20), date(2026, 10, 20))
+    r = await team_telecalling(db, tara, s, e)
+    rows = {x["name"]: x for x in r["telecallers"]}
+    assert set(rows) == {"Sudhi", "Swalih", "Unassigned"}                       # not "Other"
+    su = rows["Sudhi"]
+    assert (su["leads"], su["attended"], su["not_attended"], su["attended_pct"], su["calls"]) == (3, 2, 1, 67, 3)
+    assert su["by_source"]["website"] == {"leads": 2, "attended": 1, "calls": 1, "not_attended": 1}
+    assert su["by_source"]["facebook"] == {"leads": 1, "attended": 1, "calls": 2, "not_attended": 0}
+    assert rows["Swalih"]["store"] == "Calicut" and rows["Swalih"]["not_attended"] == 1
+    assert rows["Unassigned"]["leads"] == 1
+    assert r["total"]["leads"] == 5 and r["total"]["calls"] == 3
+    assert [x["label"] for x in r["sources"]] == ["Website", "Facebook", "Instagram"]

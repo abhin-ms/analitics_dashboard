@@ -138,8 +138,8 @@ def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | 
         "stage_manual": bool(l.stage_manual),
         "owner_user_id": l.owner_user_id,
         "owner_name": names.get(l.owner_user_id) if l.owner_user_id else None,
-        # waiting in the night queue for this telecaller (handed over next morning)
-        "in_night_queue": bool(l.queued_at and not l.queue_released_at and not l.owner_user_id),
+        # came in at night: already the owner's, who is told at the next opening
+        "in_night_queue": bool(l.queued_at and not l.queue_released_at),
         "queued_for": names.get(l.queued_owner_id) if l.queued_owner_id else None,
         "assignment_source": l.assignment_source,
         "reassign_count": l.reassign_count or 0,
@@ -732,6 +732,8 @@ async def log_activity(lead_id: int, body: ActivityRequest, db: AsyncSession = D
         "ok": True,
         "lead": lead_row(lead, names, await pending_first_calls(db, [lead.id]), await store_names(db, [lead])),
         "next_follow_up": {"due_at": iso_utc(fu.due_at), "kind": fu.kind, "reason": fu.reason} if fu else None,
+        # the mobile app uploads the call's recording to this activity
+        "activity_id": result["activity"].id,
     }
 
 

@@ -15,6 +15,40 @@ Production-grade CRM and live analytics dashboard for BreakProtection's 24 store
 - Node.js 18+
 - MariaDB/MySQL (via XAMPP or native install)
 
+## Quick Start on Windows (day-to-day)
+
+Once the first-time setup below is done, this is all you need. Use two PowerShell windows.
+
+**Window 1: backend** (http://localhost:8000)
+
+```powershell
+cd backend
+.venv\Scripts\activate
+alembic upgrade head          # apply any new database changes (safe to run every time)
+uvicorn app.main:socket_app --reload --port 8000
+```
+
+**Window 2: frontend** (http://localhost:5173)
+
+```powershell
+cd frontend
+npm install                   # only after package.json changes
+npm run dev
+```
+
+Open http://localhost:5173 and log in. Make sure MySQL/MariaDB (XAMPP) is running first.
+
+- **Settings** live in `backend/.env` (database URL, keys). Never commit this file.
+- **Real data locally:** instead of the seed script, import a dump of the live database into
+  `bp_analytics`, e.g. `mysql -u root -p bp_analytics < live_dump.sql`, then run `alembic upgrade head`.
+  Background jobs (sheet sync every minute, automation, 1 PM and 8 PM CEO report) also run locally.
+  WhatsApp settings come from the database, so a live copy can send real messages: switch WhatsApp
+  off locally in Settings → WhatsApp before testing.
+- **Tests:** `cd backend` then `.venv\Scripts\python -m pytest -q`. One test
+  (`test_symlink_out_of_the_build_is_refused`) always fails on Windows and can be ignored.
+  Frontend check: `cd frontend` then `npx tsc --noEmit -p .`
+- **Going live:** push your branch and open a pull request to `main`; merging to `main` deploys.
+
 ## Local Setup
 
 ### 1. Database

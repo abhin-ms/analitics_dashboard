@@ -71,6 +71,46 @@ async def country_comparison(
     return await get_country_comparison_for_stores(db, store_ids, today, today)
 
 
+async def _check_tl_access(db: AsyncSession, user: User, tl_id: int) -> None:
+    """Company roles see any team leader; others only one all of whose
+    stores they can see (a team leader always sees themselves)."""
+    allowed = await allowed_store_ids(user, db)
+    if allowed is not None and tl_id != user.id:
+        tl_stores = set((await db.execute(
+            select(Store.id).where(Store.team_leader_id == tl_id, Store.is_active == True)  # noqa: E712
+        )).scalars().all())
+        if not tl_stores or not tl_stores <= set(allowed):
+            raise HTTPException(status_code=403, detail="No access to this team leader")
+
+
+@router.get("/team-leader/{tl_id}/telecalling")
+async def team_leader_telecalling(
+    tl_id: int,
+    start: str = None,   # YYYY-MM-DD (IST), default today
+    end: str = None,     # YYYY-MM-DD (IST), inclusive, default = start
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """The team's telecalling for a period: per telecaller, leads that came
+    in, attended / not attended, calls made — overall and per lead source."""
+    from ...services.crm.metrics import period_bounds
+    from ...services.crm.team_telecalling import team_telecalling
+    from ...services.crm.timeutil import ist_today
+    try:
+        d_start = date.fromisoformat(start) if start else ist_today()
+        d_end = date.fromisoformat(end) if end else d_start
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start and end must be YYYY-MM-DD")
+    if d_end < d_start or (d_end - d_start).days > 366:
+        raise HTTPException(status_code=400, detail="Pick an end date after the start, at most a year apart")
+    await _check_tl_access(db, user, tl_id)
+    tl = await db.get(User, tl_id)
+    if tl is None:
+        raise HTTPException(status_code=404, detail="Team leader not found")
+    s_utc, e_utc = period_bounds(d_start, d_end)
+    return {"start": d_start.isoformat(), "end": d_end.isoformat(), **await team_telecalling(db, tl, s_utc, e_utc)}
+
+
 @router.get("/team-leader/{tl_id}/performance")
 async def team_leader_performance_report(
     tl_id: int,
@@ -92,13 +132,7 @@ async def team_leader_performance_report(
         _date(y, m, 1)
     except ValueError:
         raise HTTPException(status_code=400, detail="month must be YYYY-MM and as_of YYYY-MM-DD")
-    allowed = await allowed_store_ids(user, db)
-    if allowed is not None and tl_id != user.id:
-        tl_stores = set((await db.execute(
-            select(Store.id).where(Store.team_leader_id == tl_id, Store.is_active == True)  # noqa: E712
-        )).scalars().all())
-        if not tl_stores or not tl_stores <= set(allowed):
-            raise HTTPException(status_code=403, detail="No access to this team leader")
+    await _check_tl_access(db, user, tl_id)
     data = await team_leader_performance(db, tl_id, y, m, as_of_d)
     if data is None:
         raise HTTPException(status_code=404, detail="Team leader not found")

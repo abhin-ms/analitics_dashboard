@@ -194,6 +194,6 @@ async def _fix_store_mismatches(db: AsyncSession, actor: User, *, apply: bool, d
             await transfer_ownership(
                 db, lead, new.id if new else None, source="auto", actor_id=actor.id, now=now, automation=automation,
                 reason=(f"{store.name}'s lead — moved to that store's team" if store
-                        else "No store matched — back to Unassigned for a team leader to assign"))
+                        else "No store matched — back to Unassigned for an admin to place"))
             await db.flush()
     return out

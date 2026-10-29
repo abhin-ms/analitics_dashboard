@@ -396,3 +396,64 @@ async def test_failed_message_can_be_sent_again_once(env):
     new_id = (await c.get("/api/v1/whatsapp/messages")).json()["items"][0]["id"]
     r = await c.post(f"/api/v1/whatsapp/messages/{new_id}/resend")
     assert r.status_code == 400 and "Only a failed" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_sent_messages_filter_page_and_download(env):
+    """Sent messages: filters (status, who it went to, phone / customer,
+    dates in IST), pages with a total and per-status counts, and a CSV of
+    exactly what the filters show."""
+    from datetime import datetime
+    from app.models.models import TeleCallLead, WhatsAppMessage
+    as_user, ids, calls, Session = env
+    async with Session() as db:
+        lead = TeleCallLead(sheet_tl_name="Kochi", spreadsheet_id="", full_name="Meera Nair", phone="9847000021",
+                            created_at=datetime(2026, 10, 28, 5, 0))
+        db.add(lead)
+        await db.flush()
+        rows = [("919847000021", "booking_received", "auto:A1", "read", lead.id, datetime(2026, 10, 28, 5, 1)),
+                ("919000000003", "telecaller_new_lead", "auto:B1", "delivered", lead.id, datetime(2026, 10, 28, 5, 1)),
+                ("919000000001", "lead_not_attended", "auto:B2", "failed", lead.id, datetime(2026, 10, 28, 6, 0)),
+                ("919876543210", "booking_received", "test", "sent", None, datetime(2026, 10, 27, 19, 0))]  # 28 Oct 00:30 IST
+        for to, tpl, purpose, status, lid, at in rows:
+            db.add(WhatsAppMessage(to_phone=to, template=tpl, purpose=purpose, status=status, lead_id=lid, created_at=at,
+                                   error_text="Template name does not exist" if status == "failed" else None))
+        for i in range(30):  # older tests, to page through
+            db.add(WhatsAppMessage(to_phone="919876543210", template="booking_received", purpose="test", status="read",
+                                   created_at=datetime(2026, 10, 20, 5, i)))
+        await db.commit()
+    c = as_user("admin")
+
+    page = (await c.get("/api/v1/whatsapp/messages", params={"page_size": 10})).json()
+    assert page["total"] == 34 and len(page["items"]) == 10 and page["items"][0]["template"] == "lead_not_attended"
+    assert page["status_counts"] == {"accepted": 0, "sent": 1, "delivered": 1, "read": 31, "failed": 1}
+    assert (await c.get("/api/v1/whatsapp/messages", params={"page_size": 10, "page": 4})).json()["items"].__len__() == 4
+
+    lead_msgs = (await c.get("/api/v1/whatsapp/messages", params={"q": "meera"})).json()
+    assert lead_msgs["total"] == 3 and {m["lead_name"] for m in lead_msgs["items"]} == {"Meera Nair"}
+    assert (await c.get("/api/v1/whatsapp/messages", params={"q": "+91 98470 00021"})).json()["total"] == 1
+    tl = (await c.get("/api/v1/whatsapp/messages", params={"recipient": "team_leader"})).json()
+    assert [m["recipient"] for m in tl["items"]] == ["team_leader"] and tl["items"][0]["status"] == "failed"
+    failed = (await c.get("/api/v1/whatsapp/messages", params={"status": "failed"})).json()
+    assert failed["total"] == 1 and failed["status_counts"]["read"] == 31   # counts ignore the status filter
+    day = (await c.get("/api/v1/whatsapp/messages", params={"start": "2026-10-28", "end": "2026-10-28"})).json()
+    assert day["total"] == 4                                                 # the 00:30 IST test counts on the 28th
+    assert (await c.get("/api/v1/whatsapp/messages", params={"status": "bogus"})).status_code == 400
+
+    r = await c.get("/api/v1/whatsapp/messages/export", params={"start": "2026-10-28", "end": "2026-10-28"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    lines = r.text.strip().splitlines()
+    assert lines[0].startswith("ID,Created (IST),To,Recipient,Lead") and len(lines) == 5
+    assert any("team leader" in l and "Template name does not exist" in l for l in lines)
+    assert (await as_user("tc").get("/api/v1/whatsapp/messages/export")).status_code == 403
+
+
+def test_received_time_is_ist_12_hour():
+    """"Received at" in the WhatsApp alerts: just the IST time for a lead of
+    today, with the date for an older one (a night lead told next morning)."""
+    from datetime import datetime
+    from app.services.whatsapp.auto import received_label
+    now = datetime(2026, 10, 29, 5, 0)                                                # 29 Oct, 10:30 AM IST
+    assert received_label(datetime(2026, 10, 29, 3, 35), now) == "9:05 AM IST"
+    assert received_label(datetime(2026, 10, 28, 17, 32), now) == "28 Oct, 11:02 PM IST"  # last night
+    assert received_label(datetime(2025, 12, 31, 6, 0), now) == "31 Dec 2025, 11:30 AM IST"

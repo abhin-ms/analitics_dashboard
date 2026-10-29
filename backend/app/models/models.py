@@ -882,6 +882,23 @@ class TeleLeadActivity(Base):
     )
 
 
+class TeleCallRecording(Base):
+    """Audio of a call, made by the phone's own call recorder and uploaded
+    by the mobile app after the call. One per call activity; the file lives
+    under RECORDINGS_DIR (see api/v1/call_recordings.py)."""
+    __tablename__ = "tele_call_recordings"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    activity_id = Column(Integer, ForeignKey("tele_lead_activities.id", ondelete="CASCADE"), nullable=False, unique=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    file_path = Column(String(500), nullable=False)
+    file_name = Column(String(255), nullable=True)
+    mime_type = Column(String(100), nullable=True)
+    size_bytes = Column(Integer, nullable=False, default=0)
+    duration_seconds = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TeleLeadFollowup(Base):
     """A due action on a lead. owner_user_id is the owner AT THAT TIME and is
     never rewritten: a reassignment closes this row as 'reassigned' and opens

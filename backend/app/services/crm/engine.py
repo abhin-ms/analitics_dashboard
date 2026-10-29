@@ -467,7 +467,7 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
         meta["call_seconds"] = int(call_seconds)
     if call_at != now and not is_note:
         meta["call_started_at"] = iso_utc(call_at)
-    add_activity(
+    activity = add_activity(
         db, lead, "note" if is_note else "call", user_id=actor.id, outcome=outcome,
         old_value=(old_status or "No Status") if new_status and new_status != old_status else None,
         new_value=new_status if new_status and new_status != old_status else None,
@@ -505,7 +505,7 @@ async def log_outcome(db: AsyncSession, lead: TeleCallLead, actor: User, outcome
         followup = create_followup(db, lead, kind=kind, due_at=due, owner_id=lead.owner_user_id or actor.id,
                                    created_by=actor.id, reason=reason, at=now)
     await recompute_next_follow_up(db, lead)
-    return {"closed_followups": closed, "followup": followup, "appointment": appointment}
+    return {"closed_followups": closed, "followup": followup, "appointment": appointment, "activity": activity}
 
 
 async def set_status_from_app(db: AsyncSession, lead: TeleCallLead, new_status: str, *,

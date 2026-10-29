@@ -25,10 +25,11 @@ DEFAULT_AUTOMATION: dict = {
     "first_call_minutes": 5,      # first-call task due / owner alerted + urgent
     "reassign_minutes": 15,       # reassign once to another agent; no other agent → escalate to team leader
     "escalate_minutes": 60,       # escalate to team leader (still not called after a reassignment)
-    # Leads arriving outside working hours wait and are handed to their
-    # telecaller next morning, one every queue_gap_minutes.
+    # Leads arriving outside working hours are given to their telecaller at
+    # once, quietly; from opening the telecaller is told about them one at
+    # a time, one every queue_gap_minutes (each one's clock starts then).
     "night_queue": True,
-    "queue_gap_minutes": 15,
+    "queue_gap_minutes": 5,
     # After the first attempt
     "no_answer_retry_minutes": 210,   # 3½ hours
     "busy_retry_minutes": 45,
