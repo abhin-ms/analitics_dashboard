@@ -902,6 +902,7 @@ interface PaySettingsView {
   whatsapp_config: string; key_id: string; key_secret_masked: string; webhook_secret_masked: string;
   amount: number; hours: number; updated_at: string | null; webhook_url: string;
   modes: { whatsapp: boolean; link: boolean }; test_keys: boolean;
+  business_name: string; address_line1: string; city: string; state: string; postal_code: string; address_ready: boolean;
 }
 
 /** The payment settings an admin types in, instead of server files:
@@ -911,16 +912,19 @@ function PaymentsTab() {
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["whatsapp", "payments"], queryFn: () => api.get<PaySettingsView>("/crm/payment-settings") });
-  const [f, setF] = useState({ whatsapp_config: "", key_id: "", key_secret: "", webhook_secret: "", amount: "99", hours: "24" });
+  const [f, setF] = useState({ whatsapp_config: "", key_id: "", key_secret: "", webhook_secret: "", amount: "99", hours: "24",
+    business_name: "", address_line1: "", city: "", state: "", postal_code: "" });
   useEffect(() => {
     if (data) setF({ whatsapp_config: data.whatsapp_config, key_id: data.key_id, key_secret: "", webhook_secret: "",
-      amount: String(data.amount), hours: String(data.hours) });
+      amount: String(data.amount), hours: String(data.hours), business_name: data.business_name,
+      address_line1: data.address_line1, city: data.city, state: data.state, postal_code: data.postal_code });
   }, [data]);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((p) => ({ ...p, [k]: e.target.value }));
   const save = useMutation({
     mutationFn: () => api.put<PaySettingsView>("/crm/payment-settings", {
       whatsapp_config: f.whatsapp_config, key_id: f.key_id, key_secret: f.key_secret, webhook_secret: f.webhook_secret,
       amount: Number(f.amount) || undefined, hours: Number(f.hours) || undefined,
+      business_name: f.business_name, address_line1: f.address_line1, city: f.city, state: f.state, postal_code: f.postal_code,
     }),
     onSuccess: () => { toast.success("Payment settings saved"); qc.invalidateQueries({ queryKey: ["whatsapp", "payments"] }); },
     onError: (e) => toast.error(errMsg(e)),
@@ -949,9 +953,22 @@ function PaymentsTab() {
             <input id="pay-config" className={inputCls} value={f.whatsapp_config} onChange={set("whatsapp_config")} disabled={ro} placeholder="BreakProtection" />
           </Field>
           <div className="text-xs text-[var(--text-muted)] space-y-1 self-center">
+            {!data.address_ready && <p className="text-amber-400">Fill in the business address below: WhatsApp needs it on every order.</p>}
             <p>Also needed: the approved template <b>payment_request</b> (A7, Test templates tab).</p>
             <p>Payment updates come through the WhatsApp webhook you already set up.</p>
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Business address on the order"
+          subtitle={data.address_ready ? "Shown to the customer as the seller on the WhatsApp order" : "Required for Pay inside WhatsApp"} />
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Business name"><input id="pay-biz" className={inputCls} value={f.business_name} onChange={set("business_name")} disabled={ro} /></Field>
+          <Field label="Address line"><input id="pay-addr" className={inputCls} value={f.address_line1} onChange={set("address_line1")} disabled={ro} placeholder="Building, street" /></Field>
+          <Field label="City"><input id="pay-city" className={inputCls} value={f.city} onChange={set("city")} disabled={ro} /></Field>
+          <Field label="State"><input id="pay-state" className={inputCls} value={f.state} onChange={set("state")} disabled={ro} placeholder="e.g. Kerala" /></Field>
+          <Field label="PIN code"><input id="pay-pin" inputMode="numeric" className={inputCls} value={f.postal_code} onChange={set("postal_code")} disabled={ro} /></Field>
         </div>
       </Card>
 

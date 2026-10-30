@@ -588,6 +588,11 @@ async def test_pay_inside_whatsapp_review_and_pay(env, monkeypatch):
         await db.commit()
         lead_id = lead.id
     await _setup(as_user("admin"))
+    r = await as_user("tc").post(f"/api/v1/crm/leads/{lead_id}/payment-link",
+                                 json={"customer_name": "Rahul", "customer_phone": "9847000058"})
+    assert r.status_code == 400 and "business address" in r.json()["detail"]   # Meta needs it on the order
+    assert (await as_user("admin").put("/api/v1/crm/payment-settings", json={
+        "address_line1": "12 MG Road", "city": "Kochi", "state": "Kerala", "postal_code": "682016"})).status_code == 200
 
     form = (await as_user("tc").get(f"/api/v1/crm/leads/{lead_id}/payment-link")).json()
     assert form["modes"] == {"whatsapp": True, "link": False} and form["form"]["mode"] == "whatsapp"
@@ -606,6 +611,10 @@ async def test_pay_inside_whatsapp_review_and_pay(env, monkeypatch):
     pg = order["payment_settings"][0]["payment_gateway"]
     assert pg["type"] == "razorpay" and pg["configuration_name"] == "BreakProtection"
     assert order["total_amount"] == {"value": 9900, "offset": 100} == order["order"]["subtotal"]
+    item = order["order"]["items"][0]
+    assert item["country_of_origin"] == "India" and item["importer_name"] == "Break Protection"
+    assert item["importer_address"] == {"address_line1": "12 MG Road", "city": "Kochi", "zone_code": "Kerala",
+                                        "postal_code": "682016", "country_code": "IN"}
     async with Session() as db:
         ref = (await db.execute(select(PaymentLink))).scalar_one().reference_id
     assert order["reference_id"] == ref

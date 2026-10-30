@@ -106,6 +106,11 @@ class PaySettingsIn(BaseModel):
     clear_webhook_secret: bool = False
     amount: Optional[int] = None
     hours: Optional[int] = None
+    business_name: Optional[str] = None
+    address_line1: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
 
 
 def _settings_view(s) -> dict:
@@ -114,6 +119,8 @@ def _settings_view(s) -> dict:
         "whatsapp_config": s.whatsapp_config, "key_id": s.key_id,
         "key_secret_masked": mask(s.key_secret), "webhook_secret_masked": mask(s.webhook_secret),
         "amount": s.amount, "hours": s.hours, "updated_at": s.updated_at,
+        "business_name": s.business_name, "address_line1": s.address_line1, "city": s.city, "state": s.state,
+        "postal_code": s.postal_code, "address_ready": s.address_ready(),
         "webhook_url": env.FRONTEND_URL.rstrip("/") + "/api/v1/public/razorpay/webhook",
         "modes": {"whatsapp": bool(s.whatsapp_config), "link": bool(s.key_id and s.key_secret)},
         "test_keys": s.key_id.startswith("rzp_test_"),
