@@ -106,7 +106,7 @@ interface Template {
   trigger: string;
   params: { name: string; sample: string }[];
   body: string;
-  buttons: { type: "quick_reply" | "url" | "flow"; text: string; url?: string; sample?: string; optional?: boolean }[];
+  buttons: { type: "quick_reply" | "url" | "flow" | "order_details"; text: string; url?: string; sample?: string; optional?: boolean }[];
   meta: { status: string; language: string; category: string; buttons?: { type: string; text: string; dynamic: boolean }[] }[];
 }
 
@@ -503,7 +503,8 @@ function onMeta(t: Template, i: number): boolean | undefined {
   const theirs = mb[i];
   if (!ours || !theirs) return false;
   if (ours.type === "url") return theirs.type === "URL" && theirs.dynamic;
-  return theirs.type === (ours.type === "flow" ? "FLOW" : "QUICK_REPLY");
+  const kind: Record<string, string> = { flow: "FLOW", order_details: "ORDER_DETAILS", quick_reply: "QUICK_REPLY" };
+  return theirs.type === (kind[ours.type] ?? "QUICK_REPLY");
 }
 
 function metaChip(t: Template, checked: boolean) {
@@ -671,7 +672,7 @@ function TestTab() {
                           setInclude(next);
                         }} />
                         <b className="text-[var(--text-primary)]">{b.text}</b>
-                        <span>({b.type === "url" ? "link" : b.type === "flow" ? "WhatsApp Flow" : "quick reply"}{b.optional ? ", optional" : ""})</span>
+                        <span>({b.type === "url" ? "link" : b.type === "flow" ? "WhatsApp Flow" : b.type === "order_details" ? "order details · pay in WhatsApp" : "quick reply"}{b.optional ? ", optional" : ""})</span>
                         {onMeta(tpl, i) === false && <span className="text-amber-400">· not on the approved template</span>}
                       </label>
                       {b.type === "url" && include.has(i) && (
