@@ -172,13 +172,19 @@ def build_components(t: dict, values: dict[str, str], button_values: dict[int, s
     template (sending a value for a button Meta doesn't have is an error).
     """
     # only: the variables the approved template really has (None = all of ours)
-    names = [n for n, _ in t["params"] if only is None or n in only]
+    # a template made in WhatsApp Manager with {{1}}, {{2}}…: ours in order, sent without names
+    numbered = bool(only) and all(v.isdigit() for v in only)
+    if numbered:
+        names = [n for n, _ in t["params"]][:len(only)]
+    else:
+        names = [n for n, _ in t["params"] if only is None or n in only]
     missing = [n for n in names if not str(values.get(n, "")).strip()]
     if missing:
         raise ValueError(f"Fill in: {', '.join(missing)}")
     components: list[dict] = [{
         "type": "body",
-        "parameters": [{"type": "text", "parameter_name": n, "text": str(values[n]).strip()} for n in names],
+        "parameters": [{"type": "text", "text": str(values[n]).strip()} if numbered else
+                       {"type": "text", "parameter_name": n, "text": str(values[n]).strip()} for n in names],
     }]
     include = include_buttons if include_buttons is not None else {
         i for i, b in enumerate(t["buttons"]) if not b.get("optional")}
