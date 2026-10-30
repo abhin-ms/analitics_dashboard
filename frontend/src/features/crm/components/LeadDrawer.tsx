@@ -197,7 +197,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
                   <Button size="sm" onClick={() => setDialog("appt")}><CalendarPlus size={14} />Book appointment</Button>
                   {!lead.is_premium && lead.call_payment?.status !== "paid" && (
                     <Button size="sm" className="!border-emerald-500/50 !text-emerald-400" onClick={() => setDialog("pay")}>
-                      <CreditCard size={14} />Send ₹99 payment
+                      <CreditCard size={14} />Send payment
                     </Button>
                   )}
                 </>}

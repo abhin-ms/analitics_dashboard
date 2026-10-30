@@ -49,7 +49,7 @@ export function PaymentLinkDialog({ leadId, open, onClose }: { leadId: number; o
       service: p.service, store_id: p.store_id ? String(p.store_id) : "", visit_at: p.visit_at });
   }, [data]);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((p) => ({ ...p, [k]: e.target.value }));
-  const amount = data?.form.amount ?? 99;
+  const amount = data?.form.amount ?? 99;  // fixed; only the WhatsApp Test tab can try another amount
   const hours = data?.form.valid_hours ?? 24;
   const storeName = meta?.stores.find((s) => String(s.id) === f.store_id)?.name || "Break Protection";
   const visitLabel = f.visit_at

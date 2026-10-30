@@ -380,7 +380,7 @@ function CallReport() {
             </div>
             <button type="button" onClick={() => setPayOpen(true)}
               className="w-full min-h-[48px] rounded-xl bg-emerald-500 text-[#052e1f] font-extrabold text-[15px] cursor-pointer active:scale-[.99]">
-              Send ₹99 payment
+              Send payment
             </button>
           </div>
         )}

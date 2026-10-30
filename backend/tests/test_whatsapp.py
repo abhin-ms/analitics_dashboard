@@ -214,7 +214,9 @@ async def test_test_send_and_delivery_statuses(env):
 
     r = await c.post("/api/v1/whatsapp/test-send", json={"template": "telecaller_new_lead", "to": "9876543210",
                                                          "values": {"lead_name": "Priya"}})
-    assert r.status_code == 400 and "lead_source" in r.json()["detail"]
+    # the approved template on Meta has only {{lead_name}}: just that one is sent (Meta refuses extra ones)
+    assert r.status_code == 200, r.text
+    assert [p["parameter_name"] for p in calls[-1][2]["json"]["template"]["components"][0]["parameters"]] == ["lead_name"]
     r = await c.post("/api/v1/whatsapp/test-send", json={"template": "booking_received", "to": "910000000000",
                                                          "values": {n: "x" for n in ("customer_name", "booking_date", "time_slot", "mobile_model", "store_name")}})
     assert r.status_code == 400 and "translation" in r.json()["detail"]
@@ -603,7 +605,7 @@ async def test_pay_inside_whatsapp_review_and_pay(env, monkeypatch):
     sent = next(kw["json"] for m, p, kw in reversed(calls) if p.endswith("/messages"))["template"]
     assert sent["name"] == "payment_request"
     names = {p["parameter_name"] for p in sent["components"][0]["parameters"]}
-    assert names == {"customer_name", "store_name", "mobile_model", "visit_date", "visit_time"}
+    assert names == {"customer_name", "store_name", "mobile_model", "visit_date", "visit_time", "amount"}
     assert sent["components"][0]["type"] == "body"                      # no header
     button = sent["components"][1]
     assert button["sub_type"] == "order_details" and button["index"] == "0"
@@ -671,7 +673,7 @@ async def test_payment_settings_saved_from_the_dashboard(env, monkeypatch):
         s = await pay.load(db)
         assert (s.key_secret, s.webhook_secret, pay.enabled()) == ("sekret-1234567890", "whsec-abcdef12", True)
     r = await c.put("/api/v1/crm/payment-settings", json={"key_secret": "", "amount": 149})  # blank keeps it
-    assert r.json()["key_secret_masked"].endswith("7890") and r.json()["amount"] == 149
+    assert r.json()["key_secret_masked"].endswith("7890") and r.json()["amount"] == 99  # the amount stays ₹99
     assert (await c.put("/api/v1/crm/payment-settings", json={"key_id": "abc"})).status_code == 400
     t = as_user("tc")
     assert (await t.get("/api/v1/crm/payment-settings")).status_code == 403
@@ -688,7 +690,7 @@ async def test_review_and_pay_can_be_tested_from_the_test_tab(env, monkeypatch):
     c = as_user("admin")
     await _setup(c)
     values = {"customer_name": "Rahul", "store_name": "Kochi", "mobile_model": "Galaxy S24",
-              "visit_date": "Sat, 1 Nov 2026", "visit_time": "11:30 AM"}
+              "visit_date": "Sat, 1 Nov 2026", "visit_time": "11:30 AM", "amount": "149"}
     body = {"template": "payment_request", "to": "6238860673", "values": values, "include_buttons": [0]}
     r = await c.post("/api/v1/whatsapp/test-send", json=body)
     assert r.status_code == 400 and "Payments tab" in r.json()["detail"]
@@ -702,3 +704,4 @@ async def test_review_and_pay_can_be_tested_from_the_test_tab(env, monkeypatch):
     assert button["sub_type"] == "order_details" and order["reference_id"].startswith("TEST")
     assert order["payment_settings"][0]["payment_gateway"]["configuration_name"] == "BreakProtection"
     assert order["order"]["items"][0]["importer_address"]["postal_code"] == "682016"
+    assert order["total_amount"] == {"value": 14900, "offset": 100}                      # the amount typed in

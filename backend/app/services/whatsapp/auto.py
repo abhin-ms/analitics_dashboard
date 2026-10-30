@@ -82,7 +82,7 @@ def _date(text: str | None) -> tuple[str, str]:
     return ist.strftime("%d %b %Y"), (ist.strftime("%I:%M %p").lstrip("0") if has_time else "To be confirmed")
 
 
-_meta_cache: dict = {"at": None, "buttons": {}}  # at: time.monotonic() of the last read, None = never
+_meta_cache: dict = {"at": None, "buttons": {}, "vars": {}}  # at: time.monotonic() of the last read, None = never
 
 
 async def _approved_buttons(cfg, name: str, language: str) -> list[dict] | None:
@@ -102,8 +102,23 @@ async def _approved_buttons(cfg, name: str, language: str) -> list[dict] | None:
             logger.warning("Could not read WhatsApp templates from Meta: %s", e)
             return None
         _meta_cache.update(at=time.monotonic(),
-                           buttons={(t.get("name"), t.get("language")): meta_buttons(t) for t in rows})
+                           buttons={(t.get("name"), t.get("language")): meta_buttons(t) for t in rows},
+                           vars={(t.get("name"), t.get("language")): _body_vars(t) for t in rows})
     return _meta_cache["buttons"].get((name, language))
+
+
+def _body_vars(template: dict) -> set[str]:
+    import re
+    body = next((c.get("text", "") for c in template.get("components") or [] if c.get("type") == "BODY"), "")
+    return set(re.findall(r"\{\{\s*(\w+)\s*\}\}", body))
+
+
+async def approved_vars(cfg, name: str, language: str) -> set[str] | None:
+    """The variables the approved template's body really has, or None when
+    Meta can't be read (then all of ours are sent)."""
+    if await _approved_buttons(cfg, name, language) is None and (name, language) not in _meta_cache["vars"]:
+        return None
+    return _meta_cache["vars"].get((name, language))
 
 
 def _buttons_to_send(tpl: dict, approved: list[dict] | None) -> set[int] | None:
