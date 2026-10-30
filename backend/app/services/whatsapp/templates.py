@@ -60,6 +60,31 @@ TEMPLATES: list[dict] = [
                     {"type": "quick_reply", "text": "Change Slot", "optional": True}],
     },
     {
+        "key": "A6", "name": "payment_link", "label": "₹99 payment link", "recipient": "Customer",
+        "trigger": "Telecaller taps Send ₹99 payment link after a call",
+        "params": [("customer_name", "Rahul"), ("store_name", "Kerala Trivandrum"), ("mobile_model", "Galaxy S24"),
+                   ("visit_time", "Sat 1 Nov, 11:30 AM"), ("amount", "99")],
+        "body": "Hi {{customer_name}},\n\nAs discussed on the call, here is the link to reserve your priority slot "
+                "with Break Protection.\n\nStore: {{store_name}}\nModel: {{mobile_model}}\nVisit: {{visit_time}}\n"
+                "Amount: ₹{{amount}}\n\nTap Pay below to complete the booking. The link is valid for 24 hours.\n\n"
+                "Team Break Protection",
+        # the link is ours (/public/pay/<token>): it notes the open, then goes to Razorpay
+        "buttons": [{"type": "url", "text": "Pay", "url": "https://dash.breakprotection.com/api/v1/public/pay/{{1}}",
+                     "sample": "k3v9q2x7"}],
+    },
+    {
+        "key": "A7", "name": "payment_request", "label": "₹99 pay inside WhatsApp", "recipient": "Customer",
+        "trigger": "Telecaller sends the ₹99 request after a call (Pay inside WhatsApp)",
+        "order_payment": True,  # the button carries the order; sent from a lead, not the Test tab
+        "params": [("customer_name", "Rahul"), ("store_name", "Kerala Trivandrum"), ("mobile_model", "Galaxy S24"),
+                   ("visit_date", "Sat, 1 Nov 2026"), ("visit_time", "11:30 AM")],
+        # worded as a plain update on the customer's own booking request, so Meta files it as Utility
+        "body": "Hi {{customer_name}},\n\nPayment is pending for your booking request.\n\nStore: {{store_name}}\n"
+                "Model: {{mobile_model}}\nVisit date: {{visit_date}}\nVisit time: {{visit_time}}\nAmount due: ₹99\n\n"
+                "Tap Review and Pay to complete the payment for this booking.",
+        "buttons": [{"type": "order_details", "text": "Review and Pay"}],
+    },
+    {
         "key": "B1", "name": "telecaller_new_lead", "label": "New lead alert", "recipient": "Telecaller",
         "trigger": "When a lead is given to them (a night lead: at hand-over)",
         "params": [("lead_name", "Priya"), ("lead_source", "PM"), ("received_time", "11:02 AM IST")],
@@ -165,6 +190,12 @@ def build_components(t: dict, values: dict[str, str], button_values: dict[int, s
         elif b["type"] == "quick_reply":
             components.append({"type": "button", "sub_type": "quick_reply", "index": str(i),
                                "parameters": [{"type": "payload", "payload": f"{payload_prefix}:{t['key']}:{i}"}]})
+        elif b["type"] == "order_details":  # Review and Pay: the order rides on the button
+            order = (button_values or {}).get(i)
+            if not isinstance(order, dict):
+                raise ValueError("Review and Pay needs the order (send it from a lead)")
+            components.append({"type": "button", "sub_type": "order_details", "index": str(i),
+                               "parameters": [{"type": "action", "action": {"order_details": order}}]})
         elif b["type"] == "flow":
             components.append({"type": "button", "sub_type": "flow", "index": str(i),
                                "parameters": [{"type": "action", "action": {"flow_token": f"{payload_prefix}:{t['key']}"}}]})

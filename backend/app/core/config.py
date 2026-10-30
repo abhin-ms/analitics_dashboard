@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     META_ACCESS_TOKEN: str = ""
     META_PAGE_ID: str = ""
     META_GRAPH_VERSION: str = "v26.0"
+    # Razorpay: the ₹99 payment link a telecaller sends after a call
+    # (services/crm/payment_links.py). Key id + secret from Razorpay →
+    # Account & Settings → API keys; the webhook secret is the one typed when
+    # adding the webhook (…/api/v1/public/razorpay/webhook, events
+    # payment_link.paid / expired / cancelled). Empty = the button is hidden.
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    # Pay inside WhatsApp (Meta Payments API, India): the payment
+    # configuration's name in WhatsApp Manager → Payment configurations
+    # (e.g. "BreakProtection"). Set = "Review and Pay" is offered and is the
+    # default for Indian numbers; empty = the payment link only.
+    WHATSAPP_PAY_CONFIG: str = ""
+    PAYMENT_LINK_AMOUNT: int = 99
+    PAYMENT_LINK_HOURS: int = 24
     SMARTSERVICE_MCP_URL: str = "https://smartserviceapitemp.azurewebsites.net/mcp"
     SMARTSERVICE_CLIENT_ID: str = "Abhin"
     SMARTSERVICE_CLIENT_SECRET: str = ""

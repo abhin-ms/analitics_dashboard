@@ -11,6 +11,7 @@ import {
   downloadExport, useCrmLeads, useCrmMeta, useDeleteView, useSaveView, useSavedViews, useStoreRematch,
 } from "../api";
 import { PREMIUM_COLOR, PRIORITIES, SOURCE_OPTIONS, STAGES, accentStyle, rowAccent, sourceColor, stageMeta } from "../statusConfig";
+import { PayBadge } from "../components/PaymentLink";
 import type { CrmLead } from "../types";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { openLead } from "../components/LeadDrawer";
@@ -132,6 +133,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
   const tabDefs = [
     { key: "all", label: "All leads" }, { key: "mine", label: "My leads" }, { key: "today", label: "Today" },
     { key: "overdue", label: "Overdue" }, { key: "unassigned", label: "Unassigned" }, { key: "new", label: "New" },
+    { key: "paid_call", label: "Paid via call" },
   ].map((t) => ({ key: t.key, label: <>{t.label}{data?.tab_counts?.[t.key] != null && <span className="ml-1 text-[11px] opacity-70">{data.tab_counts[t.key]}</span>}</> }))
     .concat(meta?.can.failed_payments ? [{ key: "failed", label: <>Failed payments</> }] : []);
 
@@ -157,6 +159,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
           {l.is_urgent && <Flame size={12} className="inline ml-1 text-rose-400" />}
           <div className="flex flex-wrap gap-1 mt-0.5">
             {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
+            <PayBadge lead={l} />
             <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
           </div>
           <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.lead_source || "—"}</p>
@@ -216,6 +219,7 @@ export default function LeadsPage({ embedded = false }: { embedded?: boolean } =
             <button onClick={() => openLead(l.id)} className="font-semibold truncate cursor-pointer text-left text-blue-400" style={rowAccent(l) ? { color: rowAccent(l)! } : undefined}>{l.full_name}</button>
             <div className="flex flex-wrap gap-1">
               {l.is_premium && <Pill label="Premium · ₹99 paid" color={PREMIUM_COLOR} />}
+              <PayBadge lead={l} />
               <Pill label={<span className="inline-flex items-center gap-1"><SourceIcon source={l.source} />{l.source_label}</span>} color={sourceColor(l)} />
             </div>
             <p className="text-[11px] text-[var(--text-muted)]">{storeLine(l)} · {l.owner_name || "Unassigned"}{l.in_night_queue ? " · night lead" : ""}{l.phone_model ? ` · ${l.phone_model}` : ""}</p>

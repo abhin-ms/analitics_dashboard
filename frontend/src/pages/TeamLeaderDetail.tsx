@@ -9,6 +9,7 @@ import { api } from "@/lib/apiClient";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 import { localDateStr } from "@/lib/utils";
+import { CallPayments } from "@/features/crm/components/PaymentLink";
 
 // Week colours follow the client's design: W1 blue, W2 purple, W3 teal, W4 amber.
 const WEEK_COLORS = ["#3b82f6", "#a855f7", "#14b8a6", "#f59e0b"];
@@ -362,6 +363,7 @@ export default function TeamLeaderDetail() {
         </div>
 
         {id && <TelecallingPerformance tlId={id} />}
+        {id && <CallPayments tlId={Number(id)} />}
       </div>
     </ErrorBoundary>
   );

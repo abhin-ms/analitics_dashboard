@@ -1162,3 +1162,37 @@ class WhatsAppMessage(Base):
     __table_args__ = (
         Index("ix_wa_messages_created", "created_at"),
     )
+
+
+# ── Payment links (₹99 slot paid after a telecaller's call) ─────────
+class PaymentLink(Base):
+    """A Razorpay payment link a telecaller sent a lead on WhatsApp after a
+    call (see services/crm/payment_links.py). status: sent → paid, or
+    expired / cancelled / failed. Website bookings are not here — they are
+    paid on the website (TeleCallLead.is_premium)."""
+    __tablename__ = "payment_links"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    sent_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    token = Column(String(40), nullable=False, unique=True)          # our short link: /public/pay/<token>
+    mode = Column(String(12), nullable=False, default="link")        # link (Razorpay page) | whatsapp (Review and Pay)
+    reference_id = Column(String(40), nullable=True, unique=True)    # the WhatsApp order's reference (mode whatsapp)
+    rzp_link_id = Column(String(60), nullable=True, unique=True)     # plink_…
+    short_url = Column(String(300), nullable=True)                   # Razorpay's payment page
+    amount = Column(Integer, nullable=False, default=99)             # rupees
+    status = Column(String(20), nullable=False, default="sent")      # sent | paid | expired | cancelled | failed
+    customer_name = Column(String(200), nullable=True)
+    customer_phone = Column(String(30), nullable=True)
+    phone_model = Column(String(120), nullable=True)
+    service = Column(String(120), nullable=True)
+    store_id = Column(Integer, ForeignKey("stores.id", ondelete="SET NULL"), nullable=True)
+    visit_at = Column(DateTime, nullable=True)                       # naive UTC
+    expires_at = Column(DateTime, nullable=True)
+    whatsapp_message_id = Column(Integer, ForeignKey("whatsapp_messages.id", ondelete="SET NULL"), nullable=True)
+    payment_id = Column(String(60), nullable=True)                   # pay_…
+    paid_amount = Column(Integer, nullable=True)
+    error = Column(String(300), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    opened_at = Column(DateTime, nullable=True)
+    paid_at = Column(DateTime, nullable=True, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -177,7 +177,7 @@ async def test_test_send_and_delivery_statuses(env):
     assert r.status_code == 400 and "Setup" in r.json()["detail"]
     await _setup(c)
     templates = (await c.get("/api/v1/whatsapp/templates")).json()
-    assert len(templates["templates"]) == 8 and templates["meta_checked"]  # A1–A5, B1, B2, C1 (CEO report)
+    assert len(templates["templates"]) == 10 and templates["meta_checked"]  # A1–A7, B1, B2, C1 (CEO report)
     assert templates["templates"][0]["meta"][0]["status"] == "APPROVED"
     assert templates["templates"][0]["meta"][0]["buttons"] == []
     b2 = next(t for t in templates["templates"] if t["name"] == "lead_not_attended")
@@ -457,3 +457,213 @@ def test_received_time_is_ist_12_hour():
     assert received_label(datetime(2026, 10, 29, 3, 35), now) == "9:05 AM IST"
     assert received_label(datetime(2026, 10, 28, 17, 32), now) == "28 Oct, 11:02 PM IST"  # last night
     assert received_label(datetime(2025, 12, 31, 6, 0), now) == "31 Dec 2025, 11:30 AM IST"
+
+
+@pytest.mark.asyncio
+async def test_payment_link_send_open_paid_and_reports(env, monkeypatch):
+    """After a call: the form is filled from the lead, Send makes a Razorpay
+    link and sends WhatsApp A6 with our Pay link; opening it is noted;
+    Razorpay's signed webhook marks it paid — lead Hot, visit booked,
+    everyone told — and the reports count it per telecaller."""
+    import hashlib
+    import hmac
+    import json as _json
+    from datetime import datetime, timedelta
+    from app.core.config import settings
+    from app.models.models import CrmAlert, PaymentLink, TeleAppointment, TeleCallLead, User
+    from app.services.crm import payment_links as pay
+    as_user, ids, calls, Session = env
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "rzp_test_x")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "s")
+    monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "whsec")
+    monkeypatch.setattr(settings, "WHATSAPP_PAY_CONFIG", "")  # this test is the payment link
+    rzp = []
+
+    async def fake_rzp(method, path, json=None):
+        rzp.append((method, path, json))
+        if path == "payment_links":
+            return {"id": "plink_1", "short_url": "https://rzp.io/rzp/abc", "status": "created"}
+        return {"status": "cancelled"}
+    monkeypatch.setattr(pay, "_rzp", fake_rzp)
+    async with Session() as db:
+        tc = await db.get(User, ids["tc"])
+        tc.team_leader_id, tc.store_id = ids["tl"], ids["store"]
+        lead = TeleCallLead(sheet_tl_name="Website", spreadsheet_id="", full_name="Rahul Krishnan", phone="9847000058",
+                            owner_user_id=ids["tc"], store_id=ids["store"], status="Will Visit", stage="qualified",
+                            phone_model="Galaxy S24", source_channel="instagram", created_at=datetime.utcnow())
+        db.add(lead)
+        await db.commit()
+        lead_id = lead.id
+    c = as_user("admin")
+    await _setup(c)
+    t = as_user("tc")
+
+    form = (await t.get(f"/api/v1/crm/leads/{lead_id}/payment-link")).json()
+    assert form["enabled"] and form["can_send"] and form["form"]["customer_name"] == "Rahul Krishnan"
+    assert form["form"]["phone_model"] == "Galaxy S24" and form["form"]["store_id"] == ids["store"]
+    visit = (datetime.utcnow() + timedelta(days=2)).replace(hour=6, minute=0, second=0, microsecond=0)  # 11:30 IST
+    r = await t.post(f"/api/v1/crm/leads/{lead_id}/payment-link", json={
+        "customer_name": "Rahul K", "customer_phone": "98470 00058", "phone_model": "Galaxy S24",
+        "service": "Screen + back glass", "store_id": ids["store"], "visit_at": (visit + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%dT%H:%M")})
+    assert r.status_code == 200, r.text
+    link = r.json()["link"]
+    assert link["status"] == "sent" and link["amount"] == 99
+    created = next(j for m, p, j in rzp if p == "payment_links")
+    assert created["amount"] == 9900 and created["customer"]["contact"] == "+919847000058"
+    sent = calls[-1][2]["json"]["template"]
+    assert sent["name"] == "payment_link"
+    body, button = sent["components"]
+    assert {"type": "text", "parameter_name": "customer_name", "text": "Rahul"} in body["parameters"]
+    async with Session() as db:
+        pl = (await db.execute(select(PaymentLink))).scalar_one()
+        token = pl.token
+        assert button["parameters"] == [{"type": "text", "text": token}]
+        assert (await db.get(TeleCallLead, lead_id)).service_type == "Screen + back glass"   # saved to the lead
+
+    r = await c.get(f"/api/v1/public/pay/{token}", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "https://rzp.io/rzp/abc"
+
+    event = {"event": "payment_link.paid", "payload": {
+        "payment_link": {"entity": {"id": "plink_1", "status": "paid"}},
+        "payment": {"entity": {"id": "pay_123", "amount": 9900, "created_at": int(datetime.utcnow().timestamp())}}}}
+    raw = _json.dumps(event).encode()
+    assert (await c.post("/api/v1/public/razorpay/webhook", content=raw,
+                         headers={"x-razorpay-signature": "bad"})).status_code == 401
+    good = hmac.new(b"whsec", raw, hashlib.sha256).hexdigest()
+    for _ in range(2):  # Razorpay retries: once only
+        r = await c.post("/api/v1/public/razorpay/webhook", content=raw, headers={"x-razorpay-signature": good})
+        assert r.status_code == 200
+    async with Session() as db:
+        pl = (await db.execute(select(PaymentLink))).scalar_one()
+        assert pl.status == "paid" and pl.payment_id == "pay_123" and pl.opened_at is not None
+        lead = await db.get(TeleCallLead, lead_id)
+        assert lead.stage == "paid_advance" and lead.priority == "hot" and lead.status == "Appointment"
+        assert (await db.execute(select(TeleAppointment).where(TeleAppointment.lead_id == lead_id))).scalars().first()
+        told = {a.recipient_user_id for a in (await db.execute(select(CrmAlert).where(CrmAlert.kind == "payment_paid"))).scalars()}
+        assert {ids["tc"], ids["tl"], ids["admin"]} <= told and len(told) == len(set(told))
+    assert "already paid" in (await c.get(f"/api/v1/public/pay/{token}")).text
+
+    page = (await t.get("/api/v1/crm/leads", params={"tab": "paid_call"})).json()
+    assert page["tab_counts"]["paid_call"] == 1 and page["items"][0]["call_payment"]["status"] == "paid"
+    summary = (await as_user("admin").get("/api/v1/crm/payment-links/summary")).json()
+    assert summary["level"] == "admin" and summary["total"]["sent"] == 1 and summary["total"]["paid"] == 1
+    assert summary["team_leaders"][0]["name"] == "Tara Lead" and summary["telecallers"][0]["name"] == "Sureka K"
+    mine = (await as_user("tc").get("/api/v1/crm/payment-links/summary")).json()
+    assert mine["level"] == "own" and mine["total"]["paid"] == 1
+    paid = (await as_user("tl").get("/api/v1/crm/payment-links", params={"user_id": ids["tc"]})).json()
+    assert paid["total"] == 1 and paid["items"][0]["customer_name"] == "Rahul K" and paid["items"][0]["store"] == "Indiranagar"
+
+
+@pytest.mark.asyncio
+async def test_pay_inside_whatsapp_review_and_pay(env, monkeypatch):
+    """Pay inside WhatsApp: template A7 with the Review and Pay button
+    carrying the ₹99 order (our Razorpay payment configuration); WhatsApp's
+    payment webhook is confirmed with Meta's lookup before the lead is paid;
+    a non-Indian number gets a payment link instead."""
+    import json as _json
+    from datetime import datetime
+    from app.core.config import settings
+    from app.models.models import PaymentLink, TeleCallLead
+    from app.services.whatsapp import client as wa_client
+    as_user, ids, calls, Session = env
+    monkeypatch.setattr(settings, "WHATSAPP_PAY_CONFIG", "BreakProtection")
+    monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "")  # WhatsApp payments don't need the link keys
+    looked = {"status": "pending"}
+    orig = wa_client._call
+
+    async def fake_call(cfg, method, path, **kw):
+        if "/payments/BreakProtection/" in path:
+            calls.append((method, path, kw))
+            return {"payments": [{"reference_id": path.rsplit("/", 1)[1], "status": looked["status"],
+                                  "amount": {"value": 9900, "offset": 100},
+                                  "transactions": [{"id": "order_1", "pg_transaction_id": "pay_W1", "status": "success",
+                                                    "updated_timestamp": int(datetime.utcnow().timestamp())}]}]}
+        return await orig(cfg, method, path, **kw)
+    monkeypatch.setattr(wa_client, "_call", fake_call)
+    async with Session() as db:
+        lead = TeleCallLead(sheet_tl_name="Website", spreadsheet_id="", full_name="Rahul Krishnan", phone="9847000058",
+                            owner_user_id=ids["tc"], store_id=ids["store"], status="Will Visit", stage="qualified",
+                            source_channel="instagram", created_at=datetime.utcnow())
+        db.add(lead)
+        await db.commit()
+        lead_id = lead.id
+    await _setup(as_user("admin"))
+
+    form = (await as_user("tc").get(f"/api/v1/crm/leads/{lead_id}/payment-link")).json()
+    assert form["modes"] == {"whatsapp": True, "link": False} and form["form"]["mode"] == "whatsapp"
+    r = await as_user("tc").post(f"/api/v1/crm/leads/{lead_id}/payment-link",
+                                 json={"customer_name": "Rahul", "customer_phone": "9847000058", "store_id": ids["store"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["link"]["mode"] == "whatsapp"
+    sent = next(kw["json"] for m, p, kw in reversed(calls) if p.endswith("/messages"))["template"]
+    assert sent["name"] == "payment_request"
+    names = {p["parameter_name"] for p in sent["components"][0]["parameters"]}
+    assert names == {"customer_name", "store_name", "mobile_model", "visit_date", "visit_time"}
+    assert sent["components"][0]["type"] == "body"                      # no header
+    button = sent["components"][1]
+    assert button["sub_type"] == "order_details" and button["index"] == "0"
+    order = button["parameters"][0]["action"]["order_details"]
+    pg = order["payment_settings"][0]["payment_gateway"]
+    assert pg["type"] == "razorpay" and pg["configuration_name"] == "BreakProtection"
+    assert order["total_amount"] == {"value": 9900, "offset": 100} == order["order"]["subtotal"]
+    async with Session() as db:
+        ref = (await db.execute(select(PaymentLink))).scalar_one().reference_id
+    assert order["reference_id"] == ref
+
+    async def webhook():
+        raw = _json.dumps({"object": "whatsapp_business_account", "entry": [{"changes": [{"field": "messages", "value": {
+            "statuses": [{"id": "x", "type": "payment", "status": "captured",
+                          "payment": {"reference_id": ref, "amount": {"value": 9900, "offset": 100}}}]}}]}]}).encode()
+        sig = "sha256=" + hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        return await as_user("admin").post("/api/v1/public/whatsapp/webhook", content=raw,
+                                           headers={"x-hub-signature-256": sig, "content-type": "application/json"})
+
+    assert (await webhook()).status_code == 200      # Meta's lookup still says pending: not paid
+    async with Session() as db:
+        assert (await db.execute(select(PaymentLink))).scalar_one().status == "sent"
+    looked["status"] = "captured"
+    assert (await webhook()).status_code == 200
+    async with Session() as db:
+        pl = (await db.execute(select(PaymentLink))).scalar_one()
+        assert pl.status == "paid" and pl.payment_id == "pay_W1"
+        assert (await db.get(TeleCallLead, lead_id)).stage == "paid_advance"
+
+    r = await as_user("tc").post(f"/api/v1/crm/leads/{lead_id}/payment-link",
+                                 json={"customer_name": "Rahul", "customer_phone": "+971 50 123 4567", "mode": "whatsapp"})
+    assert r.status_code == 400 and "Indian" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_payment_settings_saved_from_the_dashboard(env, monkeypatch):
+    """Settings → WhatsApp → Payments: saved in the database with the
+    secrets encrypted and shown masked; a blank secret keeps the saved one;
+    the payment code uses them with nothing in the server's environment;
+    telecallers can't see or change them."""
+    from app.core.config import settings
+    from app.models.models import Setting
+    from app.services.crm import payment_links as pay
+    for k in ("WHATSAPP_PAY_CONFIG", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"):
+        monkeypatch.setattr(settings, k, "")
+    as_user, ids, calls, Session = env
+    c = as_user("admin")
+    empty = (await c.get("/api/v1/crm/payment-settings")).json()
+    assert empty["modes"] == {"whatsapp": False, "link": False}
+    r = await c.put("/api/v1/crm/payment-settings", json={
+        "whatsapp_config": "BreakProtection", "key_id": "rzp_test_abc123", "key_secret": "sekret-1234567890",
+        "webhook_secret": "whsec-abcdef12"})
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["whatsapp_config"] == "BreakProtection" and v["key_secret_masked"].endswith("7890")
+    assert "sekret" not in str(v) and v["modes"] == {"whatsapp": True, "link": True} and v["test_keys"]
+    assert v["webhook_url"].endswith("/api/v1/public/razorpay/webhook")
+    async with Session() as db:
+        stored = (await db.get(Setting, "payments.config")).value
+        assert "sekret" not in stored and "whsec" not in stored                 # encrypted at rest
+        s = await pay.load(db)
+        assert (s.key_secret, s.webhook_secret, pay.enabled()) == ("sekret-1234567890", "whsec-abcdef12", True)
+    r = await c.put("/api/v1/crm/payment-settings", json={"key_secret": "", "amount": 149})  # blank keeps it
+    assert r.json()["key_secret_masked"].endswith("7890") and r.json()["amount"] == 149
+    assert (await c.put("/api/v1/crm/payment-settings", json={"key_id": "abc"})).status_code == 400
+    t = as_user("tc")
+    assert (await t.get("/api/v1/crm/payment-settings")).status_code == 403
+    assert (await t.put("/api/v1/crm/payment-settings", json={"amount": 1})).status_code == 403

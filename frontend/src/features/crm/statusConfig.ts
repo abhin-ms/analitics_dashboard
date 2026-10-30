@@ -125,6 +125,7 @@ export const ALERT_KIND_LABELS: Record<string, string> = {
   sale_matched: "Sale matched",
   premium_lead: "Premium website lead",
   hot_lead: "Hot lead",
+  payment_paid: "Paid ₹99 (payment link)",
 };
 
 /** Premium = paid the ₹99 website reservation. Shown in green everywhere. */

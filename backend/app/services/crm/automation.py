@@ -201,8 +201,20 @@ async def run_automation_tick(db: AsyncSession, now=None) -> dict:
                     body=r.body, dedupe_key=f"weekly_admin:{r.id}:{aid}", out=new_alerts,
                 )
 
+    # ── D. ₹99 payment links past their expiry: ask Razorpay (a missed webhook) ──
+    paid_leads: list[int] = []
+    if now.minute % 10 == 0:
+        from . import payment_links
+        before = len(new_alerts)
+        new_alerts += await payment_links.sweep(db, now)
+        paid_leads = sorted({a.lead_id for a in new_alerts[before:] if a.lead_id})
+
     await resolve_stale_alerts(db, now)
     await db.commit()
+    if paid_leads:
+        from .payment_links import after_paid
+        for lid in paid_leads:
+            await after_paid(lid)
     if queue_notes:
         from .notify import emit_notifications
         await emit_notifications(queue_notes)
