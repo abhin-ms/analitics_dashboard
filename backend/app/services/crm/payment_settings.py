@@ -28,7 +28,17 @@ class PaySettings:
     webhook_secret: str = ""
     amount: int = 99
     hours: int = 24
+    # the business on the order (Meta asks for an importer and its address on
+    # every item of an order that has no product catalog)
+    business_name: str = "Break Protection"
+    address_line1: str = ""
+    city: str = ""
+    state: str = ""
+    postal_code: str = ""
     updated_at: str | None = None
+
+    def address_ready(self) -> bool:
+        return bool(self.business_name and self.address_line1 and self.city and self.postal_code)
 
 
 def _env() -> PaySettings:
@@ -64,6 +74,9 @@ async def get_pay_settings(db: AsyncSession) -> PaySettings:
         webhook_secret=_dec(d.get("webhook_secret_enc", "")) or env.webhook_secret,
         amount=int(d.get("amount") or env.amount),
         hours=int(d.get("hours") or env.hours),
+        business_name=d.get("business_name") or "Break Protection",
+        address_line1=d.get("address_line1", ""), city=d.get("city", ""), state=d.get("state", ""),
+        postal_code=d.get("postal_code", ""),
         updated_at=d.get("updated_at"),
     )
 
@@ -72,7 +85,7 @@ async def save_pay_settings(db: AsyncSession, data: dict, user_id: int | None) -
     """Save from the form. A secret left blank keeps the saved one; send
     clear_<name>=True to remove it."""
     d = await _stored(db)
-    for k in ("whatsapp_config", "key_id"):
+    for k in ("whatsapp_config", "key_id", "business_name", "address_line1", "city", "state", "postal_code"):
         if data.get(k) is not None:
             d[k] = str(data[k]).strip()
     for k in ("key_secret", "webhook_secret"):

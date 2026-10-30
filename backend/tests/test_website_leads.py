@@ -125,7 +125,18 @@ async def test_failed_payments_are_kept_under_failed_payments_not_leads(env):
     later = (await client.get("/api/v1/crm/failed-payments?show=paid_later")).json()["items"]
     assert [(x["name"], x["paid_lead_id"]) for x in later] == [("Anita Das", lead_id)]
 
-    state["user"] = ids["sureka"]  # telecallers don't get the list
+    await post({**BOOKING, "full_name": "Meera Shah", "mobile": "9820000001", "entry_id": "WEB-3003",
+                "state": "Maharashtra", "preferred_store": "Mumbai Bandra", "payment_status": "failed", "payment_id": ""})
+    async with Session() as db:  # the store is matched once, when the booking arrives
+        stores = {x.external_ref: x.store_id for x in (await db.execute(select(LeadSubmission))).scalars()}
+        assert stores["website:WEB-3003"] is not None and stores["website:WEB-2002"] is not None
+    assert {x["name"] for x in (await client.get("/api/v1/crm/failed-payments")).json()["items"]} == {"Ravi K", "Meera Shah"}
+
+    for who in ("sureka", "tl"):  # Kochi's telecaller and team leader: Kochi's failed payments, not Mumbai's
+        state["user"] = ids[who]
+        assert (await client.get("/api/v1/crm/meta")).json()["can"]["failed_payments"]
+        assert [x["name"] for x in (await client.get("/api/v1/crm/failed-payments")).json()["items"]] == ["Ravi K"]
+    state["user"] = ids["other"]  # a telecaller with no store: nothing
     assert (await client.get("/api/v1/crm/failed-payments")).status_code == 403
     assert not (await client.get("/api/v1/crm/meta")).json()["can"]["failed_payments"]
 

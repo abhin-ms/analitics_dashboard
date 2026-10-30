@@ -291,7 +291,9 @@ async def ingest_website_lead(db: AsyncSession, payload: dict, *, remote_ip: str
         return {"ok": False, "status": "invalid", "detail": "full_name and phone (10+ digits) are required"}
     if not is_paid(payload):
         state, reason = pick(payload, "payment_status").lower() or "not paid", pick(payload, "payment_error")
-        log(FAILED_STATUS, f"Payment {state}{f': {reason}' if reason else ''} — kept under Failed payments, not a lead")
+        sub = log(FAILED_STATUS, f"Payment {state}{f': {reason}' if reason else ''} — kept under Failed payments, not a lead")
+        store = await match_store(db, pick(payload, "store"), pick(payload, "store_id"))
+        sub.store_id = store.id if store else None  # its store's team sees it under Failed payments
         await db.commit()
         return {"ok": True, "status": "saved_unpaid", "detail": "Saved under Failed payments (only paid bookings become leads)"}
     if ext:

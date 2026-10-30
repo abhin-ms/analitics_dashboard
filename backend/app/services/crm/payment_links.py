@@ -191,6 +191,8 @@ async def send_link(db: AsyncSession, lead: TeleCallLead, user: User, form: dict
     mode = form.get("mode") or ("whatsapp" if whatsapp_pay_ready() and _indian(to) else "link")
     if mode == "whatsapp" and not whatsapp_pay_ready():
         raise PaymentLinkError("Pay inside WhatsApp isn't set up (WhatsApp payment configuration missing)")
+    if mode == "whatsapp" and not _S.address_ready():
+        raise PaymentLinkError("Pay inside WhatsApp needs the business address (Settings → WhatsApp → Payments)")
     if mode == "whatsapp" and not _indian(to):
         raise PaymentLinkError("Pay inside WhatsApp works for Indian (+91) numbers only — send a payment link instead")
     if mode == "link" and not configured():
@@ -297,8 +299,13 @@ def order_details(pl: PaymentLink, store_label: str, lead_id: int) -> dict:
             "status": "pending",
             "expiration": {"timestamp": str(int((pl.expires_at - datetime(1970, 1, 1)).total_seconds())),
                            "description": "This payment request has expired. Ask us for a new one."},
+            # no product catalog, so Meta wants the origin and the importer on each item
             "items": [{"retailer_id": "priority-slot", "name": f"Priority slot · {store_label}"[:60],
-                       "amount": paise, "quantity": 1}],
+                       "amount": paise, "quantity": 1, "country_of_origin": "India",
+                       "importer_name": _S.business_name,
+                       "importer_address": {"address_line1": _S.address_line1, "city": _S.city,
+                                            **({"zone_code": _S.state} if _S.state else {}),
+                                            "postal_code": _S.postal_code, "country_code": "IN"}}],
             "subtotal": paise, "tax": {"value": 0, "offset": 100},
         },
     }

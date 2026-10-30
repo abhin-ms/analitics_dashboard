@@ -439,7 +439,9 @@ class NewLeadRequest(BaseModel):
 
 
 def _can_see_failed_payments(scope: CrmScope) -> bool:
-    return scope.is_admin or scope.global_view
+    """Admins and full-Leads roles see every store's; a team leader, a
+    telecaller and a store account see their own stores'."""
+    return scope.is_admin or scope.global_view or (scope.has_access and bool(scope.store_ids))
 
 
 @router.get("/failed-payments")
@@ -450,14 +452,26 @@ async def failed_payments(days: int = Query(30, ge=1, le=365), show: str = Query
     "Paid later" when the same booking or phone number paid afterwards."""
     from ...models.models import LeadSubmission
     from ...services.crm.intake import FAILED_STATUS, pick
+    from ...services.crm.intake import match_store
     scope = await require_scope(db, user)
     if not _can_see_failed_payments(scope):
-        raise HTTPException(status_code=403, detail="Only admins can see failed payments")
+        raise HTTPException(status_code=403, detail="Failed payments are for admins and the store's own team")
+    everything = scope.is_admin or scope.global_view
     since = utcnow() - timedelta(days=days)
     subs = (await db.execute(select(LeadSubmission).where(
         LeadSubmission.channel == "website",
         LeadSubmission.status.in_((FAILED_STATUS, "rejected_unpaid")),  # rejected_unpaid: kept before this list existed
         LeadSubmission.received_at >= since).order_by(LeadSubmission.received_at.desc()))).scalars().all()
+    # rows from before stores were matched on arrival: match once and keep it
+    unmatched = [x for x in subs if x.store_id is None and pick(x.payload or {}, "store")]
+    for x in unmatched:
+        found = await match_store(db, pick(x.payload or {}, "store"), pick(x.payload or {}, "store_id"))
+        x.store_id = found.id if found else None
+    if any(x.store_id for x in unmatched):
+        await db.commit()
+    if not everything:  # only their own stores' bookings; an unmatched one is the admins'
+        mine = set(scope.store_ids)
+        subs = [x for x in subs if x.store_id in mine]
     paid = (await db.execute(select(TeleCallLead.id, TeleCallLead.external_ref, TeleCallLead.phone, TeleCallLead.created_at)
                              .where(TeleCallLead.source_channel == "website", TeleCallLead.created_at >= since))).all()
     paid_ref = {ref: lid for lid, ref, _, _ in paid if ref}

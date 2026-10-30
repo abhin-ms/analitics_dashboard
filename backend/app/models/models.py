@@ -1009,6 +1009,9 @@ class LeadSubmission(Base):
     message = Column(String(300), nullable=True)
     payload = Column(JSON, nullable=True)
     lead_id = Column(Integer, ForeignKey("tele_call_leads.id", ondelete="SET NULL"), nullable=True)
+    # the store the booking named, matched once when it arrives (failed payments
+    # are shown to that store's team without matching again on every load)
+    store_id = Column(Integer, ForeignKey("stores.id", ondelete="SET NULL"), nullable=True, index=True)
     remote_ip = Column(String(60), nullable=True)
     received_at = Column(DateTime, default=datetime.utcnow)
 
