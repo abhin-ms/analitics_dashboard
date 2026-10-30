@@ -3,7 +3,7 @@ import { SourceIcon } from "@/components/shared/BrandIcon";
 import { create } from "zustand";
 import {
   X, PhoneCall, CalendarPlus, UserCog, Clock, Flame, AlertTriangle, History, Smartphone, Save, PencilLine, Receipt,
-  Play, Download,
+  Play, Download, CreditCard,
 } from "lucide-react";
 import { useToast } from "@/components/shared/Toast";
 import { api } from "@/lib/apiClient";
@@ -12,6 +12,7 @@ import { useCrmMeta, useLeadDetail, usePatchLead } from "../api";
 import { ATTENDANCE, FOLLOWUP_KIND_LABELS, NO_STATUS, PREMIUM_COLOR, PRIORITIES, STAGES, STATUS_OPTIONS, sourceColor } from "../statusConfig";
 import { fmtDateTime, fmtDue, fmtINR } from "../format";
 import { AssignDialog, BookAppointmentDialog, LogActivityDialog, ScheduleFollowupDialog } from "./dialogs";
+import { PayBadge, PaymentLinkDialog, PaymentStatus } from "./PaymentLink";
 import { Button, Pill, PriorityBadge, StageBadge, StatusBadge, inputCls } from "./ui";
 
 const BILL_STATUS = {
@@ -122,7 +123,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
   const { data, isLoading, error } = useLeadDetail(leadId);
   const { data: meta } = useCrmMeta();
   const patch = usePatchLead();
-  const [dialog, setDialog] = useState<"" | "log" | "assign" | "appt" | "followup">("");
+  const [dialog, setDialog] = useState<"" | "log" | "assign" | "appt" | "followup" | "pay">("");
   const [device, setDevice] = useState({ phone_model: "", service_type: "", coverage: "Standard" });
   const [note, setNote] = useState("");
   const [billNo, setBillNo] = useState("");
@@ -187,15 +188,22 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
                 {lead.is_urgent && <Pill label={<span className="inline-flex items-center gap-1"><Flame size={10} />Urgent</span>} color="#ef4444" />}
                 {lead.escalated && <Pill label={<span className="inline-flex items-center gap-1"><AlertTriangle size={10} />Escalated</span>} color="#f97316" />}
                 {!lead.from_sheet && <Pill label="App lead" color="#06b6d4" />}
+                <PayBadge lead={lead} />
               </div>
               <div className="flex flex-wrap gap-2">
                 {meta?.can.edit !== false && <>
                   <Button variant="primary" size="sm" onClick={() => setDialog("log")}><PhoneCall size={14} />Log activity</Button>
                   <Button size="sm" onClick={() => setDialog("followup")}><Clock size={14} />Schedule follow-up</Button>
                   <Button size="sm" onClick={() => setDialog("appt")}><CalendarPlus size={14} />Book appointment</Button>
+                  {!lead.is_premium && lead.call_payment?.status !== "paid" && (
+                    <Button size="sm" className="!border-emerald-500/50 !text-emerald-400" onClick={() => setDialog("pay")}>
+                      <CreditCard size={14} />Send ₹99 payment
+                    </Button>
+                  )}
                 </>}
                 {meta?.can.reassign && <Button size="sm" onClick={() => setDialog("assign")}><UserCog size={14} />Assign</Button>}
               </div>
+              <PaymentStatus leadId={lead.id} onSend={meta?.can.edit !== false ? () => setDialog("pay") : undefined} />
             </div>
 
             <div className="px-5 py-3 border-b border-[var(--border-subtle)]">
@@ -348,6 +356,7 @@ export function LeadDrawer({ leadId, onClose }: { leadId: number; onClose: () =>
         )}
 
         {lead && dialog === "log" && <LogActivityDialog lead={lead} open onClose={() => setDialog("")} />}
+        {lead && dialog === "pay" && <PaymentLinkDialog leadId={lead.id} open onClose={() => setDialog("")} />}
         {lead && dialog === "assign" && <AssignDialog leads={[lead]} open onClose={() => setDialog("")} />}
         {lead && dialog === "appt" && <BookAppointmentDialog lead={lead} open onClose={() => setDialog("")} />}
         {lead && dialog === "followup" && <ScheduleFollowupDialog lead={lead} open onClose={() => setDialog("")} />}

@@ -58,6 +58,8 @@ export interface CrmLead {
   first_call_pending: boolean;
   from_sheet: boolean;
   escalated: boolean;
+  /** ₹99 payment link sent after a call (latest; a paid one stays) — not a website booking */
+  call_payment?: { status: "sent" | "paid" | "expired" | "cancelled"; paid_at: string | null; amount: number; sent_at: string | null } | null;
 }
 
 export interface CrmPerson {

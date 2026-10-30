@@ -895,8 +895,106 @@ function SentMessages({ title = "Sent messages", initial, pageSize: firstSize = 
   );
 }
 
+// ── Tab 5: payments (₹99 after a call) ──────────────────────────────
+
+interface PaySettingsView {
+  whatsapp_config: string; key_id: string; key_secret_masked: string; webhook_secret_masked: string;
+  amount: number; hours: number; updated_at: string | null; webhook_url: string;
+  modes: { whatsapp: boolean; link: boolean }; test_keys: boolean;
+}
+
+/** The payment settings an admin types in, instead of server files:
+ * WhatsApp's payment configuration (Review and Pay) and the Razorpay keys. */
+function PaymentsTab() {
+  const toast = useToast();
+  const canEdit = useCanEdit();
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["whatsapp", "payments"], queryFn: () => api.get<PaySettingsView>("/crm/payment-settings") });
+  const [f, setF] = useState({ whatsapp_config: "", key_id: "", key_secret: "", webhook_secret: "", amount: "99", hours: "24" });
+  useEffect(() => {
+    if (data) setF({ whatsapp_config: data.whatsapp_config, key_id: data.key_id, key_secret: "", webhook_secret: "",
+      amount: String(data.amount), hours: String(data.hours) });
+  }, [data]);
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const save = useMutation({
+    mutationFn: () => api.put<PaySettingsView>("/crm/payment-settings", {
+      whatsapp_config: f.whatsapp_config, key_id: f.key_id, key_secret: f.key_secret, webhook_secret: f.webhook_secret,
+      amount: Number(f.amount) || undefined, hours: Number(f.hours) || undefined,
+    }),
+    onSuccess: () => { toast.success("Payment settings saved"); qc.invalidateQueries({ queryKey: ["whatsapp", "payments"] }); },
+    onError: (e) => toast.error(errMsg(e)),
+  });
+  const test = useMutation({
+    mutationFn: () => api.post<{ detail: string }>("/crm/payment-settings/test", {}),
+    onSuccess: (r) => toast.success(r.detail),
+    onError: (e) => toast.error(errMsg(e)),
+  });
+  if (isLoading || !data) return <TableSkeleton />;
+  const ro = !canEdit;
+
+  return (
+    <div className="space-y-4">
+      <InfoNote>
+        Telecallers send a ₹{data.amount} payment request after a call (lead → <b>Send ₹{data.amount} payment</b>).
+        Fill in what you have; secrets are stored encrypted and shown only as their last 4 characters.
+        Leave a secret empty to keep the saved one.
+      </InfoNote>
+
+      <Card>
+        <CardHeader title="Pay inside WhatsApp (Review and Pay)"
+          subtitle={data.modes.whatsapp ? "On: customers pay by UPI inside WhatsApp" : "Off: enter the payment configuration name to turn it on"} />
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Payment configuration name" hint="WhatsApp Manager → Payment configurations, e.g. BreakProtection (exact spelling)">
+            <input id="pay-config" className={inputCls} value={f.whatsapp_config} onChange={set("whatsapp_config")} disabled={ro} placeholder="BreakProtection" />
+          </Field>
+          <div className="text-xs text-[var(--text-muted)] space-y-1 self-center">
+            <p>Also needed: the approved template <b>payment_request</b> (A7, Test templates tab).</p>
+            <p>Payment updates come through the WhatsApp webhook you already set up.</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Razorpay"
+          subtitle={data.modes.link ? `Keys saved${data.test_keys ? " · TEST keys (no real money)" : " · LIVE keys"}` : "Needed for the payment link, and as a backup confirmation for Pay inside WhatsApp"} />
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Key id" hint="Razorpay → Account & Settings → API keys (rzp_test_… or rzp_live_…)">
+            <input id="pay-key-id" className={inputCls} value={f.key_id} onChange={set("key_id")} disabled={ro} placeholder="rzp_live_…" autoComplete="off" />
+          </Field>
+          <Field label="Key secret" hint={data.key_secret_masked ? `Saved: ${data.key_secret_masked} · type to replace` : "Not saved yet"}>
+            <input id="pay-key-secret" type="password" autoComplete="new-password" className={inputCls} value={f.key_secret} onChange={set("key_secret")} disabled={ro} />
+          </Field>
+          <Field label="Webhook secret" hint={data.webhook_secret_masked ? `Saved: ${data.webhook_secret_masked} · type to replace` : "The secret you type when adding the webhook in Razorpay"}>
+            <input id="pay-webhook-secret" type="password" autoComplete="new-password" className={inputCls} value={f.webhook_secret} onChange={set("webhook_secret")} disabled={ro} />
+          </Field>
+          <div className="space-y-1">
+            <CopyField label="Webhook URL (paste in Razorpay → Webhooks)" value={data.webhook_url} />
+            <p className="text-[11px] text-[var(--text-muted)]">Events: payment.captured, payment_link.paid, payment_link.expired, payment_link.cancelled</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Request" subtitle="What the customer is asked to pay" />
+        <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Field label="Amount (₹)"><input id="pay-amount" inputMode="numeric" className={inputCls} value={f.amount} onChange={set("amount")} disabled={ro} /></Field>
+          <Field label="Valid for (hours)"><input id="pay-hours" inputMode="numeric" className={inputCls} value={f.hours} onChange={set("hours")} disabled={ro} /></Field>
+        </div>
+      </Card>
+
+      {canEdit && (
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Button onClick={() => test.mutate()} loading={test.isPending} disabled={!data.modes.link}>Test Razorpay keys</Button>
+          <Button variant="primary" onClick={() => save.mutate()} loading={save.isPending}>Save payment settings</Button>
+        </div>
+      )}
+      {data.updated_at && <p className="text-[11px] text-[var(--text-muted)] text-right">Last saved {fmt12(data.updated_at + "Z")}</p>}
+    </div>
+  );
+}
+
 const TABS = [{ key: "setup", label: "1 · WhatsApp setup" }, { key: "numbers", label: "2 · Numbers" }, { key: "test", label: "3 · Test templates" },
-  { key: "messages", label: "4 · Sent messages" }];
+  { key: "messages", label: "4 · Sent messages" }, { key: "payments", label: "5 · Payments" }];
 
 export default function WhatsAppSettings() {
   // ?tab=numbers opens a tab directly (and survives a reload)
@@ -912,6 +1010,7 @@ export default function WhatsAppSettings() {
         {tab === "numbers" && <NumbersTab />}
         {tab === "test" && <TestTab />}
         {tab === "messages" && <SentMessages />}
+        {tab === "payments" && <PaymentsTab />}
       </div>
     </ErrorBoundary>
   );

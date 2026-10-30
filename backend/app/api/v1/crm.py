@@ -103,8 +103,26 @@ async def store_names(db: AsyncSession, leads) -> dict[int, str]:
     return dict((await db.execute(select(Store.id, Store.name).where(Store.id.in_(ids)))).all())
 
 
+async def payment_states(db: AsyncSession, lead_ids) -> dict[int, dict]:
+    """The latest ₹99 payment link of each lead (sent after a call):
+    {"status": sent|paid|expired|cancelled, "paid_at", "amount"}."""
+    from ...models.models import PaymentLink
+    ids = list({i for i in lead_ids if i})
+    if not ids:
+        return {}
+    out: dict[int, dict] = {}
+    for pl in (await db.execute(select(PaymentLink).where(PaymentLink.lead_id.in_(ids), PaymentLink.status != "failed")
+                                .order_by(PaymentLink.id))).scalars().all():
+        prev = out.get(pl.lead_id)
+        if prev and prev["status"] == "paid":
+            continue  # once paid, a later unpaid link doesn't undo it
+        out[pl.lead_id] = {"status": pl.status, "paid_at": iso_utc(pl.paid_at), "amount": pl.paid_amount or pl.amount,
+                           "sent_at": iso_utc(pl.created_at)}
+    return out
+
+
 def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | None = None,
-             stores: dict[int, str] | None = None) -> dict:
+             stores: dict[int, str] | None = None, payments: dict[int, dict] | None = None) -> dict:
     src = source_key(l)
     return {
         "source": src,
@@ -165,6 +183,8 @@ def lead_row(l: TeleCallLead, names: dict[int, str], first_call_ids: set[int] | 
         "first_call_pending": bool(first_call_ids and l.id in first_call_ids),
         "from_sheet": bool(l.spreadsheet_id),
         "escalated": l.escalated_at is not None,
+        # ₹99 payment link sent after a call (not a website booking)
+        "call_payment": (payments or {}).get(l.id),
     }
 
 
@@ -192,6 +212,9 @@ def tab_clause(tab: str, user_id: int, now: datetime):
         return and_(TeleCallLead.owner_user_id.is_(None), open_stage)
     if tab == "new":
         return func.coalesce(TeleCallLead.status, "") == ""
+    if tab == "paid_call":  # paid the ₹99 with a link sent after a call
+        from ...models.models import PaymentLink
+        return TeleCallLead.id.in_(select(PaymentLink.lead_id).where(PaymentLink.status == "paid"))
     return None
 
 
@@ -341,7 +364,7 @@ async def list_leads(
             status_counts[s] = c
 
     tab_counts = {}
-    for t in ("all", "mine", "today", "overdue", "unassigned", "new"):
+    for t in ("all", "mine", "today", "overdue", "unassigned", "new", "paid_call"):
         tab_counts[t] = int((await db.execute(
             select(func.count(TeleCallLead.id)).where(where(tab_clause(t, user.id, now), other, statusc))
         )).scalar() or 0)
@@ -394,8 +417,9 @@ async def list_leads(
             groups.append({"key": g, "label": label, "count": int(c)})
         groups.sort(key=lambda x: -x["count"])
 
+    pays = await payment_states(db, [l.id for l in leads])
     return {
-        "items": [lead_row(l, names, fc, stores) for l in leads],
+        "items": [lead_row(l, names, fc, stores, pays) for l in leads],
         "total": total, "page": page, "page_size": page_size,
         "status_counts": status_counts, "tab_counts": tab_counts, "groups": groups,
     }
@@ -556,7 +580,7 @@ async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db), user=Depend
         })
     timeline.sort(key=lambda x: x["at"] or "", reverse=True)
     return {
-        "lead": lead_row(lead, names, fc, await store_names(db, [lead])),
+        "lead": lead_row(lead, names, fc, await store_names(db, [lead]), await payment_states(db, [lead.id])),
         "timeline": timeline,
         "followups": [{
             "id": f.id, "kind": f.kind, "due_at": iso_utc(f.due_at), "status": f.status,

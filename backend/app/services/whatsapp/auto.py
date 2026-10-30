@@ -111,7 +111,7 @@ def _buttons_to_send(tpl: dict, approved: list[dict] | None) -> set[int] | None:
     only when it takes a value); None = unknown, send the usual ones."""
     if approved is None:
         return None
-    kinds = {"url": "URL", "quick_reply": "QUICK_REPLY", "flow": "FLOW"}
+    kinds = {"url": "URL", "quick_reply": "QUICK_REPLY", "flow": "FLOW", "order_details": "ORDER_DETAILS"}
     return {i for i, b in enumerate(tpl["buttons"])
             if i < len(approved) and approved[i]["type"] == kinds.get(b["type"])
             and (b["type"] != "url" or approved[i]["dynamic"])}

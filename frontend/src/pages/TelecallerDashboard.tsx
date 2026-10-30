@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { STATUS_COLORS } from "@/features/crm/statusConfig";
 import { TelecallerCrmPanel } from "@/features/crm/components/DashboardPanels";
+import { CallPayments } from "@/features/crm/components/PaymentLink";
 import SocialSnapshotCard from "@/components/dashboard/SocialSnapshotCard";
 import { useAuthStore } from "@/lib/authStore";
 import { PeriodKey, periodRange } from "@/features/crm/components/shared";
@@ -71,6 +72,7 @@ export default function TelecallerDashboard() {
 
         {/* Telecalling: today queue, lead status, my numbers (new) */}
         <TelecallerCrmPanel data={data} period={{ key: periodKey, setKey: setPeriodKey, custom, setCustom }} />
+        <CallPayments title="My ₹99 bookings from calls" />
 
         {/* A salesperson works in one store: show that store's social media + Google reviews */}
         {role === "Salesperson" && <SocialSnapshotCard />}

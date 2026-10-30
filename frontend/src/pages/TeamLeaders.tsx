@@ -7,6 +7,7 @@ import { ArrowRight, Filter, Store, TrendingUp } from "lucide-react";
 import { TableSkeleton } from "@/components/shared/Skeleton";
 
 import { useSocketRefresh } from "../hooks/useSocketRefresh";
+import { CallPayments } from "@/features/crm/components/PaymentLink";
 
 function fmtINR(n: number) {
   if (n >= 10000000) return `₹${(n / 10000000).toFixed(2)} Cr`;
@@ -340,6 +341,7 @@ export default function TeamLeaders() {
         </div>
         </>
         )}
+        <CallPayments />
       </div>
 
       )}

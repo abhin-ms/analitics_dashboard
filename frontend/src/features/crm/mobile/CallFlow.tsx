@@ -13,6 +13,7 @@ import { type ActivityBody, useCrmMeta, useLogActivity, usePatchLead } from "../
 import { OUTCOME_GROUPS, PRIORITIES, statusColor } from "../statusConfig";
 import { addDaysKey, fmtDateTime, localInputToISO, todayIST } from "../format";
 import { type CallTarget, callSeconds, mmss, useActiveCall, useNow } from "./activeCall";
+import { PaymentLinkDialog } from "../components/PaymentLink";
 
 export function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join("") || "?";
@@ -220,6 +221,7 @@ function CallReport() {
   const [storeId, setStoreId] = useState("");
   const [sale, setSale] = useState("");
   const [priority, setPriority] = useState("");
+  const [payOpen, setPayOpen] = useState(false);
 
   const secs = callSeconds(call);
   const days = useMemo(() => {
@@ -366,6 +368,23 @@ function CallReport() {
             </div>
           </div>
         )}
+
+        {meta?.can.edit !== false && (
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3.5 space-y-2.5">
+            <div className="flex items-start gap-2.5">
+              <span className="w-10 h-10 rounded-xl grid place-items-center bg-emerald-500/15 text-emerald-400 shrink-0"><IndianRupee size={19} /></span>
+              <div>
+                <p className="font-bold text-[15px]">Customer ready to book?</p>
+                <p className="text-[12.5px] text-[var(--text-secondary)] leading-snug">They pay ₹99 for the priority slot on WhatsApp. You'll see on the lead when they pay.</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setPayOpen(true)}
+              className="w-full min-h-[48px] rounded-xl bg-emerald-500 text-[#052e1f] font-extrabold text-[15px] cursor-pointer active:scale-[.99]">
+              Send ₹99 payment
+            </button>
+          </div>
+        )}
+        {payOpen && <PaymentLinkDialog leadId={call.leadId} open onClose={() => setPayOpen(false)} />}
 
         <div className="relative">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value.slice(0, NOTE_MAX))} rows={4} maxLength={NOTE_MAX}

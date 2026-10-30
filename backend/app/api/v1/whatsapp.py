@@ -417,6 +417,9 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
     t = await wa_templates.by_name(db, body.template)
     if not t:
         raise HTTPException(status_code=400, detail="Unknown template")
+    if t.get("order_payment"):
+        raise HTTPException(status_code=400, detail="This template carries a ₹99 order — send it from a lead "
+                                                    "(Send ₹99 payment → Pay inside WhatsApp)")
     if t.get("header") == "document":
         raise HTTPException(status_code=400, detail="This template carries the report PDF — test it with "
                                                     "Send now in CRM Settings → CEO lead report")
@@ -439,7 +442,7 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
 # Who a message went to, by what sent it (auto:<template key>, the CEO
 # report, or a test from the Test tab).
 RECIPIENT_PURPOSES = {
-    "customer": ["auto:A1", "auto:A4", "auto:A5"],
+    "customer": ["auto:A1", "auto:A4", "auto:A5", "auto:A6"],
     "store": ["auto:A2", "auto:A3"],
     "telecaller": ["auto:B1"],
     "team_leader": ["auto:B2"],
@@ -656,6 +659,8 @@ async def receive(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
         return {"ok": True, "ignored": True}
     updated = await apply_statuses(db, data)
+    from ...services.crm import payment_links as pay
+    pay_alerts, paid_leads = await pay.apply_whatsapp_payments(db, cfg, data)
     # Normal updates aren't logged (they show as Sent/Delivered/Read on the
     # message itself); only test calls are, to confirm the webhook works.
     if test:
@@ -664,5 +669,10 @@ async def receive(request: Request, db: AsyncSession = Depends(get_db)):
     else:
         await mark_webhook_received(db)
     await db.commit()
+    if pay_alerts:
+        from ...services.crm.engine import emit_alerts
+        await emit_alerts(pay_alerts)
+    for lid in paid_leads:
+        await pay.after_paid(lid)
     # Customer replies and button taps arrive here too; stage 2 acts on them.
     return {"ok": True, "updated": updated}

@@ -656,3 +656,60 @@ export function useFailedPayments(params: { days: number; show: string; q: strin
     refetchInterval: 60_000,
   });
 }
+
+// ── ₹99 payment links sent after a call ─────────────────────────────
+
+export interface PaymentLinkRow {
+  id: number; lead_id: number; status: "sent" | "paid" | "expired" | "cancelled" | "failed"; amount: number;
+  /** whatsapp = Review and Pay inside WhatsApp; link = Pay button to Razorpay's page */
+  mode: "whatsapp" | "link";
+  customer_name: string | null; customer_phone: string | null; phone_model: string | null; service: string | null;
+  store: string | null; visit_at: string | null; expires_at: string | null; created_at: string | null;
+  opened_at: string | null; paid_at: string | null; payment_id: string | null; error: string | null;
+  sent_by: string | null; sent_by_id: number | null;
+}
+export interface PaymentLinkForm {
+  customer_name: string; customer_phone: string; phone_model: string; service: string;
+  store_id: number | null; visit_at: string; amount: number; valid_hours: number;
+  mode: "whatsapp" | "link"; modes: { whatsapp: boolean; link: boolean };
+}
+export interface PayCounts { sent: number; paid: number; waiting: number; expired: number; paid_pct: number | null }
+export interface PaymentSummary {
+  start: string; end: string; enabled: boolean; level: "admin" | "team" | "own"; total: PayCounts;
+  team_leaders: ({ tl_id: number | null; name: string } & PayCounts)[];
+  telecallers: ({ user_id: number; name: string; role: string; store: string | null; tl_id: number | null; team_leader: string | null } & PayCounts)[];
+}
+
+export function usePaymentLinkForm(leadId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "payment-link", leadId],
+    queryFn: () => api.get<{ enabled: boolean; modes: { whatsapp: boolean; link: boolean }; can_send: boolean; form: PaymentLinkForm; links: PaymentLinkRow[] }>(
+      `/crm/leads/${leadId}/payment-link`),
+    enabled: !!leadId && enabled,
+  });
+}
+
+export function useSendPaymentLink() {
+  return useCrmMutation(({ leadId, body }: { leadId: number; body: Record<string, unknown> }) =>
+    api.post<{ ok: boolean; link: PaymentLinkRow }>(`/crm/leads/${leadId}/payment-link`, body));
+}
+
+export function useRefreshPaymentLink() {
+  return useCrmMutation((id: number) => api.post<{ ok: boolean; paid: boolean; link: PaymentLinkRow }>(`/crm/payment-links/${id}/refresh`, {}));
+}
+
+export function usePaymentSummary(params: { start: string; end: string; tl_id?: number | null }) {
+  return useQuery({
+    queryKey: [CRM_KEY, "payment-summary", params],
+    queryFn: () => api.get<PaymentSummary>(`/crm/payment-links/summary${qs(params)}`),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function usePaymentList(params: { start: string; end: string; user_id?: number | null; tl_id?: number | null; status?: string }, enabled = true) {
+  return useQuery({
+    queryKey: [CRM_KEY, "payment-list", params],
+    queryFn: () => api.get<{ items: PaymentLinkRow[]; total: number }>(`/crm/payment-links${qs(params)}`),
+    enabled,
+  });
+}
