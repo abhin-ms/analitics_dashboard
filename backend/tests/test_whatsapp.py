@@ -676,3 +676,29 @@ async def test_payment_settings_saved_from_the_dashboard(env, monkeypatch):
     t = as_user("tc")
     assert (await t.get("/api/v1/crm/payment-settings")).status_code == 403
     assert (await t.put("/api/v1/crm/payment-settings", json={"amount": 1})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_review_and_pay_can_be_tested_from_the_test_tab(env, monkeypatch):
+    """The Test tab sends Review and Pay with a real TEST order built from
+    the Payments settings (no lead); without those settings it says what's missing."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "WHATSAPP_PAY_CONFIG", "")
+    as_user, ids, calls, Session = env
+    c = as_user("admin")
+    await _setup(c)
+    values = {"customer_name": "Rahul", "store_name": "Kochi", "mobile_model": "Galaxy S24",
+              "visit_date": "Sat, 1 Nov 2026", "visit_time": "11:30 AM"}
+    body = {"template": "payment_request", "to": "6238860673", "values": values, "include_buttons": [0]}
+    r = await c.post("/api/v1/whatsapp/test-send", json=body)
+    assert r.status_code == 400 and "Payments tab" in r.json()["detail"]
+    await c.put("/api/v1/crm/payment-settings", json={"whatsapp_config": "BreakProtection", "address_line1": "12 MG Road",
+                                                     "city": "Kochi", "postal_code": "682016"})
+    r = await c.post("/api/v1/whatsapp/test-send", json=body)
+    assert r.status_code == 200, r.text
+    sent = calls[-1][2]["json"]["template"]
+    button = sent["components"][1]
+    order = button["parameters"][0]["action"]["order_details"]
+    assert button["sub_type"] == "order_details" and order["reference_id"].startswith("TEST")
+    assert order["payment_settings"][0]["payment_gateway"]["configuration_name"] == "BreakProtection"
+    assert order["order"]["items"][0]["importer_address"]["postal_code"] == "682016"
