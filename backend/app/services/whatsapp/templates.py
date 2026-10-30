@@ -77,10 +77,11 @@ TEMPLATES: list[dict] = [
         "trigger": "Telecaller sends the ₹99 request after a call (Pay inside WhatsApp)",
         "order_payment": True,  # the button carries the order; sent from a lead, not the Test tab
         "params": [("customer_name", "Rahul"), ("store_name", "Kerala Trivandrum"), ("mobile_model", "Galaxy S24"),
-                   ("visit_date", "Sat, 1 Nov 2026"), ("visit_time", "11:30 AM")],
-        # worded as a plain update on the customer's own booking request, so Meta files it as Utility
+                   ("visit_date", "Sat, 1 Nov 2026"), ("visit_time", "11:30 AM"), ("amount", "99")],
+        # worded as a plain update on the customer's own booking request, so Meta files it as Utility;
+        # {{amount}}: a template approved with "₹99" written in still works (only its own variables are sent)
         "body": "Hi {{customer_name}},\n\nPayment is pending for your booking request.\n\nStore: {{store_name}}\n"
-                "Model: {{mobile_model}}\nVisit date: {{visit_date}}\nVisit time: {{visit_time}}\nAmount due: ₹99\n\n"
+                "Model: {{mobile_model}}\nVisit date: {{visit_date}}\nVisit time: {{visit_time}}\nAmount due: ₹{{amount}}\n\n"
                 "Tap Review and Pay to complete the payment for this booking.",
         "buttons": [{"type": "order_details", "text": "Review and Pay"}],
     },
@@ -161,7 +162,8 @@ def public_view(t: dict) -> dict:
 
 
 def build_components(t: dict, values: dict[str, str], button_values: dict[int, str] | None = None,
-                     include_buttons: set[int] | None = None, payload_prefix: str = "test") -> list[dict]:
+                     include_buttons: set[int] | None = None, payload_prefix: str = "test",
+                     only: set[str] | None = None) -> list[dict]:
     """The `components` of a Cloud API template message.
 
     values: body variable → text (every one is required).
@@ -169,12 +171,14 @@ def build_components(t: dict, values: dict[str, str], button_values: dict[int, s
     include_buttons: indexes of optional buttons that exist on the approved
     template (sending a value for a button Meta doesn't have is an error).
     """
-    missing = [n for n, _ in t["params"] if not str(values.get(n, "")).strip()]
+    # only: the variables the approved template really has (None = all of ours)
+    names = [n for n, _ in t["params"] if only is None or n in only]
+    missing = [n for n in names if not str(values.get(n, "")).strip()]
     if missing:
         raise ValueError(f"Fill in: {', '.join(missing)}")
     components: list[dict] = [{
         "type": "body",
-        "parameters": [{"type": "text", "parameter_name": n, "text": str(values[n]).strip()} for n, _ in t["params"]],
+        "parameters": [{"type": "text", "parameter_name": n, "text": str(values[n]).strip()} for n in names],
     }]
     include = include_buttons if include_buttons is not None else {
         i for i, b in enumerate(t["buttons"]) if not b.get("optional")}

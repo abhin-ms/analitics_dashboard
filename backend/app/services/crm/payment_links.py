@@ -86,6 +86,11 @@ def enabled() -> bool:
     return whatsapp_pay_ready() or configured()
 
 
+def missing_address() -> str:
+    names = {"business_name": "business name", "address_line1": "address line", "city": "city", "postal_code": "PIN code"}
+    return ", ".join(label for k, label in names.items() if not getattr(_S, k)) or "the address"
+
+
 def _indian(phone: str) -> bool:
     return phone.startswith("91") and len(phone) == 12
 
@@ -192,7 +197,8 @@ async def send_link(db: AsyncSession, lead: TeleCallLead, user: User, form: dict
     if mode == "whatsapp" and not whatsapp_pay_ready():
         raise PaymentLinkError("Pay inside WhatsApp isn't set up (WhatsApp payment configuration missing)")
     if mode == "whatsapp" and not _S.address_ready():
-        raise PaymentLinkError("Pay inside WhatsApp needs the business address (Settings → WhatsApp → Payments)")
+        raise PaymentLinkError(f"Pay inside WhatsApp needs the business address: fill in {missing_address()} "
+                               "in Settings → WhatsApp → Payments")
     if mode == "whatsapp" and not _indian(to):
         raise PaymentLinkError("Pay inside WhatsApp works for Indian (+91) numbers only — send a payment link instead")
     if mode == "link" and not configured():
@@ -205,7 +211,7 @@ async def send_link(db: AsyncSession, lead: TeleCallLead, user: User, form: dict
         except ValueError:
             raise PaymentLinkError("Pick a valid visit date and time")
     now = utcnow()
-    amount = int(_S.amount)
+    amount = int(_S.amount)  # fixed (₹99): only a Test tab send can use another amount
 
     # the lead keeps what was corrected
     for field, key in (("phone_model", "phone_model"), ("service_type", "service")):
@@ -239,6 +245,7 @@ async def send_link(db: AsyncSession, lead: TeleCallLead, user: User, form: dict
               "mobile_model": pl.phone_model or "your phone", "visit_time": fmt_visit(visit_at)}
     if mode == "whatsapp":
         values["visit_date"], values["visit_time"] = visit_parts(visit_at)
+        values["amount"] = str(amount)
         pl.reference_id = f"BP{pl.id}{pl.token[:8]}".upper()
         tpl = await get_template(db, WA_TEMPLATE_KEY)
         buttons = {0: order_details(pl, store_label, lead.id)}
@@ -265,7 +272,8 @@ async def send_link(db: AsyncSession, lead: TeleCallLead, user: User, form: dict
     try:
         msg = await send_template(db, cfg, to=to, template=tpl["name"], language=tpl["language"],
                                   components=build_components(tpl, values, buttons, include_buttons={0},
-                                                              payload_prefix=f"lead{lead.id}"),
+                                                              payload_prefix=f"lead{lead.id}",
+                                                              only=await wa_auto.approved_vars(cfg, tpl["name"], tpl["language"])),
                                   params={"values": values, "buttons": {0: pl.reference_id or pl.token}},
                                   purpose=f"auto:{tpl['key']}", sent_by=user.id, lead_id=lead.id)
     except WhatsAppError as e:

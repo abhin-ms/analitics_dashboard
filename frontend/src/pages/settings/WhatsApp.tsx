@@ -932,7 +932,7 @@ function PaymentsTab() {
   const save = useMutation({
     mutationFn: () => api.put<PaySettingsView>("/crm/payment-settings", {
       whatsapp_config: f.whatsapp_config, key_id: f.key_id, key_secret: f.key_secret, webhook_secret: f.webhook_secret,
-      amount: Number(f.amount) || undefined, hours: Number(f.hours) || undefined,
+      hours: Number(f.hours) || undefined,
       business_name: f.business_name, address_line1: f.address_line1, city: f.city, state: f.state, postal_code: f.postal_code,
     }),
     onSuccess: () => { toast.success("Payment settings saved"); qc.invalidateQueries({ queryKey: ["whatsapp", "payments"] }); },
@@ -1004,7 +1004,7 @@ function PaymentsTab() {
       <Card>
         <CardHeader title="Request" subtitle="What the customer is asked to pay" />
         <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Field label="Amount (₹)"><input id="pay-amount" inputMode="numeric" className={inputCls} value={f.amount} onChange={set("amount")} disabled={ro} /></Field>
+          <Field label="Amount"><input id="pay-amount" className={inputCls} value={`₹${data.amount}`} readOnly /></Field>
           <Field label="Valid for (hours)"><input id="pay-hours" inputMode="numeric" className={inputCls} value={f.hours} onChange={set("hours")} disabled={ro} /></Field>
         </div>
       </Card>

@@ -406,7 +406,7 @@ def _message_row(m: WhatsAppMessage, names: dict[int, str] | None = None) -> dic
     }
 
 
-async def _test_order(db: AsyncSession) -> dict:
+async def _test_order(db: AsyncSession, amount: str | None = None) -> dict:
     """The ₹ order a Review and Pay test carries: the saved payment settings
     and a TEST reference, so a payment made from it matches no lead."""
     import secrets
@@ -417,8 +417,15 @@ async def _test_order(db: AsyncSession) -> dict:
     if not s.whatsapp_config:
         raise HTTPException(status_code=400, detail="Enter the payment configuration name in the Payments tab first")
     if not s.address_ready():
-        raise HTTPException(status_code=400, detail="Fill in the business address in the Payments tab first")
-    fake = SimpleNamespace(id=0, amount=s.amount, reference_id=f"TEST{secrets.token_hex(6).upper()}",
+        raise HTTPException(status_code=400, detail=f"Fill in {pay.missing_address()} under Business address "
+                                                    "in the Payments tab, then Save")
+    try:
+        rupees = int(str(amount or s.amount).replace("₹", "").replace(",", "").strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="The amount must be a number of rupees")
+    if not 1 <= rupees <= 100000:
+        raise HTTPException(status_code=400, detail="The amount must be between ₹1 and ₹1,00,000")
+    fake = SimpleNamespace(id=0, amount=rupees, reference_id=f"TEST{secrets.token_hex(6).upper()}",
                            expires_at=datetime.utcnow() + timedelta(hours=s.hours))
     return pay.order_details(fake, s.business_name, 0)
 
@@ -442,9 +449,10 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
         raise HTTPException(status_code=400, detail="Enter the number with country code, e.g. 919876543210")
     buttons = body.button_values
     if t.get("order_payment"):  # Review and Pay: a real test order (not linked to any lead)
-        buttons = {**(buttons or {}), 0: await _test_order(db)}
+        buttons = {**(buttons or {}), 0: await _test_order(db, body.values.get("amount"))}
+    only = await wa_auto.approved_vars(cfg, t["name"], body.language.strip() or "en")
     try:
-        components = wa_templates.build_components(t, body.values, buttons, set(body.include_buttons))
+        components = wa_templates.build_components(t, body.values, buttons, set(body.include_buttons), only=only)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:

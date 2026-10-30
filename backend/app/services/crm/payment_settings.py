@@ -72,7 +72,7 @@ async def get_pay_settings(db: AsyncSession) -> PaySettings:
         key_id=d.get("key_id") or env.key_id,
         key_secret=_dec(d.get("key_secret_enc", "")) or env.key_secret,
         webhook_secret=_dec(d.get("webhook_secret_enc", "")) or env.webhook_secret,
-        amount=int(d.get("amount") or env.amount),
+        amount=env.amount,  # fixed (₹99, PAYMENT_LINK_AMOUNT); only a Test tab send can try another amount
         hours=int(d.get("hours") or env.hours),
         business_name=d.get("business_name") or "Break Protection",
         address_line1=d.get("address_line1", ""), city=d.get("city", ""), state=d.get("state", ""),
@@ -93,7 +93,7 @@ async def save_pay_settings(db: AsyncSession, data: dict, user_id: int | None) -
             d[f"{k}_enc"] = ""
         elif (data.get(k) or "").strip():
             d[f"{k}_enc"] = encrypt_token(data[k].strip())
-    for k in ("amount", "hours"):
+    for k in ("hours",):
         if data.get(k):
             d[k] = int(data[k])
     d["updated_at"], d["updated_by"] = datetime.utcnow().isoformat(), user_id
