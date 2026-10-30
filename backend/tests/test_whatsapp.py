@@ -705,3 +705,17 @@ async def test_review_and_pay_can_be_tested_from_the_test_tab(env, monkeypatch):
     assert order["payment_settings"][0]["payment_gateway"]["configuration_name"] == "BreakProtection"
     assert order["order"]["items"][0]["importer_address"]["postal_code"] == "682016"
     assert order["total_amount"] == {"value": 14900, "offset": 100}                      # the amount typed in
+
+
+def test_numbered_template_gets_values_in_order_without_names():
+    """A template made in WhatsApp Manager with {{1}}..{{5}} gets our first
+    five values in order, positionally (named parameters would be refused)."""
+    from app.services.whatsapp.templates import BY_KEY, build_components
+    t = BY_KEY["A7"]
+    values = {"customer_name": "Rahul", "store_name": "Kochi", "mobile_model": "Galaxy S24",
+              "visit_date": "Sat, 1 Nov 2026", "visit_time": "11:30 AM", "amount": "99"}
+    body = build_components(t, values, include_buttons=set(), only={"1", "2", "3", "4", "5"})[0]
+    assert body["parameters"] == [{"type": "text", "text": v} for v in
+                                  ("Rahul", "Kochi", "Galaxy S24", "Sat, 1 Nov 2026", "11:30 AM")]
+    named = build_components(t, values, include_buttons=set(), only={"customer_name", "amount"})[0]
+    assert [p["parameter_name"] for p in named["parameters"]] == ["customer_name", "amount"]
