@@ -406,6 +406,23 @@ def _message_row(m: WhatsAppMessage, names: dict[int, str] | None = None) -> dic
     }
 
 
+async def _test_order(db: AsyncSession) -> dict:
+    """The ₹ order a Review and Pay test carries: the saved payment settings
+    and a TEST reference, so a payment made from it matches no lead."""
+    import secrets
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from ...services.crm import payment_links as pay
+    s = await pay.load(db)
+    if not s.whatsapp_config:
+        raise HTTPException(status_code=400, detail="Enter the payment configuration name in the Payments tab first")
+    if not s.address_ready():
+        raise HTTPException(status_code=400, detail="Fill in the business address in the Payments tab first")
+    fake = SimpleNamespace(id=0, amount=s.amount, reference_id=f"TEST{secrets.token_hex(6).upper()}",
+                           expires_at=datetime.utcnow() + timedelta(hours=s.hours))
+    return pay.order_details(fake, s.business_name, 0)
+
+
 @router.post("/test-send")
 async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
                     user: User = require_permission("settings", "edit")):
@@ -417,17 +434,17 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
     t = await wa_templates.by_name(db, body.template)
     if not t:
         raise HTTPException(status_code=400, detail="Unknown template")
-    if t.get("order_payment"):
-        raise HTTPException(status_code=400, detail="This template carries a ₹99 order — send it from a lead "
-                                                    "(Send ₹99 payment → Pay inside WhatsApp)")
     if t.get("header") == "document":
         raise HTTPException(status_code=400, detail="This template carries the report PDF — test it with "
                                                     "Send now in CRM Settings → CEO lead report")
     to = normalize_phone(body.to)
     if not valid_phone(to):
         raise HTTPException(status_code=400, detail="Enter the number with country code, e.g. 919876543210")
+    buttons = body.button_values
+    if t.get("order_payment"):  # Review and Pay: a real test order (not linked to any lead)
+        buttons = {**(buttons or {}), 0: await _test_order(db)}
     try:
-        components = wa_templates.build_components(t, body.values, body.button_values, set(body.include_buttons))
+        components = wa_templates.build_components(t, body.values, buttons, set(body.include_buttons))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     try:
@@ -442,7 +459,7 @@ async def test_send(body: TestSendIn, db: AsyncSession = Depends(get_db),
 # Who a message went to, by what sent it (auto:<template key>, the CEO
 # report, or a test from the Test tab).
 RECIPIENT_PURPOSES = {
-    "customer": ["auto:A1", "auto:A4", "auto:A5", "auto:A6"],
+    "customer": ["auto:A1", "auto:A4", "auto:A5", "auto:A6", "auto:A7"],
     "store": ["auto:A2", "auto:A3"],
     "telecaller": ["auto:B1"],
     "team_leader": ["auto:B2"],

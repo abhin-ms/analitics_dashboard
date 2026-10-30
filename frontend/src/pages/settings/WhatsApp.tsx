@@ -107,6 +107,8 @@ interface Template {
   params: { name: string; sample: string }[];
   body: string;
   buttons: { type: "quick_reply" | "url" | "flow" | "order_details"; text: string; url?: string; sample?: string; optional?: boolean }[];
+  /** Review and Pay: the button carries a ₹ order */
+  order_payment?: boolean;
   meta: { status: string; language: string; category: string; buttons?: { type: string; text: string; dynamic: boolean }[] }[];
 }
 
@@ -685,6 +687,13 @@ function TestTab() {
                   <p className="text-[11px] text-[var(--text-muted)]">
                     {tpl.meta[0]?.buttons ? "Ticked to match the approved template on Meta." : "Untick a button the approved template doesn't have, or Meta refuses the message."}
                   </p>
+                  {tpl.order_payment && (
+                    <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                      Sends a real Review and Pay request with a test order (amount, configuration and business address
+                      from the Payments tab). Paying it charges real money and isn't linked to any lead; refund it in
+                      Razorpay. For a full test that marks a lead paid, send it from a lead.
+                    </p>
+                  )}
                 </>
               )}
               <ErrorText error={send.error} />
